@@ -36,7 +36,9 @@ function normalizeText(value) {
 
 async function analyzeWithRapid(images) {
   const formData = new FormData();
-  const ocrUrl = process.env.RAPID_OCR_URL || process.env.PADDLE_OCR_URL || "http://localhost:8081";
+  const ocrUrl = process.env.NODE_ENV === "production"
+    ? (process.env.RAPID_OCR_URL || process.env.PADDLE_OCR_URL || "http://localhost:8081")
+    : "http://localhost:8081";
   images.forEach((image, imageIndex) => {
     const bytes = Buffer.from(image.base64, "base64");
     formData.append("images", new Blob([bytes], { type: image.mediaType }), `parakh-${imageIndex + 1}.${extension(image.mediaType)}`);
