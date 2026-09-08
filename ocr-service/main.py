@@ -163,16 +163,30 @@ async def _analyze_contents(items: list[tuple[bytes, str]]):
             raise HTTPException(status_code=400, detail=f"Invalid image {image_index + 1}: {exc}") from exc
 
     rapid = _get_rapidocr()
-    all_entries = []
-    raw_text_parts = []
-    engine_ms = 0
-    for image_index, array in enumerate(prepared):
+
+    async def run_one(image_index, array):
         image_started = time.monotonic()
         result = await asyncio.to_thread(lambda arr=array: rapid(arr))
         one_engine_ms = round((time.monotonic() - image_started) * 1000)
-        engine_ms += one_engine_ms
         entries = extract_result(result, image_index, array.shape[1], array.shape[0])
-        print(f"[ocr:rapid] image={image_index + 1} size={array.shape[1]}x{array.shape[0]} engine={one_engine_ms}ms entries={len(entries)}")
+        print(
+            f"[ocr:rapid] image={image_index + 1} "
+            f"size={array.shape[1]}x{array.shape[0]} "
+            f"engine={one_engine_ms}ms entries={len(entries)}"
+        )
+        return image_index, one_engine_ms, entries
+
+    # Run independent image OCR jobs concurrently, then restore image-index order.
+    results = await asyncio.gather(
+        *(run_one(image_index, array) for image_index, array in enumerate(prepared))
+    )
+    results.sort(key=lambda item: item[0])
+
+    all_entries = []
+    raw_text_parts = []
+    engine_ms = 0
+    for _image_index, one_engine_ms, entries in results:
+        engine_ms += one_engine_ms
         all_entries.extend(entries)
         raw_text_parts.append("\n".join(entry["text"] for entry in entries))
 
