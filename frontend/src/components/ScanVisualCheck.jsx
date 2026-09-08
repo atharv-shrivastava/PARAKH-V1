@@ -6,30 +6,35 @@ const DECLARATION_KEY = "parakhDeclarationEvidence";
 const MAX_IMAGES = 4;
 const MAX_ANALYSIS_SIDE = 1200;
 
-const DECLARATION_FIELD_TYPES = {
-  productName: "PRODUCT_NAME",
-  brandName: "BRAND",
-  netQuantity: "NET_QUANTITY",
-  unit: "NET_QUANTITY",
-  mrp: "MRP",
-  manufacturer: "MANUFACTURER",
-  manufacturerAddress: "ADDRESS",
-  packer: "PACKER",
-  packerAddress: "ADDRESS",
-  importer: "IMPORTER",
-  importerAddress: "ADDRESS",
-  marketer: "MARKETER",
-  marketerAddress: "ADDRESS",
-  countryOfOrigin: "COUNTRY_OF_ORIGIN",
-  dateOfManufacture: "DATE_OF_MANUFACTURE",
-  dateOfPacking: "DATE_OF_PACKING",
-  bestBefore: "BEST_BEFORE",
-  expiryDate: "EXPIRY_DATE",
-  batchNumber: "BATCH_NUMBER",
-  consumerCarePhone: "CONSUMER_CARE",
-  consumerCareEmail: "CONSUMER_CARE",
-  fssaiLicenseNumber: "FSSAI_LICENSE",
-  barcode: "BARCODE",
+// Only declarations that can directly affect the current compliance review are mapped.
+const REQUIRED_TYPES = new Set([
+  "PRODUCT_NAME",
+  "MANUFACTURER",
+  "ADDRESS",
+  "PACKER",
+  "IMPORTER",
+  "NET_QUANTITY",
+  "MRP",
+  "DATE_OF_MANUFACTURE",
+  "DATE_OF_PACKING",
+  "BEST_BEFORE",
+  "EXPIRY_DATE",
+  "CONSUMER_CARE",
+]);
+
+const TYPE_LABELS = {
+  PRODUCT_NAME: "Product name",
+  MANUFACTURER: "Manufacturer",
+  ADDRESS: "Address",
+  PACKER: "Packer",
+  IMPORTER: "Importer",
+  NET_QUANTITY: "Net quantity",
+  MRP: "MRP",
+  DATE_OF_MANUFACTURE: "Manufacturing date",
+  DATE_OF_PACKING: "Packing date",
+  BEST_BEFORE: "Best before",
+  EXPIRY_DATE: "Expiry date",
+  CONSUMER_CARE: "Consumer care",
 };
 
 function analyzePixels(data, width, height) {
@@ -61,7 +66,7 @@ function analyzePixels(data, width, height) {
 
   const count = Math.max(1, width * height);
   const contrast = Math.sqrt(Math.max(0, sumSq / count - Math.pow(sum / count, 2)));
-  const lineBands = [];
+  const bands = [];
   let bandStart = -1;
   for (let y = 0; y < height; y += 1) {
     const density = rowDensity[y] / Math.max(1, width);
@@ -70,7 +75,7 @@ function analyzePixels(data, width, height) {
     if ((!textLike || y === height - 1) && bandStart >= 0) {
       const end = textLike && y === height - 1 ? y : y - 1;
       const bandHeight = end - bandStart + 1;
-      if (bandHeight >= 2 && bandHeight <= Math.max(60, height * 0.12)) lineBands.push({ top: bandStart, height: bandHeight });
+      if (bandHeight >= 2 && bandHeight <= Math.max(60, height * 0.12)) bands.push(bandHeight);
       bandStart = -1;
     }
   }
@@ -78,28 +83,27 @@ function analyzePixels(data, width, height) {
   for (let y = 1; y < height - 1; y += 2) {
     for (let x = 1; x < width - 1; x += 2) {
       const i = y * width + x;
-      const c = gray[i];
       const gx = Math.abs(gray[i + 1] - gray[i - 1]);
       const gy = Math.abs(gray[i + width] - gray[i - width]);
       if (gx + gy > 55) edgeCount += 1;
       edgeSamples += 1;
-      const lap = gray[i - 1] + gray[i + 1] + gray[i - width] + gray[i + width] - 4 * c;
+      const lap = gray[i - 1] + gray[i + 1] + gray[i - width] + gray[i + width] - 4 * gray[i];
       lapSum += lap;
       lapSq += lap * lap;
     }
   }
 
-  const sampleCount = Math.max(1, edgeSamples);
-  const lapVariance = Math.max(0, lapSq / sampleCount - Math.pow(lapSum / sampleCount, 2));
+  const samples = Math.max(1, edgeSamples);
+  const lapVariance = Math.max(0, lapSq / samples - Math.pow(lapSum / samples, 2));
   const sharpness = Math.min(100, Math.max(0, lapVariance / 7));
   const contrastScore = Math.min(100, Math.max(0, contrast * 2.2));
-  const edgeScore = Math.min(100, (edgeCount / sampleCount) * 600);
-  const readability = Math.round(Math.min(100, 0.55 * sharpness + 0.35 * contrastScore + 0.10 * edgeScore));
-  const medianLineHeight = lineBands.length ? [...lineBands.map((item) => item.height)].sort((a, b) => a - b)[Math.floor(lineBands.length / 2)] : 0;
+  const edgeScore = Math.min(100, (edgeCount / samples) * 600);
+  const readability = Math.round(Math.min(100, 0.55 * sharpness + 0.35 * contrastScore + 0.1 * edgeScore));
+  const medianLineHeight = bands.length ? [...bands].sort((a, b) => a - b)[Math.floor(bands.length / 2)] : 0;
   const textCoverage = Math.round(Math.min(100, (darkPixels / count) * 100 * 4));
   const edgeCrowding = Math.round(Math.min(100, (edgeDarkPixels / Math.max(1, darkPixels)) * 100));
-  const placement = edgeCrowding > 18 ? "REVIEW" : lineBands.length >= 2 ? "SCREENED" : "UNABLE_TO_VERIFY";
-  return { width, height, readability, sharpness, contrast: contrastScore, textLines: lineBands.length, textCoverage, edgeCrowding, medianLineHeight, placement };
+  const placement = edgeCrowding > 18 ? "REVIEW" : bands.length >= 2 ? "SCREENED" : "UNABLE_TO_VERIFY";
+  return { width, height, readability, sharpness, contrast: contrastScore, textLines: bands.length, textCoverage, edgeCrowding, medianLineHeight, placement };
 }
 
 async function inspectImageSource(src) {
@@ -130,26 +134,23 @@ function getScanImages() {
 
 function normalizeBoundingBox(box, imageWidth, imageHeight) {
   if (!box) return null;
-
   let left;
   let top;
   let width;
   let height;
 
   if (Array.isArray(box)) {
-    const points = box.length === 4 && box.every((item) => Array.isArray(item) && item.length >= 2)
-      ? box.map((item) => [Number(item[0]), Number(item[1])])
-      : null;
-    if (points) {
-      const xs = points.map((item) => item[0]).filter(Number.isFinite);
-      const ys = points.map((item) => item[1]).filter(Number.isFinite);
+    if (box.length === 4 && box.every((point) => Array.isArray(point) && point.length >= 2)) {
+      const points = box.map((point) => [Number(point[0]), Number(point[1])]);
+      const xs = points.map(([x]) => x).filter(Number.isFinite);
+      const ys = points.map(([, y]) => y).filter(Number.isFinite);
       if (xs.length === 4 && ys.length === 4) {
         left = Math.min(...xs);
         top = Math.min(...ys);
         width = Math.max(...xs) - left;
         height = Math.max(...ys) - top;
       }
-    } else if (box.length >= 4 && box.slice(0, 4).every(Number.isFinite)) {
+    } else if (box.length >= 4 && box.slice(0, 4).every((value) => Number.isFinite(Number(value)))) {
       const values = box.slice(0, 4).map(Number);
       left = values[0];
       top = values[1];
@@ -165,10 +166,10 @@ function normalizeBoundingBox(box, imageWidth, imageHeight) {
     top = Number(box.top ?? box.y ?? box.y1);
     width = Number(box.width ?? box.w);
     height = Number(box.height ?? box.h);
-    const x2 = Number(box.right ?? box.x2);
-    const y2 = Number(box.bottom ?? box.y2);
-    if ((width <= 0 || !Number.isFinite(width)) && Number.isFinite(x2) && Number.isFinite(left)) width = x2 - left;
-    if ((height <= 0 || !Number.isFinite(height)) && Number.isFinite(y2) && Number.isFinite(top)) height = y2 - top;
+    const right = Number(box.right ?? box.x2);
+    const bottom = Number(box.bottom ?? box.y2);
+    if ((!Number.isFinite(width) || width <= 0) && Number.isFinite(right)) width = right - left;
+    if ((!Number.isFinite(height) || height <= 0) && Number.isFinite(bottom)) height = bottom - top;
   }
 
   if (![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
@@ -179,122 +180,82 @@ function normalizeBoundingBox(box, imageWidth, imageHeight) {
     return {
       left: safeLeft,
       top: safeTop,
-      width: Math.min(1 - safeLeft, Math.max(0, width)),
-      height: Math.min(1 - safeTop, Math.max(0, height)),
+      width: Math.min(1 - safeLeft, width),
+      height: Math.min(1 - safeTop, height),
     };
   }
 
   const w = Number(imageWidth);
   const h = Number(imageHeight);
   if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
-
   const safeLeft = Math.min(w, Math.max(0, left));
   const safeTop = Math.min(h, Math.max(0, top));
   const safeWidth = Math.min(w - safeLeft, Math.max(0, width));
   const safeHeight = Math.min(h - safeTop, Math.max(0, height));
   if (safeWidth <= 0 || safeHeight <= 0) return null;
-
-  return {
-    left: safeLeft / w,
-    top: safeTop / h,
-    width: safeWidth / w,
-    height: safeHeight / h,
-  };
-}
-
-function declarationLabelStyle(box) {
-  const nearTop = box.top < 0.08;
-  const nearRight = box.left + box.width > 0.72;
-  return { top: nearTop ? "calc(100% + 4px)" : "-22px", bottom: "auto", left: nearRight ? "auto" : "-2px", right: nearRight ? "-2px" : "auto", transform: nearRight ? "translateX(0)" : "none" };
+  return { left: safeLeft / w, top: safeTop / h, width: safeWidth / w, height: safeHeight / h };
 }
 
 function normalizeDeclaration(item, index) {
   if (!item || typeof item !== "object") return null;
   const rawImageIndex = Number(item.imageIndex ?? item.image ?? 0);
-  const rawConfidence = Number(item.confidence);
-  const confidence = rawConfidence > 1 ? rawConfidence / 100 : Number.isFinite(rawConfidence) ? rawConfidence : 0;
+  const confidenceRaw = Number(item.confidence);
+  const confidence = confidenceRaw > 1 ? confidenceRaw / 100 : Number.isFinite(confidenceRaw) ? confidenceRaw : 0;
+  const type = String(item.type || item.declarationType || "OTHER_DECLARATION").toUpperCase();
+  if (!REQUIRED_TYPES.has(type)) return null;
   return {
     ...item,
     imageIndex: Number.isFinite(rawImageIndex) && rawImageIndex >= 1 && item.imageIndex != null ? rawImageIndex - 1 : Math.max(0, rawImageIndex || 0),
-    type: String(item.type || item.declarationType || "OTHER_DECLARATION").toUpperCase(),
-    text: String(item.text ?? item.extractedText ?? item.value ?? ""),
+    type,
+    text: String(item.text ?? item.extractedText ?? item.value ?? "").trim(),
     confidence: Math.max(0, Math.min(1, confidence)),
     boundingBox: normalizeBoundingBox(item.boundingBox || item.bbox || item.box, item.imageWidth, item.imageHeight),
     _index: index,
   };
 }
 
-function labelToFieldKey(label) {
-  return String(label || "").trim().replace(/[^a-zA-Z0-9 ]/g, "").split(/\s+/).filter(Boolean).map((part, index) => index === 0 ? part.toLowerCase() : `${part[0].toUpperCase()}${part.slice(1).toLowerCase()}`).join("");
+function dedupeDeclarations(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = `${item.imageIndex}|${item.type}|${String(item.text).toLowerCase().replace(/\s+/g, " ").trim()}|${item.value ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function readStoredDeclarations() {
   try {
     const parsed = JSON.parse(window.sessionStorage.getItem(DECLARATION_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed.map(normalizeDeclaration).filter(Boolean) : [];
+    return Array.isArray(parsed) ? dedupeDeclarations(parsed.map(normalizeDeclaration).filter(Boolean)) : [];
   } catch {
     return [];
   }
 }
 
-function deriveDeclarationsFromOcrFields() {
-  const fields = Array.from(document.querySelectorAll(".ocr-fields-grid > div"));
-  if (!fields.length) return [];
-  return fields.reduce((accumulator, fieldNode, index) => {
-    const label = fieldNode.querySelector("strong")?.textContent || "";
-    const value = fieldNode.querySelector("span")?.textContent?.trim() || fieldNode.querySelector("input")?.value?.trim() || "";
-    const confidenceText = fieldNode.querySelector("small")?.textContent || "";
-    if (!value) return accumulator;
-    const fieldKey = labelToFieldKey(label);
-    const type = DECLARATION_FIELD_TYPES[fieldKey] || "OTHER_DECLARATION";
-    const parsedConfidence = Number(confidenceText.match(/([0-9]+(?:\.[0-9]+)?)\s*%/)?.[1] || 0);
-    accumulator.push(normalizeDeclaration({ imageIndex: 0, type, text: value, confidence: parsedConfidence / 100, boundingBox: null, source: "ocr-fields-fallback" }, index));
-    return accumulator;
-  }, []).filter(Boolean);
-}
-
 export default function ScanVisualCheck() {
   const [results, setResults] = useState([]);
   const [declarations, setDeclarations] = useState(readStoredDeclarations);
-  const [declarationMessage, setDeclarationMessage] = useState("");
   const [activeDeclarationImage, setActiveDeclarationImage] = useState(0);
+  const [selectedDeclarationKey, setSelectedDeclarationKey] = useState(null);
   const [open, setOpen] = useState(true);
   const [referenceWidth, setReferenceWidth] = useState("");
   const [calibratedWidth, setCalibratedWidth] = useState("");
   const [calibrationMessage, setCalibrationMessage] = useState("");
-  const [declarationBusy, setDeclarationBusy] = useState(false);
 
   useEffect(() => {
-    const refreshDeclarations = (incoming = null) => {
-      const providerEvidence = Array.isArray(incoming) ? incoming.map(normalizeDeclaration).filter(Boolean) : readStoredDeclarations();
-      if (providerEvidence.length) {
-        setDeclarations(providerEvidence);
-        setDeclarationMessage(`${providerEvidence.length} declaration entr${providerEvidence.length === 1 ? "y was" : "ies were"} returned by OCR.`);
-        setDeclarationBusy(false);
-        return;
+    const refreshDeclarations = (incoming) => {
+      const next = Array.isArray(incoming) ? dedupeDeclarations(incoming.map(normalizeDeclaration).filter(Boolean)) : readStoredDeclarations();
+      setDeclarations(next);
+      if (next.length && !next.some((item) => item.boundingBox)) {
+        console.warn("[Parakh] Semantic declarations returned without usable OCR geometry", next);
       }
-      const derived = deriveDeclarationsFromOcrFields();
-      if (derived.length) {
-        setDeclarations(derived);
-        setDeclarationMessage(`${derived.length} declaration entr${derived.length === 1 ? "y was" : "ies were"} recovered from the OCR fields. Location is shown as uncertain when no box was returned.`);
-      } else {
-        setDeclarations([]);
-        setDeclarationMessage("OCR completed without declaration evidence.");
-      }
-      setDeclarationBusy(false);
     };
     refreshDeclarations();
     const handleEvidence = (event) => refreshDeclarations(event.detail);
     window.addEventListener("parakh:declaration-evidence", handleEvidence);
-    const observer = new MutationObserver(() => {
-      if (!readStoredDeclarations().length && !declarations.length) refreshDeclarations();
-    });
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-    return () => {
-      window.removeEventListener("parakh:declaration-evidence", handleEvidence);
-      observer.disconnect();
-    };
-  }, [declarations.length]);
+    return () => window.removeEventListener("parakh:declaration-evidence", handleEvidence);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -302,29 +263,24 @@ export default function ScanVisualCheck() {
     if (!sources.length) return undefined;
     Promise.all(sources.map((src) => inspectImageSource(src).catch(() => null))).then((next) => {
       if (!cancelled) setResults(next.filter(Boolean));
-    }).catch(() => {
-      if (!cancelled) setResults([]);
     });
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    setActiveDeclarationImage((current) => Math.max(0, Math.min(current, Math.max(0, results.length - 1))));
-  }, [results.length]);
+    if (!selectedDeclarationKey) return;
+    const node = document.querySelector(`[data-declaration-key="${CSS.escape(selectedDeclarationKey)}"]`);
+    node?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [selectedDeclarationKey]);
 
   const average = results.length ? Math.round(results.reduce((sum, item) => sum + item.readability, 0) / results.length) : 0;
-  const label = average >= 75 ? "Good" : average >= 50 ? "Fair" : "Poor";
-
+  const readabilityLabel = average >= 75 ? "Good" : average >= 50 ? "Fair" : "Poor";
   const estimatedMm = useMemo(() => {
     const widthMm = Number(calibratedWidth);
     if (!Number.isFinite(widthMm) || widthMm <= 0) return null;
     const values = results.filter((item) => item.medianLineHeight > 0).map((item) => (item.medianLineHeight * widthMm) / item.width);
-    if (!values.length) return null;
-    return values.reduce((sum, value) => sum + value, 0) / values.length;
+    return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
   }, [calibratedWidth, results]);
-
-  const placementLabel = results.length === 0 ? "Needs review" : results.some((item) => item.placement === "REVIEW") ? "Review" : results.every((item) => item.placement === "SCREENED") ? "Screened" : "Needs review";
-  const hasOcr = typeof document !== "undefined" && document.querySelectorAll(".ocr-fields-grid > div").length > 0;
 
   useEffect(() => {
     if (!results.length) return;
@@ -336,14 +292,14 @@ export default function ScanVisualCheck() {
       fontSizeCalibrated: estimatedMm !== null,
       calibrationWidthMm: calibratedWidth ? Number(calibratedWidth) : null,
       estimatedTextHeightMm: estimatedMm,
-      declarationCoverageScreened: hasOcr,
+      declarationCoverageScreened: declarations.length > 0,
       imagesChecked: results.length,
       declarationEvidence: declarations,
-      declarationModel: declarations.length ? (declarations.some((item) => item.source === "ocr-fields-fallback") ? "ocr-fields-fallback" : "ocr-provider-inline-evidence") : null,
+      declarationModel: declarations.length ? "semantic-required-evidence" : null,
     };
     window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(detail));
     window.dispatchEvent(new CustomEvent("parakh:visual-analysis", { detail }));
-  }, [results, average, estimatedMm, hasOcr, declarations, calibratedWidth]);
+  }, [results, average, estimatedMm, declarations, calibratedWidth]);
 
   if (!results.length) return null;
 
@@ -352,30 +308,34 @@ export default function ScanVisualCheck() {
       <div className="section-heading">
         <div>
           <h2>Visual inspection</h2>
-          <p>Automatic screening for readability, text regions, declaration evidence and calibrated text-size estimation.</p>
+          <p>Screen readability, calibrated text size and rule-relevant declaration evidence.</p>
         </div>
         <button type="button" className="secondary-button" onClick={() => setOpen((value) => !value)}>{open ? "Hide" : "Show"}</button>
       </div>
 
       {open && <>
         <div className="visual-check-summary">
-          <div><strong>Readability</strong><span>{label} · {average}/100</span></div>
-          <div><strong>Text detection</strong><span>{results.reduce((sum, item) => sum + item.textLines, 0)} text-line regions detected</span></div>
-          <div><strong>Placement screening</strong><span>{placementLabel}</span></div>
-          <div><strong>Declaration evidence</strong><span>{declarationBusy ? "Analyzing..." : declarations.length || "None returned"}</span></div>
+          <div><strong>Readability</strong><span>{readabilityLabel} · {average}/100</span></div>
+          <div><strong>Text detection</strong><span>{results.reduce((sum, item) => sum + item.textLines, 0)} text-line regions</span></div>
+          <div><strong>Placement screening</strong><span>{results.some((item) => item.placement === "REVIEW") ? "Review" : "Screened"}</span></div>
+          <div><strong>Required evidence</strong><span>{declarations.length} mapped declaration{declarations.length === 1 ? "" : "s"}</span></div>
         </div>
 
         <div className="visual-check-calibration">
-          <label>
-            <span>Known package face width (mm)</span>
-            <input type="number" min="1" step="0.1" placeholder="Enter width for calibration" value={referenceWidth} onChange={(event) => setReferenceWidth(event.target.value)} />
-            <div className="visual-calibration-actions">
-              <button type="button" className="primary-button visual-calibration-button" disabled={!Number(referenceWidth) || Number(referenceWidth) <= 0} onClick={() => { setCalibratedWidth(referenceWidth); setCalibrationMessage(`Calibration applied using ${Number(referenceWidth).toFixed(1)} mm reference width.`); }}>Calibrate</button>
-              {calibratedWidth && <button type="button" className="secondary-button" onClick={() => { setCalibratedWidth(""); setCalibrationMessage("Calibration cleared."); }}>Clear</button>}
+          <div className="visual-calibration-card">
+            <span className="visual-calibration-label">Known package face width (mm)</span>
+            <div className="visual-calibration-row">
+              <input type="number" min="1" step="0.1" placeholder="Enter measured width" value={referenceWidth} onChange={(event) => setReferenceWidth(event.target.value)} />
+              <button type="button" className="primary-button visual-calibration-button" disabled={!Number(referenceWidth) || Number(referenceWidth) <= 0} onClick={() => { setCalibratedWidth(referenceWidth); setCalibrationMessage(`Calibration applied at ${Number(referenceWidth).toFixed(1)} mm.`); }}>Calibrate</button>
+              {calibratedWidth && <button type="button" className="secondary-button visual-calibration-button" onClick={() => { setCalibratedWidth(""); setCalibrationMessage("Calibration cleared."); }}>Clear</button>}
             </div>
             {calibrationMessage && <small className="visual-calibration-status">{calibrationMessage}</small>}
-          </label>
-          <div><strong>Estimated text height</strong><span>{estimatedMm === null ? "Needs calibration" : `${estimatedMm.toFixed(2)} mm`}</span><small>Estimate only. It is not a legal threshold by itself.</small></div>
+          </div>
+          <div className="visual-calibration-card visual-calibration-result">
+            <strong>Estimated text height</strong>
+            <span>{estimatedMm === null ? "Needs calibration" : `${estimatedMm.toFixed(2)} mm`}</span>
+            <small>Assistive estimate only. Final statutory measurement remains with the inspector.</small>
+          </div>
         </div>
 
         <div className="visual-check-grid">
@@ -387,20 +347,27 @@ export default function ScanVisualCheck() {
             <span>Contrast {Math.round(item.contrast)}/100</span>
             <span>Text regions {item.textLines}</span>
             <span>Text coverage {item.textCoverage}%</span>
-            <span>Edge crowding {item.edgeCrowding}% · {item.placement === "REVIEW" ? "Review" : item.placement === "SCREENED" ? "Screened" : "Unable to verify"}</span>
-            <span>Median detected line {item.medianLineHeight || "n/a"} px</span>
+            <span>Edge crowding {item.edgeCrowding}% · {item.placement === "REVIEW" ? "Review" : "Screened"}</span>
+            <span>Median line {item.medianLineHeight || "n/a"} px</span>
             <span>Calibrated size {estimatedMm === null ? "n/a" : `${(item.medianLineHeight * Number(calibratedWidth) / item.width).toFixed(2)} mm`}</span>
           </div>)}
         </div>
 
-        <div className="visual-declaration-header"><div><h3>Declaration map</h3><p>{declarationMessage || "Every semantic declaration returned by OCR is shown here."}</p></div></div>
+        <div className="visual-declaration-header">
+          <div>
+            <h3>Declaration map</h3>
+            <p>Only rule-relevant declarations are mapped. Click a colored box or evidence row to focus the same evidence.</p>
+          </div>
+          <span className="visual-declaration-count">{declarations.length} mapped</span>
+        </div>
+
         <div className="visual-declaration-browser">
           <div className="visual-declaration-tabs" role="tablist" aria-label="Package images">
             {results.map((_item, imageIndex) => {
-              const imageDeclarations = declarations.filter((item) => item.imageIndex === imageIndex);
-              const selectedTab = activeDeclarationImage === imageIndex;
-              return <button type="button" role="tab" aria-selected={selectedTab} className={selectedTab ? "visual-declaration-tab is-active" : "visual-declaration-tab"} key={`decl-tab-${imageIndex}`} onClick={() => setActiveDeclarationImage(imageIndex)}>
-                Image {imageIndex + 1}<span>{imageDeclarations.length ? `${imageDeclarations.length} found` : "No declaration evidence"}</span>
+              const count = declarations.filter((item) => item.imageIndex === imageIndex).length;
+              const active = activeDeclarationImage === imageIndex;
+              return <button type="button" role="tab" aria-selected={active} className={active ? "visual-declaration-tab is-active" : "visual-declaration-tab"} key={`decl-tab-${imageIndex}`} onClick={() => setActiveDeclarationImage(imageIndex)}>
+                Image {imageIndex + 1}<span>{count} mapped</span>
               </button>;
             })}
           </div>
@@ -408,22 +375,37 @@ export default function ScanVisualCheck() {
           {(() => {
             const imageIndex = Math.min(activeDeclarationImage, results.length - 1);
             const image = getScanImages()[imageIndex];
-            const imageDeclarations = declarations.filter((item) => item.imageIndex === imageIndex && item.type !== "OCR_TEXT");
+            const imageDeclarations = declarations.filter((item) => item.imageIndex === imageIndex);
             return <div className="visual-declaration-card is-single">
               <div className="visual-declaration-canvas">
                 <img src={image} alt={`Declaration map for package image ${imageIndex + 1}`} />
-                {imageDeclarations.map((item, index) => item.boundingBox && <div className="visual-declaration-box" key={`${item.type}-${item._index ?? index}`} style={{ left: `${item.boundingBox.left * 100}%`, top: `${item.boundingBox.top * 100}%`, width: `${item.boundingBox.width * 100}%`, height: `${item.boundingBox.height * 100}%` }} title={item.text ? `${item.type.replaceAll("_", " ")} · ${item.text}` : item.type.replaceAll("_", " ")}>
-                  <span style={declarationLabelStyle(item.boundingBox)}>{item.type.replaceAll("_", " ")}</span>
-                </div>)}
+                {imageDeclarations.map((item, index) => {
+                  if (!item.boundingBox) return null;
+                  const key = `${item.imageIndex}-${item.type}-${index}`;
+                  const selected = selectedDeclarationKey === key;
+                  return <button type="button" className={`visual-declaration-box declaration-${item.type}${selected ? " is-selected" : ""}`} key={key} data-declaration-key={key} aria-label={`${TYPE_LABELS[item.type] || item.type}: ${item.text}`} title={`${TYPE_LABELS[item.type] || item.type}: ${item.text}`} onClick={() => setSelectedDeclarationKey(key)} style={{ left: `${item.boundingBox.left * 100}%`, top: `${item.boundingBox.top * 100}%`, width: `${item.boundingBox.width * 100}%`, height: `${item.boundingBox.height * 100}%` }}>
+                    <span>{TYPE_LABELS[item.type] || item.type.replaceAll("_", " ")}</span>
+                  </button>;
+                })}
+                {!imageDeclarations.some((item) => item.boundingBox) && <div className="visual-declaration-no-box">No verified OCR geometry was returned for this image.</div>}
               </div>
+
               <div className="visual-declaration-list">
-                {imageDeclarations.length ? imageDeclarations.map((item, index) => <div key={`${item.type}-${item._index ?? index}`}><strong>{item.type.replaceAll("_", " ")}</strong><span>{item.text || "Declaration detected"}</span><small>{item.boundingBox ? "localized" : "location uncertain"}</small></div>) : <div className="visual-declaration-empty"><strong>No semantic declaration evidence for this image.</strong><span>Physical OCR text is kept as evidence, but unclassified OCR lines are not presented as declarations.</span></div>}
+                {imageDeclarations.length ? imageDeclarations.map((item, index) => {
+                  const key = `${item.imageIndex}-${item.type}-${index}`;
+                  const selected = selectedDeclarationKey === key;
+                  return <button type="button" className={`visual-declaration-item${selected ? " is-selected" : ""}`} key={key} onClick={() => { setSelectedDeclarationKey(key); if (!item.boundingBox) setActiveDeclarationImage(item.imageIndex); }}>
+                    <span className="visual-declaration-type">{TYPE_LABELS[item.type] || item.type.replaceAll("_", " ")}</span>
+                    <strong>{item.text || "Declaration detected"}</strong>
+                    <small>{item.boundingBox ? "Verified OCR position · Click to focus" : "Semantic evidence without verified OCR position"}</small>
+                  </button>;
+                }) : <div className="visual-declaration-empty"><strong>No rule-relevant declaration evidence for this image.</strong><span>Unclassified OCR text remains available in the raw extraction.</span></div>}
               </div>
             </div>;
           })()}
         </div>
 
-        <div className="visual-check-note">Declaration evidence is AI-assisted. Bounding boxes are normalized from OCR geometry when coordinates and image dimensions are available. Missing coordinates are reported as location uncertain, not fabricated.</div>
+        <div className="visual-check-note">Boxes are rendered only from OCR geometry associated with a required field. PARAKH does not fabricate coordinates from semantic text.</div>
       </>}
     </section>
   );
