@@ -52,7 +52,8 @@ export function buildSemanticSchema(categoryOptions = []) {
 }
 
 export function buildSemanticPrompt({ detections = [], rawText = "", categoryOptions = [] } = {}) {
-  const compactDetections = detections.slice(0, 160).map((item) => ({
+  const compactDetections = detections.slice(0, 160).map((item, index) => ({
+    evidenceIndex: index,
     imageIndex: item.imageIndex,
     text: item.text,
     confidence: item.confidence,
@@ -69,11 +70,23 @@ export function buildSemanticPrompt({ detections = [], rawText = "", categoryOpt
 
 Map only fields supported by the image/OCR. Use visual context and nearby headings, not literal keyword matching. A value can belong to a label on another line or nearby, such as "READ MRP HERE" followed by a price. Correct OCR mistakes only when the image supports the correction. Never invent values.
 
-For every field return an object. Use empty strings for value/raw/evidence/imageIndex/evidenceIndex when the field is not detected, and status=absent. For a detected field return value, confidence (0..1), status (found/absent/not_detected/unreadable/ambiguous), imageIndex, and evidenceIndex. evidenceIndex must point to the most relevant RapidOCR detection when available; otherwise use 0. Use not_detected when the declaration is not visible anywhere in the supplied image(s); use unreadable only when you can see it but cannot read it; never guess from product knowledge. Keep product name and brand separate. Distinguish manufacturer/packer/marketer/importer, net quantity vs serving size, and MRP vs sale/offer price. Do not assess legal compliance.
+CRITICAL EVIDENCE RULES:
+1. evidenceIndex refers ONLY to the numbered RapidOCR detection objects below. It is not a guessed position in the image.
+2. For every FOUND field, evidenceIndex MUST point to the OCR detection containing the actual value text or the closest OCR fragment of that value. Do NOT point to a label-only detection such as "MRP", "Net Weight", "Manufactured by", "Contact", or "READ MRP HERE" when the actual value appears in another detection.
+3. For MRP, evidenceIndex must point to the numeric retail price (for example 229.00), ideally including the currency symbol/value if that same OCR detection contains it. Never use a standalone "MRP" label as MRP evidence.
+4. For netQuantity, evidenceIndex must point to the quantity value and unit (for example 500 g, 1 kg, 100 ml), not a standalone "Net Weight" or "Net Quantity" label.
+5. For dates, evidenceIndex must point to the actual date/month-year text, not the words "Mfg", "PKD", "Best Before", or "Expiry" alone.
+6. For productName, evidenceIndex must point to the actual product-name text. Do not classify advertising/copy text, benefits, ingredients, slogans, or usage instructions as the product name merely because they are prominent.
+7. For manufacturer/packer/importer/marketer and their addresses, evidenceIndex must point to the actual entity/address text, not the role heading alone. Use spatial context when the role heading and value are on adjacent lines.
+8. For consumer care phone/email and barcode, evidenceIndex must point to the actual phone/email/barcode text.
+9. Prefer the OCR fragment whose text has the greatest lexical overlap with the field value. A semantically related label with poor value overlap is NOT valid evidence.
+10. When no OCR detection corresponds to the value, set evidenceIndex=0 only because the schema requires an integer, but set status to unreadable or absent as appropriate. Do not invent geometry from an unrelated detection.
+
+For every field return an object. Use empty strings for value/raw/evidence/imageIndex/evidenceIndex when the field is not detected, and status=absent. For a detected field return value, confidence (0..1), status (found/absent/not_detected/unreadable/ambiguous), imageIndex, and evidenceIndex. Correct OCR mistakes only when the image supports the correction. Keep product name and brand separate. Distinguish manufacturer/packer/marketer/importer, net quantity vs serving size, and MRP vs sale/offer price. Do not assess legal compliance.
 
 suggestedCategory is optional. When uncertain, omit it. When supplied, use only one of the supplied category ids. Use empty strings for categoryId/categoryName/categoryPath/reason when no suggestion is made.
 
-RapidOCR detections:
+RapidOCR detections (evidenceIndex is the key):
 ${JSON.stringify(compactDetections)}
 
 Raw RapidOCR text:
