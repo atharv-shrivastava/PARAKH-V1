@@ -139,6 +139,71 @@ function normalizeField(field) {
   };
 }
 
+function validateSemanticFields(fields, rapidEvidence) {
+  const numericFields = new Set(["mrp", "netQuantity"]);
+  const phoneLike = /^\+?[0-9 ()-]{7,20}$/;
+  const emailLike = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const barcodeLike = /^[0-9]{8,14}$/;
+  const dateLike = /^(?:0?[1-9]|1[0-2])[\/.-]\d{2,4}|^\d{2,4}[\/.-](?:0?[1-9]|1[0-2])$/;
+  const unitLike = /^(?:g|kg|mg|ml|l|cm|mm|m|pcs?|pieces?|number|nos?)$/i;
+  const validated = {};
+  const warnings = [];
+
+  for (const [key, rawField] of Object.entries(fields || {})) {
+    const field = normalizeField(rawField);
+    const value = field.value == null ? "" : normalizeText(field.value);
+
+    if (field.status === "found" && !value) field.status = "absent";
+
+    if (field.status === "found") {
+      if (numericFields.has(key)) {
+        const n = Number(value.replace(/[^0-9.]/g, ""));
+        if (!Number.isFinite(n) || n < 0 || n > 100000000) {
+          field.status = "ambiguous";
+          field.value = null;
+          warnings.push(key + " failed numeric validation.");
+        }
+      } else if (key === "unit" && !unitLike.test(value)) {
+        field.status = "ambiguous";
+        warnings.push("Unit value failed format validation.");
+      } else if (key === "consumerCarePhone" && !phoneLike.test(value)) {
+        field.status = "ambiguous";
+        warnings.push("Consumer care phone failed format validation.");
+      } else if (key === "consumerCareEmail" && !emailLike.test(value)) {
+        field.status = "ambiguous";
+        warnings.push("Consumer care email failed format validation.");
+      } else if (key === "barcode" && !barcodeLike.test(value.replace(/\D/g, ""))) {
+        field.status = "ambiguous";
+        warnings.push("Barcode failed format validation.");
+      } else if (["dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate"].includes(key) && !dateLike.test(value)) {
+        field.status = "ambiguous";
+        warnings.push(key + " failed date-format validation.");
+      }
+
+      if (field.confidence < 0.55) {
+        field.status = "ambiguous";
+        warnings.push(key + " is below the automatic acceptance confidence threshold.");
+      }
+    }
+
+    const evidenceIndex = Number.isInteger(field.evidenceIndex) ? field.evidenceIndex : -1;
+    const evidence = evidenceIndex >= 0 ? rapidEvidence?.[evidenceIndex] : null;
+    validated[key] = {
+      ...field,
+      ...(evidence ? {
+        evidenceIndex,
+        imageIndex: Number.isInteger(field.imageIndex) ? field.imageIndex : evidence.imageIndex,
+        evidence: field.evidence || evidence.text,
+        boundingBox: evidence.boundingBox || null,
+        imageWidth: evidence.imageWidth || null,
+        imageHeight: evidence.imageHeight || null,
+      } : {}),
+    };
+  }
+
+  return { fields: validated, warnings };
+}
+
 function mergeSemanticFields(deterministicFields, aiFields, aiEnabled) {
   if (aiEnabled) return Object.fromEntries(Object.keys(aiFields || {}).map((key) => [key, normalizeField(aiFields[key])]));
   return Object.fromEntries(Object.entries(deterministicFields || {}).map(([key, value]) => [key, normalizeField(value)]));
@@ -275,7 +340,9 @@ function buildPresentationChecks(rapid, fields) {
 
 function buildStructuredResult(rapid, aiSemantic = null) {
   const reconciliation = interpretOcrFields({ detections: rapid.evidence, rawText: rapid.rawText });
-  const fields = mergeSemanticFields(reconciliation?.fields || {}, aiSemantic?.fields || {}, Boolean(aiSemantic?.enabled));
+  const mergedFields = mergeSemanticFields(reconciliation?.fields || {}, aiSemantic?.fields || {}, Boolean(aiSemantic?.enabled));
+  const validation = validateSemanticFields(mergedFields, rapid.evidence);
+  const fields = validation.fields;
   const result = {};
   for (const key of [
     "productName", "brandName", "manufacturer", "manufacturerAddress", "packer", "packerAddress",
