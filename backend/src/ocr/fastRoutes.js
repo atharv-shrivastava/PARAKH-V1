@@ -133,6 +133,10 @@ function normalizeField(field) {
     evidence: field.evidence ?? field.raw ?? null,
     status,
     ...(field.imageIndex != null ? { imageIndex: Number(field.imageIndex) } : {}),
+    ...(Number.isInteger(field.evidenceIndex) ? { evidenceIndex: Number(field.evidenceIndex) } : {}),
+    ...(field.boundingBox ? { boundingBox: field.boundingBox } : {}),
+    ...(field.imageWidth ? { imageWidth: Number(field.imageWidth) } : {}),
+    ...(field.imageHeight ? { imageHeight: Number(field.imageHeight) } : {}),
     ...(field.source ? { source: field.source } : {}),
     ...(field.verification ? { verification: field.verification } : {}),
     ...(field.votes ? { votes: field.votes } : {}),
@@ -358,6 +362,9 @@ function buildStructuredResult(rapid, aiSemantic = null) {
     text: item.text,
     confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0.55)),
     source: "rapidocr",
+    boundingBox: item.boundingBox || null,
+    imageWidth: item.imageWidth || null,
+    imageHeight: item.imageHeight || null,
   }));
   const declarationEvidence = buildSemanticDeclarationEvidence(fields);
   const presentationChecks = buildPresentationChecks(rapid, fields);
