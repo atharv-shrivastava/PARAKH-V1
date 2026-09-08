@@ -190,7 +190,25 @@ function validateSemanticFields(fields, rapidEvidence) {
       }
     }
 
-    const evidenceIndex = Number.isInteger(field.evidenceIndex) ? field.evidenceIndex : -1;
+    let evidenceIndex = Number.isInteger(field.evidenceIndex) ? field.evidenceIndex : -1;
+    if (evidenceIndex < 0 && field.status === "found") {
+      const target = normalizeText(field.evidence || field.raw || field.value).toLowerCase();
+      let bestScore = 0;
+      (rapidEvidence || []).forEach((item, index) => {
+        const candidate = normalizeText(item.text).toLowerCase();
+        if (!target || !candidate) return;
+        const score = target === candidate
+          ? 1
+          : target.includes(candidate) || candidate.includes(target)
+            ? 0.92
+            : 0;
+        if (score > bestScore) {
+          bestScore = score;
+          evidenceIndex = index;
+        }
+      });
+      if (bestScore < 0.9) evidenceIndex = -1;
+    }
     const evidence = evidenceIndex >= 0 ? rapidEvidence?.[evidenceIndex] : null;
     validated[key] = {
       ...field,
