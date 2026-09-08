@@ -21,8 +21,9 @@ const FIELD_VALUE_SCHEMA = {
     raw: { type: "string", nullable: true },
     evidence: { type: "string", nullable: true },
     confidence: { type: "number", minimum: 0, maximum: 1 },
-    status: { type: "string", enum: ["found", "absent", "unreadable", "ambiguous"] },
+    status: { type: "string", enum: ["found", "absent", "not_detected", "unreadable", "ambiguous"] },
     imageIndex: { type: "integer", minimum: 0, nullable: true },
+    evidenceIndex: { type: "integer", minimum: 0, nullable: true },
   },
   required: ["value", "confidence", "status"],
 };
@@ -52,6 +53,9 @@ export function buildSemanticPrompt({ detections = [], rawText = "", categoryOpt
     imageIndex: item.imageIndex,
     text: item.text,
     confidence: item.confidence,
+    boundingBox: item.boundingBox || null,
+    imageWidth: item.imageWidth || null,
+    imageHeight: item.imageHeight || null,
   }));
   const categories = categoryOptions.slice(0, 250).map((item) => ({
     id: String(item.id),
@@ -62,7 +66,7 @@ export function buildSemanticPrompt({ detections = [], rawText = "", categoryOpt
 
 Map only fields supported by the image/OCR. Use visual context and nearby headings, not literal keyword matching. A value can belong to a label on another line or nearby, such as "READ MRP HERE" followed by a price. Correct OCR mistakes only when the image supports the correction. Never invent values.
 
-For detected fields return value, confidence (0..1), status (found/absent/unreadable/ambiguous), with optional raw, evidence, imageIndex. OMIT unsupported fields. Keep product name and brand separate. Distinguish manufacturer/packer/marketer/importer, net quantity vs serving size, and MRP vs sale/offer price. Do not assess legal compliance.
+For detected fields return value, confidence (0..1), status (found/absent/not_detected/unreadable/ambiguous), with optional raw, evidence, imageIndex, and evidenceIndex. evidenceIndex must point to the most relevant RapidOCR detection when available. Use not_detected when the declaration is not visible anywhere in the supplied image(s); use unreadable only when you can see it but cannot read it; never guess from product knowledge. OMIT unsupported fields. Keep product name and brand separate. Distinguish manufacturer/packer/marketer/importer, net quantity vs serving size, and MRP vs sale/offer price. Do not assess legal compliance.
 
 suggestedCategory must use only a supplied category id and should be omitted when uncertain.
 
@@ -83,8 +87,8 @@ export function normalizeSemanticResult(parsed, categoryOptions = []) {
   for (const key of FIELD_KEYS) {
     const value = parsed?.[key] || {};
     const statusRaw = String(value?.status || "").toLowerCase();
-    const status = ["found", "absent", "unreadable", "ambiguous"].includes(statusRaw)
-      ? statusRaw
+    const status = ["found", "absent", "not_detected", "unreadable", "ambiguous"].includes(statusRaw)
+      ? statusRaw === "not_detected" ? "absent" : statusRaw
       : value?.value != null && text(value.value) ? "found" : "absent";
     normalized[key] = {
       value: value?.value ?? null,
@@ -93,6 +97,7 @@ export function normalizeSemanticResult(parsed, categoryOptions = []) {
       confidence: confidence(value?.confidence),
       status,
       ...(Number.isInteger(value?.imageIndex) ? { imageIndex: value.imageIndex } : {}),
+      ...(Number.isInteger(value?.evidenceIndex) ? { evidenceIndex: value.evidenceIndex } : {}),
     };
   }
   const suggestion = parsed?.suggestedCategory || {};
