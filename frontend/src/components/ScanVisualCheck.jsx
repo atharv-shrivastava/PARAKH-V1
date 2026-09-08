@@ -6,6 +6,17 @@ const STORAGE_KEY = "parakhVisualInspection";
 const DECLARATION_KEY = "parakhDeclarationEvidence";
 const MAX_IMAGES = 4;
 const MAX_ANALYSIS_SIDE = 900;
+const REQUIRED_OVERLAY_TYPES = new Set([
+  "PRODUCTNAME", "PRODUCT_NAME", "BRAND", "MANUFACTURER", "MANUFACTURERADDRESS",
+  "PACKER", "PACKERADDRESS", "IMPORTER", "IMPORTERADDRESS",
+  "NETQUANTITY", "UNIT", "MRP", "DATEOFMANUFACTURE", "DATEOFPACKING",
+  "BESTBEFORE", "EXPIRYDATE", "CONSUMERCAREPHONE", "CONSUMERCAREEMAIL",
+  "COUNTRYOFORIGIN", "BATCHNUMBER",
+]);
+const OVERLAY_COLORS = [
+  "#ff4d6d", "#7c3aed", "#0ea5e9", "#10b981", "#f59e0b",
+  "#ef4444", "#06b6d4", "#8b5cf6", "#14b8a6", "#f97316",
+];
 
 const DECLARATION_FIELD_TYPES = {
   productName: "PRODUCT_NAME",
@@ -135,6 +146,11 @@ function normalizeDeclaration(item, index) {
     text: String(item.text ?? item.extractedText ?? item.value ?? "").trim(),
     confidence: Math.max(0, Math.min(1, confidence)),
     source: item.source || "ocr",
+    status: item.status || "found",
+    value: item.value ?? item.text ?? null,
+    boundingBox: item.boundingBox || null,
+    imageWidth: Number(item.imageWidth || 0),
+    imageHeight: Number(item.imageHeight || 0),
   };
 }
 
@@ -146,6 +162,34 @@ function labelToFieldKey(label) {
     .filter(Boolean)
     .map((part, index) => index === 0 ? part.toLowerCase() : `${part[0].toUpperCase()}${part.slice(1).toLowerCase()}`)
     .join("");
+}
+
+function overlapRatio(a, b) {
+  const ax2 = a.left + a.width;
+  const ay2 = a.top + a.height;
+  const bx2 = b.left + b.width;
+  const by2 = b.top + b.height;
+  const ix = Math.max(0, Math.min(ax2, bx2) - Math.max(a.left, b.left));
+  const iy = Math.max(0, Math.min(ay2, by2) - Math.max(a.top, b.top));
+  const intersection = ix * iy;
+  const smaller = Math.max(1, Math.min(a.width * a.height, b.width * b.height));
+  return intersection / smaller;
+}
+
+function buildOverlayDeclarations(items) {
+  const candidates = items
+    .filter((item) => REQUIRED_OVERLAY_TYPES.has(String(item.type || "").toUpperCase()))
+    .filter((item) => item.status === "found" && item.text && item.boundingBox)
+    .map((item, index) => ({ ...item, color: OVERLAY_COLORS[index % OVERLAY_COLORS.length] }))
+    .sort((a, b) => Number(b.confidence || 0) - Number(a.confidence || 0));
+
+  const kept = [];
+  for (const candidate of candidates) {
+    if (!kept.some((existing) => existing.imageIndex === candidate.imageIndex && overlapRatio(existing.boundingBox, candidate.boundingBox) > 0.45)) {
+      kept.push(candidate);
+    }
+  }
+  return kept;
 }
 
 function readStoredDeclarations() {
@@ -235,6 +279,8 @@ export default function ScanVisualCheck() {
     return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
   }, [referenceWidth, results]);
 
+  const overlayDeclarations = useMemo(() => buildOverlayDeclarations(declarations), [declarations]);
+
   const placementLabel = results.some((item) => item.placement === "REVIEW")
     ? "Review"
     : results.length && results.every((item) => item.placement === "SCREENED")
@@ -314,8 +360,14 @@ export default function ScanVisualCheck() {
 
           <div className="visual-check-declarations">
             <h3>Declaration evidence</h3>
-            <p>OCR evidence is shown as text and source image number. No coordinate or overlay data is required.</p>
+            <p>Only rule-relevant, successfully mapped declarations are shown on the image. Click a colored box to inspect the field.</p>
             {declarations.length ? declarations.map((item, index) => (
+              <div className="declaration-evidence-row" key={item.id + "-" + index}>
+                <strong>{item.type.replaceAll("_", " ")}</strong>
+                <span>{item.text}</span>
+                <small>Image {item.imageIndex + 1} · {Math.round(item.confidence * 100)}%</small>
+              </div>
+            )) : <span>No declaration evidence was returned.</span>}
               <div className="declaration-evidence-row" key={`${item.id}-${index}`}>
                 <strong>{item.type.replaceAll("_", " ")}</strong>
                 <span>{item.text}</span>
