@@ -17,7 +17,7 @@ os.environ.setdefault("ORT_INTER_OP_NUM_THREADS", "1")
 import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 from rapidocr import RapidOCR
 
 app = FastAPI(title="PARAKH RapidOCR Service")
@@ -82,6 +82,26 @@ def _prepare_image(content: bytes):
         height = max(1, round(original_height * scale))
         pil_image = pil_image.resize((width, height), Image.Resampling.LANCZOS)
     return pil_image
+
+
+def _enhance_for_ocr(image):
+    """Conservative blur recovery for hard images.
+
+    Keep dimensions unchanged so OCR bounding boxes remain in the same coordinate
+    space as the already-tested pipeline. This path is only used when the first
+    OCR pass produces weak evidence.
+    """
+    enhanced = ImageEnhance.Contrast(image).enhance(1.12)
+    enhanced = enhanced.filter(ImageFilter.UnsharpMask(radius=1.2, percent=115, threshold=3))
+    return enhanced
+
+
+def _ocr_quality(entries):
+    if not entries:
+        return 0.0
+    confidences = [to_float(entry.get("confidence"), 0.0) for entry in entries]
+    avg_confidence = sum(confidences) / len(confidences)
+    return (min(len(entries), 30) / 30.0) * 0.4 + avg_confidence * 0.6
 
 
 def _cache_key(items: list[tuple[bytes, str]]) -> str:
@@ -176,13 +196,38 @@ async def _analyze_contents(items: list[tuple[bytes, str]]):
 
     async def run_one(image_index, array):
         image_started = time.monotonic()
-        result = await asyncio.to_thread(lambda arr=array: rapid(arr))
+
+        def infer(arr):
+            result = rapid(arr)
+            return extract_result(result, image_index, arr.shape[1], arr.shape[0])
+
+        entries = await asyncio.to_thread(infer, array)
+        initial_quality = _ocr_quality(entries)
+        used_fallback = False
+
+        # Only retry weak OCR results. Sharp/normal images keep the exact fast
+        # path that has already been benchmarked successfully.
+        if initial_quality < 0.62:
+            fallback_started = time.monotonic()
+            enhanced = np.asarray(_enhance_for_ocr(Image.fromarray(array)))
+            fallback_entries = await asyncio.to_thread(infer, enhanced)
+            fallback_quality = _ocr_quality(fallback_entries)
+            if fallback_quality > initial_quality:
+                entries = fallback_entries
+            used_fallback = True
+            fallback_ms = round((time.monotonic() - fallback_started) * 1000)
+            print(
+                f"[ocr:rapid] image={image_index + 1} blurFallback=True "
+                f"initialQuality={initial_quality:.3f} fallbackQuality={fallback_quality:.3f} "
+                f"fallback={fallback_ms}ms"
+            )
+
         one_engine_ms = round((time.monotonic() - image_started) * 1000)
-        entries = extract_result(result, image_index, array.shape[1], array.shape[0])
         print(
             f"[ocr:rapid] image={image_index + 1} "
             f"size={array.shape[1]}x{array.shape[0]} "
-            f"engine={one_engine_ms}ms entries={len(entries)}"
+            f"engine={one_engine_ms}ms entries={len(entries)} "
+            f"fallback={used_fallback}"
         )
         return image_index, one_engine_ms, entries
 
