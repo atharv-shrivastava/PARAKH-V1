@@ -14,18 +14,20 @@ export function text(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+// Keep the API schema deliberately conservative. Gemini structured output supports
+// a limited JSON-Schema subset, so nullable/optional nested properties are avoided.
 const FIELD_VALUE_SCHEMA = {
   type: "object",
   properties: {
-    value: { type: "string", nullable: true },
-    raw: { type: "string", nullable: true },
-    evidence: { type: "string", nullable: true },
+    value: { type: "string" },
+    raw: { type: "string" },
+    evidence: { type: "string" },
     confidence: { type: "number", minimum: 0, maximum: 1 },
     status: { type: "string", enum: ["found", "absent", "not_detected", "unreadable", "ambiguous"] },
-    imageIndex: { type: "integer", minimum: 0, nullable: true },
-    evidenceIndex: { type: "integer", minimum: 0, nullable: true },
+    imageIndex: { type: "integer", minimum: 0 },
+    evidenceIndex: { type: "integer", minimum: 0 },
   },
-  required: ["value", "confidence", "status"],
+  required: ["value", "raw", "evidence", "confidence", "status", "imageIndex", "evidenceIndex"],
 };
 
 export function buildSemanticSchema(categoryOptions = []) {
@@ -36,15 +38,16 @@ export function buildSemanticSchema(categoryOptions = []) {
       suggestedCategory: {
         type: "object",
         properties: {
-          categoryId: { type: "string", nullable: true },
-          categoryName: { type: "string", nullable: true },
-          categoryPath: { type: "string", nullable: true },
+          categoryId: { type: "string" },
+          categoryName: { type: "string" },
+          categoryPath: { type: "string" },
           confidence: { type: "number", minimum: 0, maximum: 1 },
-          reason: { type: "string", nullable: true },
+          reason: { type: "string" },
         },
-        required: ["categoryId", "confidence"],
+        required: ["categoryId", "categoryName", "categoryPath", "confidence", "reason"],
       },
     },
+    required: FIELD_KEYS,
   };
 }
 
@@ -66,9 +69,9 @@ export function buildSemanticPrompt({ detections = [], rawText = "", categoryOpt
 
 Map only fields supported by the image/OCR. Use visual context and nearby headings, not literal keyword matching. A value can belong to a label on another line or nearby, such as "READ MRP HERE" followed by a price. Correct OCR mistakes only when the image supports the correction. Never invent values.
 
-For detected fields return value, confidence (0..1), status (found/absent/not_detected/unreadable/ambiguous), with optional raw, evidence, imageIndex, and evidenceIndex. evidenceIndex must point to the most relevant RapidOCR detection when available. Use not_detected when the declaration is not visible anywhere in the supplied image(s); use unreadable only when you can see it but cannot read it; never guess from product knowledge. OMIT unsupported fields. Keep product name and brand separate. Distinguish manufacturer/packer/marketer/importer, net quantity vs serving size, and MRP vs sale/offer price. Do not assess legal compliance.
+For every field return an object. Use empty strings for value/raw/evidence/imageIndex/evidenceIndex when the field is not detected, and status=absent. For a detected field return value, confidence (0..1), status (found/absent/not_detected/unreadable/ambiguous), imageIndex, and evidenceIndex. evidenceIndex must point to the most relevant RapidOCR detection when available; otherwise use 0. Use not_detected when the declaration is not visible anywhere in the supplied image(s); use unreadable only when you can see it but cannot read it; never guess from product knowledge. Keep product name and brand separate. Distinguish manufacturer/packer/marketer/importer, net quantity vs serving size, and MRP vs sale/offer price. Do not assess legal compliance.
 
-suggestedCategory must use only a supplied category id and should be omitted when uncertain.
+suggestedCategory is optional. When uncertain, omit it. When supplied, use only one of the supplied category ids. Use empty strings for categoryId/categoryName/categoryPath/reason when no suggestion is made.
 
 RapidOCR detections:
 ${JSON.stringify(compactDetections)}
@@ -91,9 +94,9 @@ export function normalizeSemanticResult(parsed, categoryOptions = []) {
       ? statusRaw === "not_detected" ? "absent" : statusRaw
       : value?.value != null && text(value.value) ? "found" : "absent";
     normalized[key] = {
-      value: value?.value ?? null,
-      raw: value?.raw ?? null,
-      evidence: value?.evidence ?? value?.raw ?? value?.value ?? null,
+      value: value?.value != null && text(value.value) ? value.value : null,
+      raw: value?.raw != null && text(value.raw) ? value.raw : null,
+      evidence: value?.evidence != null && text(value.evidence) ? value.evidence : null,
       confidence: confidence(value?.confidence),
       status,
       ...(Number.isInteger(value?.imageIndex) ? { imageIndex: value.imageIndex } : {}),
