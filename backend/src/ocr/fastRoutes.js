@@ -45,52 +45,25 @@ async function analyzeWithRapid(images) {
   });
   console.log("[RapidOCR] Target:", `${ocrUrl}/api/ocr/analyze`);
 
-let response;
+  let response;
+  try {
+    response = await fetch(`${ocrUrl}/api/ocr/analyze`, { method: "POST", body: formData });
+  } catch (error) {
+    console.error("[RapidOCR] Connection error:", error);
+    throw Object.assign(new Error(`Could not reach RapidOCR: ${error.message}`), { code: "OCR_RAPID_CONNECTION_ERROR", statusCode: 502 });
+  }
 
-try {
-  response = await fetch(`${ocrUrl}/api/ocr/analyze`, {
-    method: "POST",
-    body: formData,
-  });
-} catch (error) {
-  console.error("[RapidOCR] Connection error:", error);
+  const responseText = await response.text();
+  console.log("[RapidOCR] HTTP status:", response.status);
+  console.log("[RapidOCR] Response:", responseText);
 
-  throw Object.assign(
-    new Error(`Could not reach RapidOCR: ${error.message}`),
-    {
-      code: "OCR_RAPID_CONNECTION_ERROR",
-      statusCode: 502,
-    }
-  );
-}
+  let data = {};
+  try { data = JSON.parse(responseText); } catch {}
 
-const responseText = await response.text();
+  if (!response.ok) {
+    throw Object.assign(new Error(data?.error || data?.message || data?.detail || `RapidOCR returned HTTP ${response.status}`), { code: "OCR_RAPID_ERROR", statusCode: 502 });
+  }
 
-console.log("[RapidOCR] HTTP status:", response.status);
-console.log("[RapidOCR] Response:", responseText);
-
-let data = {};
-
-try {
-  data = JSON.parse(responseText);
-} catch {
-  // RapidOCR returned non-JSON content.
-}
-
-if (!response.ok) {
-  throw Object.assign(
-    new Error(
-      data?.error ||
-      data?.message ||
-      data?.detail ||
-      `RapidOCR returned HTTP ${response.status}`
-    ),
-    {
-      code: "OCR_RAPID_ERROR",
-      statusCode: 502,
-    }
-  );
-}
   const evidence = Array.isArray(data?.result?.declarationEvidence)
     ? data.result.declarationEvidence.map((item, index) => {
         const serviceImageIndex = Number(item?.imageIndex);
@@ -183,7 +156,6 @@ function validateSemanticFields(fields, rapidEvidence) {
         field.status = "ambiguous";
         warnings.push(key + " failed date-format validation.");
       }
-
       if (field.confidence < 0.55) {
         field.status = "ambiguous";
         warnings.push(key + " is below the automatic acceptance confidence threshold.");
@@ -191,6 +163,8 @@ function validateSemanticFields(fields, rapidEvidence) {
     }
 
     let evidenceIndex = Number.isInteger(field.evidenceIndex) ? field.evidenceIndex : -1;
+    if (evidenceIndex < 0 || evidenceIndex >= (rapidEvidence || []).length) evidenceIndex = -1;
+
     if (evidenceIndex < 0 && field.status === "found") {
       const target = normalizeText(field.evidence || field.raw || field.value).toLowerCase();
       let bestScore = 0;
@@ -209,6 +183,7 @@ function validateSemanticFields(fields, rapidEvidence) {
       });
       if (bestScore < 0.9) evidenceIndex = -1;
     }
+
     const evidence = evidenceIndex >= 0 ? rapidEvidence?.[evidenceIndex] : null;
     validated[key] = {
       ...field,
@@ -216,9 +191,9 @@ function validateSemanticFields(fields, rapidEvidence) {
         evidenceIndex,
         imageIndex: Number.isInteger(field.imageIndex) ? field.imageIndex : evidence.imageIndex,
         evidence: field.evidence || evidence.text,
-        boundingBox: evidence.boundingBox || null,
-        imageWidth: evidence.imageWidth || null,
-        imageHeight: evidence.imageHeight || null,
+        boundingBox: field.boundingBox || evidence.boundingBox || null,
+        imageWidth: field.imageWidth || evidence.imageWidth || null,
+        imageHeight: field.imageHeight || evidence.imageHeight || null,
       } : {}),
     };
   }
@@ -231,22 +206,55 @@ function mergeSemanticFields(deterministicFields, aiFields, aiEnabled) {
   return Object.fromEntries(Object.entries(deterministicFields || {}).map(([key, value]) => [key, normalizeField(value)]));
 }
 
+const DECLARATION_TYPE_BY_FIELD = {
+  productName: "PRODUCT_NAME",
+  brandName: "BRAND",
+  manufacturer: "MANUFACTURER",
+  manufacturerAddress: "ADDRESS",
+  packer: "PACKER",
+  packerAddress: "ADDRESS",
+  marketer: "MARKETER",
+  marketerAddress: "ADDRESS",
+  importer: "IMPORTER",
+  importerAddress: "ADDRESS",
+  netQuantity: "NET_QUANTITY",
+  unit: "NET_QUANTITY",
+  mrp: "MRP",
+  currency: "MRP",
+  dateOfManufacture: "DATE_OF_MANUFACTURE",
+  dateOfPacking: "DATE_OF_PACKING",
+  bestBefore: "BEST_BEFORE",
+  expiryDate: "EXPIRY_DATE",
+  batchNumber: "BATCH_NUMBER",
+  consumerCarePhone: "CONSUMER_CARE",
+  consumerCareEmail: "CONSUMER_CARE",
+  countryOfOrigin: "COUNTRY_OF_ORIGIN",
+  fssaiLicenseNumber: "FSSAI_LICENSE",
+  barcode: "BARCODE",
+};
+
 function buildSemanticDeclarationEvidence(fields) {
   return Object.entries(fields || {}).map(([key, field], index) => {
     const normalized = normalizeField(field);
-    const value = normalized.value == null ? "" : normalizeText(normalized.value);
-    if (!value) return null;
+    if (!normalized.value || !["found", "ambiguous"].includes(normalized.status)) return null;
+    const type = DECLARATION_TYPE_BY_FIELD[key] || "OTHER_DECLARATION";
+    const evidenceText = normalizeText(normalized.evidence || normalized.raw || normalized.value);
+    if (!evidenceText) return null;
     return {
       id: `semantic-${key}-${index}`,
       imageIndex: Number.isInteger(normalized.imageIndex) ? normalized.imageIndex : 0,
-      type: key.toUpperCase(),
-      label: key.replace(/([A-Z])/g, " $1").replace(/^./, (char) => char.toUpperCase()),
-      text: value,
-      value,
+      type,
+      label: type.replace(/_/g, " "),
+      text: evidenceText,
+      value: normalized.value,
       confidence: normalized.confidence,
       status: normalized.status,
-      source: field?.source || "SEMANTIC_CONSENSUS",
-      ...(field?.verification ? { verification: field.verification } : {}),
+      source: normalized.source || "SEMANTIC_CONSENSUS",
+      ...(Number.isInteger(normalized.evidenceIndex) ? { evidenceIndex: normalized.evidenceIndex } : {}),
+      ...(normalized.boundingBox ? { boundingBox: normalized.boundingBox } : {}),
+      ...(normalized.imageWidth ? { imageWidth: normalized.imageWidth } : {}),
+      ...(normalized.imageHeight ? { imageHeight: normalized.imageHeight } : {}),
+      ...(normalized.verification ? { verification: normalized.verification } : {}),
     };
   }).filter(Boolean);
 }
@@ -286,11 +294,7 @@ function buildPresentationChecks(rapid, fields) {
     let best = null;
     for (const item of rapid.evidence || []) {
       if (!item?.boundingBox || (Number.isInteger(field.imageIndex) && item.imageIndex !== field.imageIndex)) continue;
-      const score = Math.max(
-        similarity(target, item.text),
-        similarity(field.raw, item.text),
-        similarity(field.evidence, item.text),
-      );
+      const score = Math.max(similarity(target, item.text), similarity(field.raw, item.text), similarity(field.evidence, item.text));
       if (score < 0.45) continue;
       if (!best || score > best.score || (score === best.score && item.confidence > best.item.confidence)) best = { item, score };
     }
@@ -312,9 +316,7 @@ function buildPresentationChecks(rapid, fields) {
     else if (field.value) readability = "LIKELY_READABLE";
 
     let fontSizeScreening = "NOT_MEASURED";
-    if (box && lineHeightRatio !== null) {
-      fontSizeScreening = lineHeightRatio < 0.006 ? "VERY_SMALL_REVIEW" : lineHeightRatio < 0.010 ? "SMALL_TEXT_REVIEW" : "DETECTED";
-    }
+    if (box && lineHeightRatio !== null) fontSizeScreening = lineHeightRatio < 0.006 ? "VERY_SMALL_REVIEW" : lineHeightRatio < 0.010 ? "SMALL_TEXT_REVIEW" : "DETECTED";
 
     let placement = "NOT_LOCATED";
     let zone = null;
@@ -464,6 +466,10 @@ async function handleFastAnalyze(req, res, files) {
       + `providers=${aiSemantic.providerCount} total=${totalMs}ms`,
     );
 
+    const unavailableReasons = (aiSemantic.providers || [])
+      .filter((provider) => !provider.enabled)
+      .map((provider) => `${provider.provider}: ${provider.reason || "unavailable"}`);
+
     res.json({
       result,
       provider: "rapidocr",
@@ -474,7 +480,7 @@ async function handleFastAnalyze(req, res, files) {
       semantic: aiSemantic.enabled ? { provider: "consensus", providers: aiSemantic.providers, providerCount: aiSemantic.providerCount, enabled: true } : null,
       aiSuggestedCategory: aiSemantic.suggestedCategory || null,
       aiSemanticEnabled: Boolean(aiSemantic.enabled),
-      aiSemanticError: aiSemantic.enabled ? null : "No semantic AI provider was available.",
+      aiSemanticError: aiSemantic.enabled ? null : unavailableReasons.join(" | ") || "No semantic AI provider was available.",
       timing: { uploadMs, rapidMs, semanticMs, geminiMs: aiSemantic.timing?.gemini ?? 0, cloudflareGemmaMs: aiSemantic.timing?.["cloudflare-gemma"] ?? 0, cloudflareMoondreamMs: aiSemantic.timing?.["cloudflare-moondream"] ?? 0, totalMs, parallelMs },
       fallbackReason: result.warnings?.find((item) => item.includes("remote AI semantic providers unavailable")) || null,
     });
