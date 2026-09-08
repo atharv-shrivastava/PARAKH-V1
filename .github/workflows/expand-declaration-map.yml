@@ -9,7 +9,6 @@ permissions:
 
 jobs:
   expand-map:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,8 +26,6 @@ jobs:
 
           pattern = r'function buildSemanticDeclarationEvidence\(fields\) \{.*?\n\}\n\nfunction buildPresentationChecks'
           replacement = '''// PARAKH_ALL_POPULATED_DECLARATIONS_MAPPED
-          // Every populated semantic field with trustworthy OCR geometry is eligible for mapping.
-          // Currency markers and unit-only helper fields are excluded because they are not standalone declarations.
           function buildSemanticDeclarationEvidence(fields) {
             const excluded = new Set(["currency", "unit"]);
             return Object.entries(fields || {}).map(([key, field], index) => {
@@ -92,6 +89,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add backend/src/ocr/fastRoutes.js frontend/src/components/ScanVisualCheck.jsx
+          if git diff --cached --quiet; then exit 0; fi
           git diff --cached --check
           git commit -m "Expand declaration map to every populated field"
           git push origin main
