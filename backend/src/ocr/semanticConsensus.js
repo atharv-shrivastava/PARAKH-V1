@@ -12,12 +12,42 @@ function isFound(field) {
   return field?.status === "found" && text(field?.value) !== "";
 }
 
+// Manufacturing/batch/inkjet codes are frequently short alphanumeric strings.
+// Do not let them become product names simply because a semantic model selected them.
+// Keep common consumer-facing names such as 7UP or 5 STAR valid by requiring a
+// stronger code signature: either an explicit # numeric code or a compact run of
+// letters followed by at least two digits.
+function looksLikeProductCode(value) {
+  const source = text(value).toUpperCase().replace(/\s+/g, "");
+  if (!source) return false;
+  if (/^#\d{2,8}$/.test(source)) return true;
+  if (/^[A-Z]{2,}\d{2,}[A-Z0-9]*$/.test(source) && source.length <= 20) return true;
+  return false;
+}
+
+function sanitizeField(key, field) {
+  if (!field || typeof field !== "object") return field;
+  if (key === "productName" && isFound(field) && looksLikeProductCode(field.value)) {
+    return {
+      ...field,
+      value: null,
+      raw: field.raw ?? text(field.value),
+      evidence: field.evidence ?? text(field.value),
+      confidence: 0,
+      status: "absent",
+      verification: "rejected-product-code",
+      source: "SEMANTIC_CONSENSUS",
+    };
+  }
+  return field;
+}
+
 function voteField(key, providers) {
   const observations = providers
     .filter((provider) => provider?.enabled && provider?.fields?.[key])
     .map((provider) => ({
       provider: provider.provider,
-      field: provider.fields[key],
+      field: sanitizeField(key, provider.fields[key]),
       normalized: comparable(provider.fields[key].value),
     }));
 
@@ -73,9 +103,6 @@ function voteCategory(providers, categoryOptions) {
   const best = [...winning].sort((a, b) => confidence(b.category.confidence) - confidence(a.category.confidence))[0];
   const enabledCount = providers.filter((item) => item?.enabled).length;
 
-  // One enabled semantic model is still a valid AI suggestion. Consensus is
-  // stronger when multiple providers agree, but a single provider should not
-  // make the category disappear from the UI.
   if (winning.length === 1 && enabledCount === 1) {
     return {
       categoryId: allowed ? String(allowed.id) : winning[0].id,
