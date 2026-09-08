@@ -186,10 +186,19 @@ async def _analyze_contents(items: list[tuple[bytes, str]]):
         )
         return image_index, one_engine_ms, entries
 
-    # Run independent image OCR jobs concurrently, then restore image-index order.
-    results = await asyncio.gather(
-        *(run_one(image_index, array) for image_index, array in enumerate(prepared))
-    )
+    if _use_dml:
+        # DirectML inference through one shared RapidOCR instance is kept
+        # sequential. This avoids concurrent execution races on the shared
+        # execution provider and keeps detection results deterministic.
+        results = []
+        for image_index, array in enumerate(prepared):
+            results.append(await run_one(image_index, array))
+    else:
+        # CPU inference can use independent worker calls concurrently.
+        results = list(await asyncio.gather(
+            *(run_one(image_index, array) for image_index, array in enumerate(prepared))
+        ))
+
     results.sort(key=lambda item: item[0])
 
     all_entries = []
@@ -232,7 +241,7 @@ async def warmup():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "parakh-rapidocr", "engine": "RapidOCR", "useDML": _use_dml}
+    return {"status": "ok", "service": "parakh-rapidocr", "engine": "RapidOCR"}
 
 
 @app.post("/api/ocr/analyze")
