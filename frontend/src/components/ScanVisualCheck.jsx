@@ -139,9 +139,6 @@ function normalizeBoundingBox(box) {
   const width = Number(box.width ?? box.w);
   const height = Number(box.height ?? box.h);
   if (![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
-
-  // PaddleOCR returns normalized coordinates in the 0..1 range.
-  // Never divide by 100 here: doing so shifts valid boxes into the top-left corner.
   if ([left, top, width, height].every((value) => value >= 0 && value <= 1)) {
     const safeLeft = Math.min(1, left);
     const safeTop = Math.min(1, top);
@@ -152,9 +149,6 @@ function normalizeBoundingBox(box) {
       height: Math.min(1 - safeTop, height),
     };
   }
-
-  // Legacy pixel-coordinate evidence cannot be converted reliably without the
-  // source image dimensions, so do not render a fabricated position.
   return null;
 }
 
@@ -213,18 +207,10 @@ function deriveDeclarationsFromOcrFields() {
     const value = fieldNode.querySelector("span")?.textContent?.trim() || "";
     const confidenceText = fieldNode.querySelector("small")?.textContent || "";
     if (!value) return accumulator;
-
     const fieldKey = labelToFieldKey(label);
     const type = DECLARATION_FIELD_TYPES[fieldKey] || "OTHER_DECLARATION";
     const parsedConfidence = Number(confidenceText.match(/([0-9]+(?:\.[0-9]+)?)\s*%/)?.[1] || 0);
-    accumulator.push(normalizeDeclaration({
-      imageIndex: 0,
-      type,
-      text: value,
-      confidence: parsedConfidence / 100,
-      boundingBox: null,
-      source: "ocr-fields-fallback",
-    }, index));
+    accumulator.push(normalizeDeclaration({ imageIndex: 0, type, text: value, confidence: parsedConfidence / 100, boundingBox: null, source: "ocr-fields-fallback" }, index));
     return accumulator;
   }, []).filter(Boolean);
 }
@@ -236,6 +222,8 @@ export default function ScanVisualCheck() {
   const [activeDeclarationImage, setActiveDeclarationImage] = useState(0);
   const [open, setOpen] = useState(true);
   const [referenceWidth, setReferenceWidth] = useState("");
+  const [calibratedWidth, setCalibratedWidth] = useState("");
+  const [calibrationMessage, setCalibrationMessage] = useState("");
   const [declarationBusy, setDeclarationBusy] = useState(false);
 
   useEffect(() => {
@@ -247,7 +235,6 @@ export default function ScanVisualCheck() {
         setDeclarationBusy(false);
         return;
       }
-
       const derived = deriveDeclarationsFromOcrFields();
       if (derived.length) {
         setDeclarations(derived);
@@ -258,16 +245,13 @@ export default function ScanVisualCheck() {
       }
       setDeclarationBusy(false);
     };
-
     refreshDeclarations();
     const handleEvidence = (event) => refreshDeclarations(event.detail);
     window.addEventListener("parakh:declaration-evidence", handleEvidence);
-
     const observer = new MutationObserver(() => {
       if (!readStoredDeclarations().length && !declarations.length) refreshDeclarations();
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-
     return () => {
       window.removeEventListener("parakh:declaration-evidence", handleEvidence);
       observer.disconnect();
@@ -278,7 +262,6 @@ export default function ScanVisualCheck() {
     let cancelled = false;
     const sources = getScanImages();
     if (!sources.length) return undefined;
-
     Promise.all(sources.map((src) => inspectImageSource(src).catch(() => null)))
       .then((next) => {
         if (cancelled) return;
@@ -287,10 +270,7 @@ export default function ScanVisualCheck() {
       .catch(() => {
         if (!cancelled) setResults([]);
       });
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -301,12 +281,12 @@ export default function ScanVisualCheck() {
   const label = average >= 75 ? "Good" : average >= 50 ? "Fair" : "Poor";
 
   const estimatedMm = useMemo(() => {
-    const widthMm = Number(referenceWidth);
+    const widthMm = Number(calibratedWidth);
     if (!Number.isFinite(widthMm) || widthMm <= 0) return null;
     const values = results.filter((item) => item.medianLineHeight > 0).map((item) => (item.medianLineHeight * widthMm) / item.width);
     if (!values.length) return null;
     return values.reduce((sum, value) => sum + value, 0) / values.length;
-  }, [referenceWidth, results]);
+  }, [calibratedWidth, results]);
 
   const placementLabel = results.length === 0 ? "Needs review" : results.some((item) => item.placement === "REVIEW") ? "Review" : results.every((item) => item.placement === "SCREENED") ? "Screened" : "Needs review";
   const hasOcr = typeof document !== "undefined" && document.querySelectorAll(".ocr-fields-grid > div").length > 0;
@@ -319,6 +299,7 @@ export default function ScanVisualCheck() {
       textDetected: results.some((item) => item.textLines > 0),
       placementReview: results.some((item) => item.placement === "REVIEW"),
       fontSizeCalibrated: estimatedMm !== null,
+      calibrationWidthMm: calibratedWidth ? Number(calibratedWidth) : null,
       estimatedTextHeightMm: estimatedMm,
       declarationCoverageScreened: hasOcr,
       imagesChecked: results.length,
@@ -327,7 +308,7 @@ export default function ScanVisualCheck() {
     };
     window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(detail));
     window.dispatchEvent(new CustomEvent("parakh:visual-analysis", { detail }));
-  }, [results, average, estimatedMm, hasOcr, declarations]);
+  }, [results, average, estimatedMm, hasOcr, declarations, calibratedWidth]);
 
   if (!results.length) return null;
 
@@ -352,7 +333,12 @@ export default function ScanVisualCheck() {
         <div className="visual-check-calibration">
           <label>
             <span>Known package face width (mm)</span>
-            <input type="number" min="1" step="0.1" placeholder="Optional calibration" value={referenceWidth} onChange={(event) => setReferenceWidth(event.target.value)} />
+            <input type="number" min="1" step="0.1" placeholder="Enter width for calibration" value={referenceWidth} onChange={(event) => setReferenceWidth(event.target.value)} />
+            <div className="visual-calibration-actions">
+              <button type="button" className="primary-button visual-calibration-button" disabled={!Number(referenceWidth) || Number(referenceWidth) <= 0} onClick={() => { setCalibratedWidth(referenceWidth); setCalibrationMessage(`Calibration applied using ${Number(referenceWidth).toFixed(1)} mm reference width.`); }}>Calibrate</button>
+              {calibratedWidth && <button type="button" className="secondary-button" onClick={() => { setCalibratedWidth(""); setCalibrationMessage("Calibration cleared."); }}>Clear</button>}
+            </div>
+            {calibrationMessage && <small className="visual-calibration-status">{calibrationMessage}</small>}
           </label>
           <div>
             <strong>Estimated text height</strong>
@@ -372,7 +358,7 @@ export default function ScanVisualCheck() {
             <span>Text coverage {item.textCoverage}%</span>
             <span>Edge crowding {item.edgeCrowding}% · {item.placement === "REVIEW" ? "Review" : item.placement === "SCREENED" ? "Screened" : "Unable to verify"}</span>
             <span>Median detected line {item.medianLineHeight || "n/a"} px</span>
-            <span>Calibrated size {estimatedMm === null ? "n/a" : `${(item.medianLineHeight * Number(referenceWidth) / item.width).toFixed(2)} mm`}</span>
+            <span>Calibrated size {estimatedMm === null ? "n/a" : `${(item.medianLineHeight * Number(calibratedWidth) / item.width).toFixed(2)} mm`}</span>
           </div>)}
         </div>
 
@@ -407,19 +393,9 @@ export default function ScanVisualCheck() {
             return <div className="visual-declaration-card is-single">
               <div className="visual-declaration-canvas">
                 <img src={image} alt={`Declaration map for package image ${imageIndex + 1}`} />
-                {imageDeclarations.map((item, index) => item.boundingBox && <div
-  className="visual-declaration-box"
-  key={`${item.type}-${item._index ?? index}`}
-  style={{
-    left: `${item.boundingBox.left * 100}%`,
-    top: `${item.boundingBox.top * 100}%`,
-    width: `${item.boundingBox.width * 100}%`,
-    height: `${item.boundingBox.height * 100}%`,
-  }}
-  title={item.text ? `${item.type.replaceAll("_", " ")} · ${item.text}` : item.type.replaceAll("_", " ")}
->
-  <span style={declarationLabelStyle(item.boundingBox)}>{item.type.replaceAll("_", " ")}</span>
-</div>)}
+                {imageDeclarations.map((item, index) => item.boundingBox && <div className="visual-declaration-box" key={`${item.type}-${item._index ?? index}`} style={{ left: `${item.boundingBox.left * 100}%`, top: `${item.boundingBox.top * 100}%`, width: `${item.boundingBox.width * 100}%`, height: `${item.boundingBox.height * 100}%` }} title={item.text ? `${item.type.replaceAll("_", " ")} · ${item.text}` : item.type.replaceAll("_", " ")}>
+                  <span style={declarationLabelStyle(item.boundingBox)}>{item.type.replaceAll("_", " ")}</span>
+                </div>)}
               </div>
               <div className="visual-declaration-list">
                 {imageDeclarations.length ? imageDeclarations.map((item, index) => <div key={`${item.type}-${item._index ?? index}`}><strong>{item.type.replaceAll("_", " ")}</strong><span>{item.text || "Declaration detected"}</span><small>{item.boundingBox ? "localized" : "location uncertain"}</small></div>) : <div className="visual-declaration-empty"><strong>No semantic declaration evidence for this image.</strong><span>Physical OCR text is kept as evidence, but unclassified OCR lines are not presented as declarations.</span></div>}
