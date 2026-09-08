@@ -70,13 +70,23 @@ export function buildSemanticPrompt({ detections = [], rawText = "", categoryOpt
 
 Map only fields supported by the image/OCR. Use visual context and nearby headings, not literal keyword matching. A value can belong to a label on another line or nearby, such as "READ MRP HERE" followed by a price. Correct OCR mistakes only when the image supports the correction. Never invent values.
 
+CRITICAL PRODUCT NAME RULES:
+1. productName means the consumer-facing marketed name of the actual product, not an internal identifier.
+2. NEVER classify batch numbers, lot numbers, manufacturing/inkjet codes, serial codes, MRP values, dates, weights, barcodes, FSSAI numbers, license numbers, phone numbers, addresses, USP markings, or other regulatory/production codes as productName.
+3. A compact alphanumeric token containing letters and multiple digits, such as "BAAYZ011", is strongly indicative of a batch/printing code. It MUST NOT be returned as productName, even if it is prominent in OCR or visually easy to read.
+4. A token such as "#0326" or a similar short numeric/marked code MUST NOT be returned as productName.
+5. Do not infer a productName merely because a candidate is the largest remaining OCR box. Product-name selection requires positive semantic and visual evidence that the text is consumer-facing product branding/name.
+6. Common legitimate marketed names containing numbers (for example 7UP or a product line with a number) may be accepted only when the image/context clearly presents them as branding or a product name. Do not reject every alphanumeric product name blindly.
+7. If the product name is not confidently visible, return value="", status="absent". Do NOT guess from batch codes, manufacturer text, slogans, claims, ingredients, or category names.
+8. Keep productName separate from brandName. A brand logo/name is not automatically the product name, and a batch code is never the product name.
+
 CRITICAL EVIDENCE RULES:
 1. evidenceIndex refers ONLY to the numbered RapidOCR detection objects below. It is not a guessed position in the image.
 2. For every FOUND field, evidenceIndex MUST point to the OCR detection containing the actual value text or the closest OCR fragment of that value. Do NOT point to a label-only detection such as "MRP", "Net Weight", "Manufactured by", "Contact", or "READ MRP HERE" when the actual value appears in another detection.
 3. For MRP, evidenceIndex must point to the numeric retail price (for example 229.00), ideally including the currency symbol/value if that same OCR detection contains it. Never use a standalone "MRP" label as MRP evidence.
 4. For netQuantity, evidenceIndex must point to the quantity value and unit (for example 500 g, 1 kg, 100 ml), not a standalone "Net Weight" or "Net Quantity" label.
 5. For dates, evidenceIndex must point to the actual date/month-year text, not the words "Mfg", "PKD", "Best Before", or "Expiry" alone.
-6. For productName, evidenceIndex must point to the actual product-name text. Do not classify advertising/copy text, benefits, ingredients, slogans, or usage instructions as the product name merely because they are prominent.
+6. For productName, evidenceIndex MUST point to the actual product-name text. Never point to a batch/lot/inkjet code as productName evidence. If there is no trustworthy product-name OCR detection, return productName as absent rather than attaching an unrelated box.
 7. For manufacturer/packer/importer/marketer and their addresses, evidenceIndex must point to the actual entity/address text, not the role heading alone. Use spatial context when the role heading and value are on adjacent lines.
 8. For consumer care phone/email and barcode, evidenceIndex must point to the actual phone/email/barcode text.
 9. Prefer the OCR fragment whose text has the greatest lexical overlap with the field value. A semantically related label with poor value overlap is NOT valid evidence.
@@ -121,7 +131,7 @@ export function normalizeSemanticResult(parsed, categoryOptions = []) {
   return {
     fields: normalized,
     suggestedCategory: {
-      categoryId: allowed ? String(allowed.id) : null,
+      categoryId: allowed ? String(allowed.id) : text(suggestion.categoryId) || null,
       categoryName: allowed ? text(allowed.name) : text(suggestion.categoryName) || null,
       categoryPath: allowed ? text(allowed.path) : text(suggestion.categoryPath) || null,
       confidence: confidence(suggestion.confidence),
