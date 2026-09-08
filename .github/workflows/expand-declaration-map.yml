@@ -9,16 +9,15 @@ permissions:
 
 jobs:
   expand-map:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
       - name: Expand populated declaration mapping
         shell: python
         run: |
           from pathlib import Path
+          import re
 
           path = Path("backend/src/ocr/fastRoutes.js")
           s = path.read_text(encoding="utf-8")
@@ -26,81 +25,40 @@ jobs:
           if marker in s:
               raise SystemExit(0)
 
-          old = '''function buildSemanticDeclarationEvidence(fields) {
-            return Object.entries(fields || {}).map(([key, field], index) => {
-              if [\"currency\", \"unit\", \"brandName\", \"marketer\", \"marketerAddress\", \"batchNumber\", \"countryOfOrigin\", \"fssaiLicenseNumber\", \"barcode\"].includes(key)) return null;
-              const normalized = normalizeField(field);
-              if (!normalized.value || ![\"found\", \"ambiguous\"].includes(normalized.status) || !normalized.boundingBox) return null;
-              const type = DECLARATION_TYPE_BY_FIELD[key] || \"OTHER_DECLARATION\";
-              const evidenceText = normalizeText(normalized.evidence || normalized.raw || normalized.value);
-              if (!evidenceText) return null;
-              return {
-                id: `semantic-${key}-${index}`,
-                imageIndex: Number.isInteger(normalized.imageIndex) ? normalized.imageIndex : 0,
-                type,
-                label: type.replace(/_/g, \" \\"),
-                text: evidenceText,
-                value: normalized.value,
-                confidence: normalized.confidence,
-                status: normalized.status,
-                source: normalized.source || \"SEMANTIC_CONSENSUS\",
-                ...(Number.isInteger(normalized.evidenceIndex) && normalized.evidenceIndex >= 0 ? { evidenceIndex: normalized.evidenceIndex } : {}),
-                boundingBox: normalized.boundingBox,
-                ...(normalized.imageWidth ? { imageWidth: normalized.imageWidth } : {}),
-                ...(normalized.imageHeight ? { imageHeight: normalized.imageHeight } : {}),
-                ...(normalized.verification ? { verification: normalized.verification } : {}),
-              };
-            }).filter(Boolean);
-          }'''
-
-          new = '''// PARAKH_ALL_POPULATED_DECLARATIONS_MAPPED
-          // Every populated semantic field with trustworthy OCR geometry is eligible for
-          // mapping. Symbol-only helper fields are excluded because they are not standalone
-          // declarations (for example currency markers and unit-only values).
+          pattern = r'function buildSemanticDeclarationEvidence\(fields\) \{.*?\n\}\n\nfunction buildPresentationChecks'
+          replacement = '''// PARAKH_ALL_POPULATED_DECLARATIONS_MAPPED
+          // Every populated semantic field with trustworthy OCR geometry is eligible for mapping.
+          // Currency markers and unit-only helper fields are excluded because they are not standalone declarations.
           function buildSemanticDeclarationEvidence(fields) {
-            const excluded = new Set([\"currency\", \"unit\"]);
+            const excluded = new Set(["currency", "unit"]);
             return Object.entries(fields || {}).map(([key, field], index) => {
               if (excluded.has(key)) return null;
               const normalized = normalizeField(field);
-              if (!normalized.value || ![\"found\", \"ambiguous\"].includes(normalized.status) || !normalized.boundingBox) return null;
-              const type = DECLARATION_TYPE_BY_FIELD[key] || \"OTHER_DECLARATION\";
-              const label = {
-                productName: \"Product name\",
-                brandName: \"Brand\",
-                manufacturer: \"Manufacturer\",
-                manufacturerAddress: \"Manufacturer address\",
-                packer: \"Packer\",
-                packerAddress: \"Packer address\",
-                marketer: \"Marketer\",
-                marketerAddress: \"Marketer address\",
-                importer: \"Importer\",
-                importerAddress: \"Importer address\",
-                netQuantity: \"Net quantity\",
-                mrp: \"MRP\",
-                dateOfManufacture: \"Manufacturing date\",
-                dateOfPacking: \"Packing date\",
-                bestBefore: \"Best before\",
-                expiryDate: \"Expiry date\",
-                batchNumber: \"Batch number\",
-                consumerCarePhone: \"Consumer care phone\",
-                consumerCareEmail: \"Consumer care email\",
-                countryOfOrigin: \"Country of origin\",
-                fssaiLicenseNumber: \"FSSAI licence\",
-                barcode: \"Barcode\",
-              }[key] || type.replace(/_/g, \" \");
+              if (!normalized.value || !["found", "ambiguous"].includes(normalized.status) || !normalized.boundingBox) return null;
+              const type = DECLARATION_TYPE_BY_FIELD[key] || "OTHER_DECLARATION";
+              const labels = {
+                productName: "Product name", brandName: "Brand",
+                manufacturer: "Manufacturer", manufacturerAddress: "Manufacturer address",
+                packer: "Packer", packerAddress: "Packer address",
+                marketer: "Marketer", marketerAddress: "Marketer address",
+                importer: "Importer", importerAddress: "Importer address",
+                netQuantity: "Net quantity", mrp: "MRP",
+                dateOfManufacture: "Manufacturing date", dateOfPacking: "Packing date",
+                bestBefore: "Best before", expiryDate: "Expiry date",
+                batchNumber: "Batch number", consumerCarePhone: "Consumer care phone",
+                consumerCareEmail: "Consumer care email", countryOfOrigin: "Country of origin",
+                fssaiLicenseNumber: "FSSAI licence", barcode: "Barcode",
+              };
               const evidenceText = normalizeText(normalized.evidence || normalized.raw || normalized.value);
               if (!evidenceText) return null;
               return {
                 id: `semantic-${key}-${index}`,
                 field: key,
                 imageIndex: Number.isInteger(normalized.imageIndex) ? normalized.imageIndex : 0,
-                type,
-                label,
-                text: evidenceText,
-                value: normalized.value,
-                confidence: normalized.confidence,
-                status: normalized.status,
-                source: normalized.source || \"SEMANTIC_CONSENSUS\",
+                type, label: labels[key] || type.replace(/_/g, " "),
+                text: evidenceText, value: normalized.value,
+                confidence: normalized.confidence, status: normalized.status,
+                source: normalized.source || "SEMANTIC_CONSENSUS",
                 ...(Number.isInteger(normalized.evidenceIndex) && normalized.evidenceIndex >= 0 ? { evidenceIndex: normalized.evidenceIndex } : {}),
                 boundingBox: normalized.boundingBox,
                 ...(normalized.imageWidth ? { imageWidth: normalized.imageWidth } : {}),
@@ -108,56 +66,32 @@ jobs:
                 ...(normalized.verification ? { verification: normalized.verification } : {}),
               };
             }).filter(Boolean);
-          }'''
+          }
 
-          if old not in s:
-              raise SystemExit("Target buildSemanticDeclarationEvidence block was not found")
-          path.write_text(s.replace(old, new), encoding="utf-8")
+          function buildPresentationChecks'''
+          s2, count = re.subn(pattern, replacement, s, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit("Could not locate declaration-map builder")
+          path.write_text(s2, encoding="utf-8")
 
           path = Path("frontend/src/components/ScanVisualCheck.jsx")
           s = path.read_text(encoding="utf-8")
-          old = '''const REQUIRED_TYPES = new Set([
-  \"PRODUCT_NAME\",
-  \"MANUFACTURER\",
-  \"ADDRESS\",
-  \"PACKER\",
-  \"IMPORTER\",
-  \"NET_QUANTITY\",
-  \"MRP\",
-  \"DATE_OF_MANUFACTURE\",
-  \"DATE_OF_PACKING\",
-  \"BEST_BEFORE\",
-  \"EXPIRY_DATE\",
-  \"CONSUMER_CARE\",
+          pattern = r'const REQUIRED_TYPES = new Set\(\[.*?\]\);'
+          replacement = '''const REQUIRED_TYPES = new Set([
+  "PRODUCT_NAME", "BRAND", "MANUFACTURER", "ADDRESS", "PACKER", "MARKETER", "IMPORTER",
+  "NET_QUANTITY", "MRP", "DATE_OF_MANUFACTURE", "DATE_OF_PACKING", "BEST_BEFORE", "EXPIRY_DATE",
+  "BATCH_NUMBER", "CONSUMER_CARE", "COUNTRY_OF_ORIGIN", "FSSAI_LICENSE", "BARCODE",
 ]);'''
-          new = '''const REQUIRED_TYPES = new Set([
-  \"PRODUCT_NAME\",
-  \"BRAND\",
-  \"MANUFACTURER\",
-  \"ADDRESS\",
-  \"PACKER\",
-  \"MARKETER\",
-  \"IMPORTER\",
-  \"NET_QUANTITY\",
-  \"MRP\",
-  \"DATE_OF_MANUFACTURE\",
-  \"DATE_OF_PACKING\",
-  \"BEST_BEFORE\",
-  \"EXPIRY_DATE\",
-  \"BATCH_NUMBER\",
-  \"CONSUMER_CARE\",
-  \"COUNTRY_OF_ORIGIN\",
-  \"FSSAI_LICENSE\",
-  \"BARCODE\",
-]);'''
-          if old not in s:
-              raise SystemExit("Target REQUIRED_TYPES block was not found")
-          path.write_text(s.replace(old, new), encoding="utf-8")
+          s2, count = re.subn(pattern, replacement, s, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit("Could not locate declaration type filter")
+          path.write_text(s2, encoding="utf-8")
 
       - name: Commit mapping change
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add backend/src/ocr/fastRoutes.js frontend/src/components/ScanVisualCheck.jsx
+          git diff --cached --check
           git commit -m "Expand declaration map to every populated field"
           git push origin main
