@@ -2,7 +2,7 @@ const TOKEN_KEY = "parakh_token";
 const USER_KEY = "parakh_user";
 const CACHE_PREFIX = "parakh_api_cache:";
 const CACHE_TTL = 5 * 60 * 1000;
-const API_URL = import.meta.env.VITE_API_URL || "https://parakh-backend-p4mx.onrender.com/api";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 export function getToken() { return localStorage.getItem(TOKEN_KEY); }
 export function getUser() { try { return JSON.parse(localStorage.getItem(USER_KEY) || "null"); } catch { return null; } }
