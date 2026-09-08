@@ -198,6 +198,9 @@ function normalizeBoundingBox(box, imageWidth, imageHeight) {
 
 function normalizeDeclaration(item, index) {
   if (!item || typeof item !== "object") return null;
+  // Backend declaration evidence is already normalized to zero-based image indexes.
+  // Do not subtract again here. RapidOCR itself is one-based, but fastRoutes converts
+  // it before this component receives the result.
   const rawImageIndex = Number(item.imageIndex ?? item.image ?? 0);
   const confidenceRaw = Number(item.confidence);
   const confidence = confidenceRaw > 1 ? confidenceRaw / 100 : Number.isFinite(confidenceRaw) ? confidenceRaw : 0;
@@ -205,7 +208,7 @@ function normalizeDeclaration(item, index) {
   if (!REQUIRED_TYPES.has(type)) return null;
   return {
     ...item,
-    imageIndex: Number.isFinite(rawImageIndex) && rawImageIndex >= 1 && item.imageIndex != null ? rawImageIndex - 1 : Math.max(0, rawImageIndex || 0),
+    imageIndex: Number.isInteger(rawImageIndex) && rawImageIndex >= 0 ? rawImageIndex : 0,
     type,
     text: String(item.text ?? item.extractedText ?? item.value ?? "").trim(),
     confidence: Math.max(0, Math.min(1, confidence)),
@@ -383,7 +386,7 @@ export default function ScanVisualCheck() {
                   if (!item.boundingBox) return null;
                   const key = `${item.imageIndex}-${item.type}-${index}`;
                   const selected = selectedDeclarationKey === key;
-                  return <button type="button" className={`visual-declaration-box declaration-${item.type}${selected ? " is-selected" : ""}`} key={key} data-declaration-key={key} aria-label={`${TYPE_LABELS[item.type] || item.type}: ${item.text}`} title={`${TYPE_LABELS[item.type] || item.type}: ${item.text}`} onClick={() => setSelectedDeclarationKey(key)} style={{ left: `${item.boundingBox.left * 100}%`, top: `${item.boundingBox.top * 100}%`, width: `${item.boundingBox.width * 100}%`, height: `${item.boundingBox.height * 100}%` }}>
+                  return <button type="button" className={`visual-declaration-box declaration-${item.type}${selected ? " is-selected" : ""}`} key={key} data-declaration-key={key} aria-label={`${TYPE_LABELS[item.type] || item.type}: ${item.value ?? item.text}`} title={`${TYPE_LABELS[item.type] || item.type}: ${item.value ?? item.text}`} onClick={() => setSelectedDeclarationKey(key)} style={{ left: `${item.boundingBox.left * 100}%`, top: `${item.boundingBox.top * 100}%`, width: `${item.boundingBox.width * 100}%`, height: `${item.boundingBox.height * 100}%` }}>
                     <span>{TYPE_LABELS[item.type] || item.type.replaceAll("_", " ")}</span>
                   </button>;
                 })}
@@ -396,7 +399,8 @@ export default function ScanVisualCheck() {
                   const selected = selectedDeclarationKey === key;
                   return <button type="button" className={`visual-declaration-item${selected ? " is-selected" : ""}`} key={key} onClick={() => { setSelectedDeclarationKey(key); if (!item.boundingBox) setActiveDeclarationImage(item.imageIndex); }}>
                     <span className="visual-declaration-type">{TYPE_LABELS[item.type] || item.type.replaceAll("_", " ")}</span>
-                    <strong>{item.text || "Declaration detected"}</strong>
+                    <strong>{item.value ?? item.text ?? "Declaration detected"}</strong>
+                    {item.value && item.text && String(item.value).trim() !== String(item.text).trim() && <small>OCR evidence: {item.text}</small>}
                     <small>{item.boundingBox ? "Verified OCR position · Click to focus" : "Semantic evidence without verified OCR position"}</small>
                   </button>;
                 }) : <div className="visual-declaration-empty"><strong>No rule-relevant declaration evidence for this image.</strong><span>Unclassified OCR text remains available in the raw extraction.</span></div>}
