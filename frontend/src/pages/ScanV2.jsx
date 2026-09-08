@@ -513,7 +513,7 @@ export default function ScanV2() {
 
     {images.length > 0 && <ScanVisualCheck />}
 
-    {providerInfo && <section className="ocr-status-grid"><div><strong>OCR / field mapper</strong><span>{providerInfo.aiSemanticEnabled ? "RapidOCR + multi-model semantic verification" : "RapidOCR + local deterministic mapping"}</span></div><div><strong>Text detection</strong><span>{providerInfo.detectionProviders?.length ? providerInfo.detectionProviders.join(" + ") : providerInfo.detectionProvider || "RapidOCR"}</span></div><div><strong>Selected violations</strong><span>{selectedViolations.length}</span></div></section>}
+    {providerInfo && <section className="ocr-status-grid"><div><strong>OCR / field mapper</strong><span>{providerInfo.aiSemanticEnabled ? "RapidOCR + Gemini multimodal semantic mapping" : "RapidOCR + local deterministic mapping"}</span></div><div><strong>Text detection</strong><span>{providerInfo.detectionProviders?.length ? providerInfo.detectionProviders.join(" + ") : providerInfo.detectionProvider || "RapidOCR"}</span></div><div><strong>Selected violations</strong><span>{selectedViolations.length}</span></div></section>}
 
     {aiSuggestedCategory && <section className="ai-category-card">
       <div className="ai-category-copy"><div className="ai-category-eyebrow">AI SUGGESTED CATEGORY</div><h2>{aiSuggestedCategory.categoryPath || aiSuggestedCategory.categoryName || "Category not determined"}</h2><p>{aiSuggestedCategory.reason || "Suggested from package imagery and OCR evidence."}</p></div>
