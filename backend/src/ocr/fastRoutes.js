@@ -34,6 +34,122 @@ function normalizeText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function normalizeMatchText(value) {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[₹$€£]/g, " ")
+    .replace(/[^\p{L}\p{N}.]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenSimilarity(leftValue, rightValue) {
+  const left = normalizeMatchText(leftValue);
+  const right = normalizeMatchText(rightValue);
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  if (left.includes(right) || right.includes(left)) return 0.94;
+  const leftTokens = new Set(left.split(" ").filter((token) => token.length > 1));
+  const rightTokens = new Set(right.split(" ").filter((token) => token.length > 1));
+  if (!leftTokens.size || !rightTokens.size) return 0;
+  const overlap = [...leftTokens].filter((token) => rightTokens.has(token)).length;
+  return overlap / Math.max(leftTokens.size, rightTokens.size);
+}
+
+function numberTokens(value) {
+  return (String(value ?? "").match(/\d+(?:[.,]\d+)?/g) || []).map((token) => token.replace(/,/g, ""));
+}
+
+function unitTokens(value) {
+  return (String(value ?? "").toLowerCase().match(/\b(?:mg|kg|g|ml|l|mcg|cm|mm|m|pcs?|pieces?|nos?)\b/g) || []);
+}
+
+function evidenceMatchScore(key, field, item) {
+  const candidate = normalizeText(item?.text);
+  if (!candidate) return 0;
+
+  const value = normalizeText(field?.value);
+  const raw = normalizeText(field?.raw);
+  const evidence = normalizeText(field?.evidence);
+  const candidateNorm = normalizeMatchText(candidate);
+  const valueNorm = normalizeMatchText(value);
+
+  if (key === "mrp") {
+    const valueNumbers = numberTokens(value);
+    const candidateNumbers = numberTokens(candidate);
+    const exactNumber = valueNumbers.some((wanted) => candidateNumbers.some((actual) => actual === wanted));
+    if (exactNumber) return candidateNorm.includes("mrp") ? 0.99 : 1;
+    return 0;
+  }
+
+  if (key === "netQuantity") {
+    const wantedNumbers = numberTokens(value);
+    const actualNumbers = numberTokens(candidate);
+    const numberMatch = wantedNumbers.some((wanted) => actualNumbers.some((actual) => actual === wanted));
+    const wantedUnits = unitTokens(`${value} ${field?.unit || ""}`);
+    const actualUnits = unitTokens(candidate);
+    if (numberMatch && (!wantedUnits.length || wantedUnits.some((unit) => actualUnits.includes(unit)))) return 1;
+    if (numberMatch) return 0.85;
+    return 0;
+  }
+
+  if (["dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate"].includes(key)) {
+    const wantedNumbers = numberTokens(value);
+    const actualNumbers = numberTokens(candidate);
+    const numberOverlap = wantedNumbers.filter((wanted) => actualNumbers.includes(wanted)).length;
+    if (wantedNumbers.length && numberOverlap >= Math.min(2, wantedNumbers.length)) return 1;
+    return Math.max(tokenSimilarity(value, candidate), tokenSimilarity(raw, candidate)) >= 0.9 ? 0.9 : 0;
+  }
+
+  const valueScore = tokenSimilarity(value, candidate);
+  const rawScore = tokenSimilarity(raw, candidate);
+  const evidenceScore = tokenSimilarity(evidence, candidate);
+  const best = Math.max(valueScore, rawScore, evidenceScore);
+  if (best >= 0.82) return best;
+
+  if (key === "productName" && best >= 0.62) return best;
+  if (["manufacturer", "packer", "marketer", "importer"].includes(key) && best >= 0.68) return best;
+  if (["manufacturerAddress", "packerAddress", "marketerAddress", "importerAddress"].includes(key) && best >= 0.5) return best;
+  if (["consumerCarePhone", "consumerCareEmail", "barcode"].includes(key) && best >= 0.75) return best;
+  return 0;
+}
+
+function resolveEvidenceIndex(key, field, rapidEvidence) {
+  const evidence = rapidEvidence || [];
+  const providedIndex = Number.isInteger(field?.evidenceIndex) ? field.evidenceIndex : -1;
+  if (providedIndex >= 0 && providedIndex < evidence.length) {
+    const providedScore = evidenceMatchScore(key, field, evidence[providedIndex]);
+    if (providedScore >= 0.68) return { index: providedIndex, score: providedScore };
+  }
+
+  const preferredImage = Number.isInteger(field?.imageIndex) ? field.imageIndex : null;
+  let best = null;
+  for (let index = 0; index < evidence.length; index += 1) {
+    const item = evidence[index];
+    if (!item?.boundingBox) continue;
+    if (preferredImage !== null && item.imageIndex !== preferredImage) continue;
+    const score = evidenceMatchScore(key, field, item);
+    if (!score) continue;
+    if (!best || score > best.score || (score === best.score && Number(item.confidence || 0) > Number(best.item.confidence || 0))) {
+      best = { index, score, item };
+    }
+  }
+
+  if (!best && preferredImage !== null) {
+    for (let index = 0; index < evidence.length; index += 1) {
+      const item = evidence[index];
+      if (!item?.boundingBox) continue;
+      const score = evidenceMatchScore(key, field, item);
+      if (!score) continue;
+      if (!best || score > best.score || (score === best.score && Number(item.confidence || 0) > Number(best.item.confidence || 0))) {
+        best = { index, score, item };
+      }
+    }
+  }
+
+  return best ? { index: best.index, score: best.score } : { index: -1, score: 0 };
+}
+
 async function analyzeWithRapid(images) {
   const formData = new FormData();
   const ocrUrl = process.env.NODE_ENV === "production"
@@ -162,39 +278,27 @@ function validateSemanticFields(fields, rapidEvidence) {
       }
     }
 
-    let evidenceIndex = Number.isInteger(field.evidenceIndex) ? field.evidenceIndex : -1;
-    if (evidenceIndex < 0 || evidenceIndex >= (rapidEvidence || []).length) evidenceIndex = -1;
+    const resolved = field.status === "found" ? resolveEvidenceIndex(key, field, rapidEvidence) : { index: -1, score: 0 };
+    const evidenceIndex = resolved.index;
+    const evidence = evidenceIndex >= 0 ? rapidEvidence?.[evidenceIndex] : null;
 
-    if (evidenceIndex < 0 && field.status === "found") {
-      const target = normalizeText(field.evidence || field.raw || field.value).toLowerCase();
-      let bestScore = 0;
-      (rapidEvidence || []).forEach((item, index) => {
-        const candidate = normalizeText(item.text).toLowerCase();
-        if (!target || !candidate) return;
-        const score = target === candidate
-          ? 1
-          : target.includes(candidate) || candidate.includes(target)
-            ? 0.92
-            : 0;
-        if (score > bestScore) {
-          bestScore = score;
-          evidenceIndex = index;
-        }
-      });
-      if (bestScore < 0.9) evidenceIndex = -1;
+    if (field.status === "found" && evidenceIndex < 0) {
+      warnings.push(`${key} has no trustworthy OCR evidence match.`);
     }
 
-    const evidence = evidenceIndex >= 0 ? rapidEvidence?.[evidenceIndex] : null;
     validated[key] = {
       ...field,
       ...(evidence ? {
         evidenceIndex,
-        imageIndex: Number.isInteger(field.imageIndex) ? field.imageIndex : evidence.imageIndex,
-        evidence: field.evidence || evidence.text,
-        boundingBox: field.boundingBox || evidence.boundingBox || null,
-        imageWidth: field.imageWidth || evidence.imageWidth || null,
-        imageHeight: field.imageHeight || evidence.imageHeight || null,
-      } : {}),
+        imageIndex: evidence.imageIndex,
+        evidence: evidence.text,
+        boundingBox: evidence.boundingBox || null,
+        imageWidth: evidence.imageWidth || null,
+        imageHeight: evidence.imageHeight || null,
+      } : {
+        evidenceIndex: -1,
+        boundingBox: null,
+      }),
     };
   }
 
@@ -235,8 +339,9 @@ const DECLARATION_TYPE_BY_FIELD = {
 
 function buildSemanticDeclarationEvidence(fields) {
   return Object.entries(fields || {}).map(([key, field], index) => {
+    if (["currency", "unit", "brandName", "marketer", "marketerAddress", "batchNumber", "countryOfOrigin", "fssaiLicenseNumber", "barcode"].includes(key)) return null;
     const normalized = normalizeField(field);
-    if (!normalized.value || !["found", "ambiguous"].includes(normalized.status)) return null;
+    if (!normalized.value || !["found", "ambiguous"].includes(normalized.status) || !normalized.boundingBox) return null;
     const type = DECLARATION_TYPE_BY_FIELD[key] || "OTHER_DECLARATION";
     const evidenceText = normalizeText(normalized.evidence || normalized.raw || normalized.value);
     if (!evidenceText) return null;
@@ -250,8 +355,8 @@ function buildSemanticDeclarationEvidence(fields) {
       confidence: normalized.confidence,
       status: normalized.status,
       source: normalized.source || "SEMANTIC_CONSENSUS",
-      ...(Number.isInteger(normalized.evidenceIndex) ? { evidenceIndex: normalized.evidenceIndex } : {}),
-      ...(normalized.boundingBox ? { boundingBox: normalized.boundingBox } : {}),
+      ...(Number.isInteger(normalized.evidenceIndex) && normalized.evidenceIndex >= 0 ? { evidenceIndex: normalized.evidenceIndex } : {}),
+      boundingBox: normalized.boundingBox,
       ...(normalized.imageWidth ? { imageWidth: normalized.imageWidth } : {}),
       ...(normalized.imageHeight ? { imageHeight: normalized.imageHeight } : {}),
       ...(normalized.verification ? { verification: normalized.verification } : {}),
@@ -389,7 +494,7 @@ function buildStructuredResult(rapid, aiSemantic = null) {
   const declarationEvidence = buildSemanticDeclarationEvidence(fields);
   const presentationChecks = buildPresentationChecks(rapid, fields);
 
-  const warnings = [];
+  const warnings = [...validation.warnings];
   if (reconciliation?.metadata?.innerPackReference) warnings.push("Package text refers to an individual/inner pack for additional batch, date, price, or related details.");
   if (!aiSemantic?.enabled) warnings.push("All remote AI semantic providers unavailable; using local deterministic field mapping only.");
   if (aiSemantic?.enabled && aiSemantic.providerCount < 3) warnings.push(`Semantic verification used ${aiSemantic.providerCount} available AI provider(s); unavailable providers did not block the scan.`);
