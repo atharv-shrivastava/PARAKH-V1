@@ -6,7 +6,9 @@ import time
 from typing import Any
 
 # Render free instances expose very little CPU. Limit ONNX Runtime thread pools
-# to avoid oversubscription on the small CPU allocation.
+# to avoid oversubscription on the small CPU allocation. GPU/DirectML mode does
+# not need these CPU inference limits, but leaving them set is harmless because
+# the ONNX execution provider handles the main inference work.
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
 os.environ.setdefault("ORT_INTRA_OP_NUM_THREADS", "1")
@@ -38,6 +40,7 @@ _max_ocr_side = max(768, int(os.getenv("RAPIDOCR_MAX_SIDE", "768")))
 _cache_ttl = max(30, int(os.getenv("RAPIDOCR_CACHE_TTL_SECONDS", "120")))
 _cache_limit = max(1, int(os.getenv("RAPIDOCR_CACHE_ITEMS", "8")))
 _use_cls = os.getenv("RAPIDOCR_USE_CLS", "false").lower() == "true"
+_use_dml = os.getenv("RAPIDOCR_USE_DML", "false").lower() == "true"
 _text_score = max(0.0, min(1.0, float(os.getenv("RAPIDOCR_TEXT_SCORE", "0.5"))))
 
 _rapid_ocr = None
@@ -48,11 +51,18 @@ _inflight: dict[str, asyncio.Task] = {}
 def _get_rapidocr():
     global _rapid_ocr
     if _rapid_ocr is None:
-        _rapid_ocr = RapidOCR(params={
+        params = {
             "Global.use_cls": _use_cls,
             "Global.text_score": _text_score,
             "Rec.lang_type": _lang_type,
-        })
+        }
+        if _use_dml:
+            params["EngineConfig.onnxruntime.use_dml"] = True
+        _rapid_ocr = RapidOCR(params=params)
+        print(
+            f"[ocr:rapid] initialized useDML={_use_dml} "
+            f"useCls={_use_cls} textScore={_text_score} maxSide={_max_ocr_side}"
+        )
     return _rapid_ocr
 
 
@@ -215,14 +225,14 @@ async def warmup():
         warm_image = np.full((192, 192, 3), 255, dtype=np.uint8)
         await asyncio.to_thread(lambda: rapid(warm_image))
         elapsed_ms = round((time.monotonic() - started_at) * 1000)
-        print(f"[ocr:rapid] warmup complete in {elapsed_ms}ms useCls={_use_cls} textScore={_text_score} maxSide={_max_ocr_side} omp={os.getenv('OMP_NUM_THREADS')}")
+        print(f"[ocr:rapid] warmup complete in {elapsed_ms}ms useCls={_use_cls} useDML={_use_dml} textScore={_text_score} maxSide={_max_ocr_side} omp={os.getenv('OMP_NUM_THREADS')}")
     except Exception as exc:
         print(f"[ocr:rapid] warmup skipped: {exc}")
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "parakh-rapidocr", "engine": "RapidOCR"}
+    return {"status": "ok", "service": "parakh-rapidocr", "engine": "RapidOCR", "useDML": _use_dml}
 
 
 @app.post("/api/ocr/analyze")
