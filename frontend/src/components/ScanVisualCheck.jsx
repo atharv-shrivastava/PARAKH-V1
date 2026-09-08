@@ -227,6 +227,7 @@ export default function ScanVisualCheck() {
   const [declarations, setDeclarations] = useState(readStoredDeclarations);
   const [open, setOpen] = useState(true);
   const [referenceWidth, setReferenceWidth] = useState("");
+  const [selectedOverlay, setSelectedOverlay] = useState(null);
 
   useEffect(() => {
     const refreshDeclarations = (incoming = null) => {
