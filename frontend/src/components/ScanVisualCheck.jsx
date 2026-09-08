@@ -360,20 +360,56 @@ export default function ScanVisualCheck() {
 
           <div className="visual-check-declarations">
             <h3>Declaration evidence</h3>
-            <p>Only rule-relevant, successfully mapped declarations are shown on the image. Click a colored box to inspect the field.</p>
-            {declarations.length ? declarations.map((item, index) => (
-              <div className="declaration-evidence-row" key={item.id + "-" + index}>
-                <strong>{item.type.replaceAll("_", " ")}</strong>
-                <span>{item.text}</span>
-                <small>Image {item.imageIndex + 1} · {Math.round(item.confidence * 100)}%</small>
+            <p>Only rule-relevant, successfully mapped declarations with usable coordinates are shown. Click a colored box to inspect the field.</p>
+            {results.map((item, index) => {
+              const imageOverlays = overlayDeclarations.filter((entry) => entry.imageIndex === index);
+              const source = getScanImages()[index];
+              return (
+                <div className="visual-image-overlay" key={"overlay-" + index}>
+                  <img src={source} alt={"Package evidence " + (index + 1) + " with declaration markers"} />
+                  <div className="visual-overlay-layer" aria-label={"Relevant declarations on image " + (index + 1)}>
+                    {imageOverlays.map((entry) => {
+                      const box = entry.boundingBox;
+                      const sourceWidth = Number(entry.imageWidth) || 900;
+                      const sourceHeight = Number(entry.imageHeight) || 405;
+                      const selected = selectedOverlay?.id === entry.id;
+                      return (
+                        <button
+                          type="button"
+                          key={entry.id}
+                          className={"visual-overlay-box" + (selected ? " is-selected" : "")}
+                          style={{
+                            left: (box.left / sourceWidth) * 100 + "%",
+                            top: (box.top / sourceHeight) * 100 + "%",
+                            width: (box.width / sourceWidth) * 100 + "%",
+                            height: (box.height / sourceHeight) * 100 + "%",
+                            "--overlay-color": entry.color,
+                          }}
+                          onClick={() => setSelectedOverlay(selected ? null : entry)}
+                          title={entry.type.replaceAll("_", " ") + " · " + Math.round(entry.confidence * 100) + "%"}
+                        >
+                          <span>{entry.type.replaceAll("_", " ")}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            {selectedOverlay && (
+              <div className="overlay-field-detail">
+                <div>
+                  <strong>{selectedOverlay.type.replaceAll("_", " ")}</strong>
+                  <span>{selectedOverlay.text}</span>
+                </div>
+                <div className="overlay-field-meta">
+                  <span>{Math.round(selectedOverlay.confidence * 100)}% confidence</span>
+                  <span>Image {selectedOverlay.imageIndex + 1}</span>
+                  <span>{selectedOverlay.source}</span>
+                </div>
               </div>
-            )) : <span>No declaration evidence was returned.</span>}
-              <div className="declaration-evidence-row" key={`${item.id}-${index}`}>
-                <strong>{item.type.replaceAll("_", " ")}</strong>
-                <span>{item.text}</span>
-                <small>Image {item.imageIndex + 1} · {Math.round(item.confidence * 100)}%</small>
-              </div>
-            )) : <span>No declaration evidence was returned.</span>}
+            )}
+            {!overlayDeclarations.length && <span>No filled rule-relevant fields with usable coordinates were returned.</span>}
           </div>
         </>
       )}
