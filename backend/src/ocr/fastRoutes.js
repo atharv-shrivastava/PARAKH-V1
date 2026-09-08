@@ -399,9 +399,13 @@ async function runSemanticProviders({ images, rapid, categoryOptions }) {
   const cloudflareMoondream = "@cf/moondream/moondream3.1-9B-A2B";
   const providers = [
     { name: "gemini", fn: interpretPackageWithGemini, args: {} },
-    { name: "cloudflare-gemma", fn: interpretPackageWithCloudflare, args: { modelOverride: cloudflareGemma, providerName: "cloudflare-gemma" } },
-    { name: "cloudflare-moondream", fn: interpretPackageWithCloudflare, args: { modelOverride: cloudflareMoondream, providerName: "cloudflare-moondream" } },
   ];
+  if (process.env.PARAKH_SEMANTIC_VERIFY_ALL === "true") {
+    providers.push(
+      { name: "cloudflare-gemma", fn: interpretPackageWithCloudflare, args: { modelOverride: cloudflareGemma, providerName: "cloudflare-gemma" } },
+      { name: "cloudflare-moondream", fn: interpretPackageWithCloudflare, args: { modelOverride: cloudflareMoondream, providerName: "cloudflare-moondream" } },
+    );
+  }
   const settled = await Promise.all(providers.map(async ({ name, fn, args }) => {
     const started = Date.now();
     try {
