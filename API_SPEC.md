@@ -43,7 +43,7 @@ Current scan endpoint:
 
 `POST /api/ocr/analyze`
 
-The endpoint accepts multipart package images and optional category options. The current processing flow is:
+The endpoint accepts multipart package images and optional category options. Current processing flow:
 
 ```text
 Images
@@ -54,7 +54,7 @@ OCR evidence + confidence + geometry
   ↓
 Deterministic field reconciliation
   ↓
-Gemini semantic interpretation / semantic consensus
+Gemini semantic interpretation / optional semantic consensus
   ↓
 Structured result
   ↓
@@ -65,7 +65,17 @@ Evidence confidence fusion
 
 The response contains a `result` object with extracted fields and metadata, together with provider/timing information and warnings.
 
-## 7. Evidence confidence response
+## 7. DataKart verification
+
+DataKart is a separate product-reference registry. In the current V1 frontend integration, the API route is:
+
+`GET /api/datakart/gtin/:gtin`
+
+The route looks up an active DataKart product by GTIN and returns the registered product reference. A missing record returns `404` and provider/database failures return an appropriate gateway/server error.
+
+DataKart does not evaluate Legal Metrology compliance.
+
+## 8. Evidence confidence response
 
 For recognized structured fields, the backend can attach:
 
@@ -87,8 +97,8 @@ For recognized structured fields, the backend can attach:
 The default weighting is:
 
 ```text
-DataKart agreement = 50%
-Gemini confidence  = 30%
+DataKart agreement  = 50%
+Gemini confidence   = 30%
 RapidOCR confidence = 20%
 ```
 
@@ -101,12 +111,6 @@ Verification values are:
 - `MATCH` / `✓`
 - `MISMATCH` / `✕`
 - `UNVERIFIED` / `?`
-
-## 8. DataKart verification
-
-DataKart is a separate product-reference registry. The backend extracts a GTIN/barcode and compares the registered DataKart values against the current structured inspection fields.
-
-DataKart does not evaluate Legal Metrology compliance and does not replace the Rules Engine.
 
 ## 9. Compliance and rules
 
