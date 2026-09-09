@@ -118,6 +118,7 @@ export async function applyEvidenceConfidence(result) {
   const barcode = next.barcode?.value;
   let dataKart = null;
   let dataKartError = null;
+  const geminiAvailable = Boolean(result?.aiSemantic?.providerCount);
 
   if (barcode) {
     try {
@@ -133,9 +134,7 @@ export async function applyEvidenceConfidence(result) {
   for (const [fieldKey, fieldValue] of Object.entries(result || {})) {
     if (!fieldValue || typeof fieldValue !== "object" || !FIELD_MAP[fieldKey]) continue;
 
-    const gemini = fieldValue.source === "gemini" || fieldValue.source === "GEMINI" || fieldValue.source === "SEMANTIC_CONSENSUS"
-      ? clamp01(fieldValue.confidence)
-      : clamp01(fieldValue.confidence);
+    const gemini = geminiAvailable ? clamp01(fieldValue.confidence) : null;
     const rapidocr = findRapidConfidence(fieldKey, fieldValue, evidence);
     const registeredValue = dataKart?.[FIELD_MAP[fieldKey]];
     const dataKartMatchState = dataKartMatch(fieldKey, fieldValue.value, registeredValue);
