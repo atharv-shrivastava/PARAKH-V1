@@ -33,8 +33,23 @@ function normalize(value) {
   return String(value ?? "")
     .toLowerCase()
     .replace(/[₹$€£,]/g, "")
+    .replace(/[^\p{L}\p{N}.]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+const GENERIC_PRODUCT_DESCRIPTORS = new Set([
+  "toothpaste", "tooth paste", "shampoo", "soap", "face wash", "facewash", "biscuit",
+  "biscuits", "juice", "flour", "detergent", "oil", "cream", "lotion", "cleaner",
+  "conditioner", "gel", "powder", "tea", "coffee", "milk", "drink", "water", "snack",
+]);
+
+function productIdentity(value) {
+  return normalize(value)
+    .split(" ")
+    .filter(Boolean)
+    .filter((token) => !GENERIC_PRODUCT_DESCRIPTORS.has(token))
+    .join(" ");
 }
 
 function numeric(value) {
@@ -51,6 +66,17 @@ function fieldScore(aiField, referenceValue, key) {
     return left === right ? 1 : 0;
   }
   if (key === "unit") return normalize(aiField.value) === normalize(referenceValue) ? 1 : 0;
+  if (key === "productName") {
+    const left = productIdentity(aiField.value);
+    const right = productIdentity(referenceValue);
+    if (!left || !right) return 0;
+    if (left === right) return 1;
+    const leftNorm = normalize(aiField.value);
+    const rightNorm = normalize(referenceValue);
+    if (leftNorm === rightNorm) return 1;
+    if (left.includes(right) || right.includes(left)) return 0.98;
+    return 0;
+  }
   const left = normalize(aiField.value);
   const right = normalize(referenceValue);
   return left === right ? 1 : left.includes(right) || right.includes(left) ? 0.85 : 0;
@@ -115,7 +141,8 @@ function average(values) {
 
 export function calculateVerificationConfidence({ ocrResult, providerInfo, barcodeResult, dataKartComparison }) {
   const ocrConfidence = average((ocrResult?.rawOcrEvidence || []).map((item) => Number(item.confidence)).filter(Number.isFinite));
-  const semanticConfidence = average(Object.values(ocrResult || {}).map((field) => field && typeof field === "object" ? Number(field.confidence) : NaN));
+  const semanticFields = Object.values(ocrResult || {}).filter((field) => field && typeof field === "object" && "confidence" in field);
+  const semanticConfidence = average(semanticFields.map((field) => Number(field.confidence)).filter(Number.isFinite));
   const barcodeConfidence = barcodeResult?.found ? Number(barcodeResult.confidence || 0.98) : null;
   const dataKartConfidence = Number.isFinite(Number(dataKartComparison?.matchRate)) ? Number(dataKartComparison.matchRate) : null;
   const components = [
