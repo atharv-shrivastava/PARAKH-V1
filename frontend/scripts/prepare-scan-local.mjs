@@ -110,17 +110,19 @@ if (!source.includes(marker)) {
     '  <div><strong>Barcode / GTIN</strong><span>{providerInfo.barcodeResult?.gtin || "Not supplied"} · {providerInfo.barcodeResult?.source || "NONE"}</span></div>',
     '  <div><strong>DataKart</strong><span>{providerInfo.datakartVerification?.found ? providerInfo.datakartVerification.comparison.matchedFields + "/" + providerInfo.datakartVerification.comparison.comparedFields + " fields matched" : providerInfo.datakartVerification?.attempted ? "GTIN not registered" : "Not queried"}</span></div>',
     '  <div><strong>Verification confidence</strong><span>{providerInfo.verificationConfidence.percentage}% · {providerInfo.verificationConfidence.label}</span></div>',
-    '</section>}',
+    '</section>',
   ].join("\n");
   if (!source.includes(providerAnchor)) throw new Error("ScanV2 patch anchor not found: provider status");
   source = source.replace(providerAnchor, verificationPanel + "\n" + providerAnchor);
 }
 
-// Repair any earlier generated version of the patch. The previous build-time patch
-// accidentally placed addBarcodeFile at module scope, where React setters do not exist.
+// Repair any earlier generated version of the patch.
 const brokenHelperPattern = /\nfunction addBarcodeFile\(input\) \{[\s\S]*?\n\}\n\n(?=function formatElapsed\(ms\))/;
-if (brokenHelperPattern.test(source)) {
-  source = source.replace(brokenHelperPattern, "\n");
+if (brokenHelperPattern.test(source)) source = source.replace(brokenHelperPattern, "\n");
+
+// Older generated copies may already have the marker but not the timeout constant.
+if (source.includes(marker) && !source.includes("const BARCODE_TIMEOUT_MS = 4000;")) {
+  source = source.replace("const BARCODE_MAX_SIZE = 8 * 1024 * 1024;", "const BARCODE_MAX_SIZE = 8 * 1024 * 1024;\nconst BARCODE_TIMEOUT_MS = 4000;");
 }
 
 if (!source.includes("function addBarcodeFile(input) {")) {
@@ -130,10 +132,9 @@ if (!source.includes("function addBarcodeFile(input) {")) {
   source = source.replace(componentHelperAnchor, componentHelperAnchor + "\n\n" + componentHelper);
 }
 
-// Do not let resetAnalysisState discard the selected barcode. resetScan still clears it explicitly.
+// The selected barcode must survive package-image additions. Full reset still clears it.
 source = source.replace('    setAiSuggestedCategory(null);\n    setBarcodeFile(null);\n    setBarcodePreviewUrl("");\n    setBarcodeResult(null);', '    setAiSuggestedCategory(null);\n    setBarcodeResult(null);');
-
-if (!source.includes('setBarcodePreviewUrl("");')) {
+if (!source.includes('setBarcodeFile(null);\n    setBarcodePreviewUrl("");')) {
   const resetScanAnchor = '    setEditingImageIndex(null);\n    resetAnalysisState();';
   if (source.includes(resetScanAnchor)) {
     source = source.replace(resetScanAnchor, '    setEditingImageIndex(null);\n    setBarcodeFile(null);\n    setBarcodePreviewUrl("");\n    setManualGtin("");\n    resetAnalysisState();');
@@ -158,13 +159,12 @@ if (!source.includes('className="barcode-preview-card"')) {
   if (source.includes(uploadAnchor)) source = source.replace(uploadAnchor, uploadAnchor + "\n      " + previewPanel);
 }
 
-// Ensure extracted OCR is visible immediately instead of waiting on the Rules Engine.
+// Make the extracted fields available immediately after OCR, before Rules Engine completion.
 if (!source.includes('setForm(formFromOcr(extracted));')) {
   source = source.replace('      const extracted = info.result;', '      const extracted = info.result;\n      setOcr(extracted);\n      setForm(formFromOcr(extracted));');
 }
 
-// Mark the source after repair so subsequent Vite starts do not duplicate UI patches.
 if (!source.includes(previewMarker)) source += `\n${previewMarker}\n`;
 
 await fs.writeFile(scanPath, source, "utf8");
-console.log("PARAKH scan pipeline prepared: visible barcode preview, scoped barcode handler, parallel OCR/Gemini + barcode verification, bounded barcode decoding, and immediate extracted fields.");
+console.log("PARAKH scan pipeline prepared: visible barcode preview, correctly scoped barcode handler, bounded barcode decoding, parallel verification, and immediate extracted fields.");
