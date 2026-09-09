@@ -7,7 +7,6 @@ import "../styles/scan-theme.css";
 const API_URL = "http://localhost:5000/api";
 const PUTER_EVALUATE_URL = "http://localhost:8080/api/ocr/evaluate-structured";
 const MAX_IMAGES = 4;
-const MAX_PUTER_IMAGE_SIZE = 10 * 1024 * 1024;
 
 const ENGINE_RULE_OPTIONS = [
   ["PCR-R4","4","Mandatory declarations","Required declarations must be carried on pre-packaged commodities as prescribed."],
@@ -111,117 +110,6 @@ async function fileToDataUrl(file) {
   context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
   return canvas.toDataURL("image/jpeg", 0.72);
-}
-
-function normalizePuterOcr(candidate, rawText) {
-  const result = {};
-  for (const key of OCR_FIELDS) {
-    const field = candidate?.[key];
-    result[key] = field && typeof field === "object" ? {
-      value: field.value ?? null,
-      raw: field.raw ?? null,
-      confidence: Number.isFinite(Number(field.confidence)) ? Number(field.confidence) : 0,
-      evidence: field.evidence ?? null,
-      status: ["found","absent","unreadable","ambiguous"].includes(field.status) ? field.status : "absent",
-    } : { value: null, raw: null, confidence: 0, evidence: null, status: "absent" };
-  }
-  result.otherDeclarations = Array.isArray(candidate?.otherDeclarations) ? candidate.otherDeclarations : [];
-  result.rawText = typeof candidate?.rawText === "string" && candidate.rawText.trim() ? candidate.rawText : rawText;
-  result.warnings = Array.isArray(candidate?.warnings) ? candidate.warnings : [];
-  result.unreadableFields = Array.isArray(candidate?.unreadableFields) ? candidate.unreadableFields : [];
-  result.needsReview = Boolean(candidate?.needsReview) || OCR_FIELDS.some((key) => {
-    const f = result[key];
-    return f.status === "unreadable" || f.status === "ambiguous" || (f.status === "found" && f.confidence < 0.6);
-  });
-  return result;
-}
-
-function extractJsonObject(text) {
-  const source = String(text || "").trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
-  const start = source.indexOf("{");
-  if (start < 0) throw new Error("Puter did not return structured OCR JSON.");
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < source.length; i += 1) {
-    const ch = source[i];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (ch === "\\") escaped = true;
-      else if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') inString = true;
-    else if (ch === "{") depth += 1;
-    else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(start, i + 1);
-    }
-  }
-  throw new Error("Puter returned incomplete structured OCR JSON.");
-}
-
-function repairJsonEscapes(text) {
-  let output = "";
-  let inString = false;
-  let escaped = false;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (!inString) {
-      output += ch;
-      if (ch === '"') inString = true;
-      continue;
-    }
-    if (escaped) {
-      if (!["\"", "\\", "/", "b", "f", "n", "r", "t"].includes(ch) && ch !== "u") output += "\\\\";
-      output += ch;
-      escaped = false;
-      continue;
-    }
-    if (ch === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (ch === '"') {
-      output += ch;
-      inString = false;
-      continue;
-    }
-    if (ch.charCodeAt(0) < 0x20) output += ch === "\n" ? "\\n" : ch === "\r" ? "\\r" : "\\t";
-    else output += ch;
-  }
-  if (escaped) output += "\\\\";
-  return output;
-}
-
-function parsePuterJson(text) {
-  const candidate = extractJsonObject(text);
-  try {
-    return JSON.parse(candidate);
-  } catch {
-    try {
-      return JSON.parse(repairJsonEscapes(candidate));
-    } catch (error) {
-      throw new Error(`Puter returned malformed structured OCR JSON: ${error.message}`);
-    }
-  }
-}
-
-async function runPuterOcr(files) {
-  const puter = window.puter;
-  if (!puter?.ai?.img2txt) throw new Error("Puter.js OCR is not loaded. Refresh the page and try again.");
-  const chunks = await Promise.all(files.map(async (file, index) => {
-    if (file.size > MAX_PUTER_IMAGE_SIZE) throw new Error(`Image ${index + 1} exceeds Puter OCR’s 10 MB limit.`);
-    const text = await puter.ai.img2txt(file);
-    return `[IMAGE ${index + 1}]\n${String(text || "").trim()}`;
-  }));
-  const rawText = chunks.filter((x) => x.trim()).join("\n\n");
-  if (!rawText.trim()) throw new Error("Puter OCR found no readable text.");
-  if (!puter.ai.chat) return normalizePuterOcr({}, rawText);
-  const prompt = "Convert this OCR text into JSON fields for PARAKH. Never invent data. Every field must use {value,raw,confidence,evidence,status}; status must be found, absent, unreadable or ambiguous. Escape all backslashes and newlines correctly because the result will be parsed by JSON.parse. Return only one valid JSON object with no markdown. Fields: " + OCR_FIELDS.join(", ") + ". Also return otherDeclarations, rawText, warnings, unreadableFields, needsReview. OCR text:\n\n" + rawText;
-  const response = await puter.ai.chat(prompt, { model: "gpt-5.6-luna", max_tokens: 5000 });
-  const content = response?.message?.content || response?.content || response?.text || "";
-  return normalizePuterOcr(parsePuterJson(content), rawText);
 }
 
 function Scan() {
@@ -411,8 +299,7 @@ function Scan() {
         if (!rapidResponse.ok || !rapidData.result) throw new Error(rapidData?.error?.message || rapidData?.error || "RapidOCR analysis failed.");
         extracted = rapidData.result;
       } catch (rapidError) {
-        setMessage("RapidOCR unavailable. Using Puter.js fallback OCR...");
-        extracted = await runPuterOcr(images.map(({ file }) => file));
+        throw rapidError;
       }
       setMessage("OCR complete. Running Legal Metrology Rules Engine...");
       const response = await apiFetch(PUTER_EVALUATE_URL, {
@@ -551,7 +438,7 @@ function Scan() {
     <section className="scan-area"><div className="scan-icon">⌁</div><h2>Capture or upload package images</h2><p>Use the camera or choose up to {MAX_IMAGES} images showing different sides of the package.</p><div className="scan-upload-actions"><button type="button" className="primary-button" onClick={openCamera}>Open Camera</button><label className="secondary-button scan-file-button">Upload Images<input type="file" accept="image/*" multiple onChange={handleImages} hidden /></label></div><p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>{cameraError && <div className="status-message">{cameraError}</div>}</section>
     {cameraOpen && <div className="camera-overlay" role="dialog" aria-modal="true"><div className="camera-modal"><div className="camera-header"><h2>Capture package image</h2><button type="button" onClick={closeCamera}>Close</button></div><video ref={videoRef} className="camera-video" autoPlay playsInline muted /><div className="camera-actions"><button type="button" className="primary-button" onClick={capturePhoto}>Capture Photo</button><button type="button" className="secondary-button" onClick={closeCamera}>Cancel</button></div></div></div>}
     {images.length > 0 && <section className="scan-review"><div className="section-heading"><div><h2>Evidence images</h2><p>All selected images will be retained on the registered product.</p></div></div><div className="scan-image-grid">{images.map(({ url, file }, i) => <div className="scan-image-card" key={`${file.name}-${i}`}><img src={url} alt={`Package evidence ${i + 1}`} /><button type="button" onClick={() => removeImage(i)}>Remove</button><span>{file.name}</span></div>)}</div><button type="button" className="primary-button" onClick={analyzeImages} disabled={analyzing}>{analyzing ? "Analyzing..." : "Analyze Images"}</button></section>}
-    {ocr && <section className="scan-review"><div className="section-heading"><div><h2>OCR extraction and Rules Engine result</h2><p>Edit the extracted values here if OCR needs correction. Use the registration actions below to carry them into the editable product form.</p></div></div><div className="ocr-fields-grid">{Object.entries(ocr).filter(([key, value]) => key !== "rawText" && value && typeof value === "object" && ["found","absent","unreadable","ambiguous"].includes(value.status)).map(([key, value]) => { const badge = verificationBadge(value); const overall = Number.isFinite(Number(value?.evidenceConfidence)) ? Math.round(Number(value.evidenceConfidence) * 100) : Math.round(Number(value?.confidence || 0) * 100); const sources = value?.confidenceSources || {}; return <label key={key} className="ocr-edit-field" style={{ position: "relative" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6 }}><strong>{key.replace(/([A-Z])/g, " $1")}</strong>{value?.status === "found" && <span title={badge.label} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 7px", borderRadius: 999, border: `1px solid ${badge.border}`, background: badge.background, color: badge.tone, fontWeight: 800, fontSize: 11, letterSpacing: 0.3, whiteSpace: "nowrap" }}>{badge.icon} {badge.label}</span>}</div><input value={value.value ?? ""} placeholder={value.status === "found" ? "Review value" : value.status} onChange={(e) => updateOcrField(key, e.target.value)} /><small>{value.status === "found" ? <>{value?.evidenceConfidence != null ? `${overall}% evidence confidence` : `${overall}% confidence`} · DataKart {sources.datakart == null ? "—" : `${Math.round(sources.datakart * 100)}%`} · Gemini {sources.gemini == null ? "—" : `${Math.round(sources.gemini * 100)}%`} · RapidOCR {sources.rapidocr == null ? "—" : `${Math.round(sources.rapidocr * 100)}%`}</> : value.status}</small></label>; })}</div><div className="ocr-status-grid"><div><strong>Rules Engine</strong><span>{compliance?.overallStatus || "Not evaluated"}</span></div><div><strong>Evidence confidence</strong><span>{ocr.evidenceConfidence ? `${ocr.evidenceConfidence.weights.datakart * 100}% DataKart · ${ocr.evidenceConfidence.weights.gemini * 100}% Gemini · ${ocr.evidenceConfidence.weights.rapidocr * 100}% RapidOCR` : (ocr.needsReview ? "Review required" : "Confident")}</span></div><div><strong>Unreadable fields</strong><span>{ocr.unreadableFields?.length || 0}</span></div></div>{ocr?.presentationChecks && <div className="presentation-check-panel">
+    {ocr && <section className="scan-review"><div className="section-heading"><div><h2>OCR extraction and Rules Engine result</h2><p>Edit the extracted values here if OCR needs correction. Use the registration actions below to carry them into the editable product form.</p></div></div><div className="ocr-fields-grid">{Object.entries(ocr).filter(([key, value]) => key !== "rawText" && value && typeof value === "object" && ["found","absent","unreadable","ambiguous"].includes(value.status)).map(([key, value]) => { const badge = verificationBadge(value); const overall = Number.isFinite(Number(value?.evidenceConfidence)) ? Math.round(Number(value.evidenceConfidence) * 100) : Math.round(Number(value?.confidence || 0) * 100); const sources = value?.confidenceSources || {}; return <label key={key} className="ocr-edit-field" style={{ position: "relative" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6 }}><strong>{key.replace(/([A-Z])/g, " $1")}</strong><span title={badge.label} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 7px", borderRadius: 999, border: `1px solid ${badge.border}`, background: badge.background, color: badge.tone, fontWeight: 800, fontSize: 11, letterSpacing: 0.3, whiteSpace: "nowrap" }}>{badge.icon} {badge.label}</span></div><input value={value.value ?? ""} placeholder={value.status === "found" ? "Review value" : value.status} onChange={(e) => updateOcrField(key, e.target.value)} /><small>{value.status === "found" ? <>{value?.evidenceConfidence != null ? `${overall}% evidence confidence` : `${overall}% confidence`} · DataKart {sources.datakart == null ? "—" : `${Math.round(sources.datakart * 100)}%`} · Gemini {sources.gemini == null ? "—" : `${Math.round(sources.gemini * 100)}%`} · RapidOCR {sources.rapidocr == null ? "—" : `${Math.round(sources.rapidocr * 100)}%`}</> : value.status}</small></label>; })}</div><div className="ocr-status-grid"><div><strong>Rules Engine</strong><span>{compliance?.overallStatus || "Not evaluated"}</span></div><div><strong>Evidence confidence</strong><span>{ocr.evidenceConfidence ? `${ocr.evidenceConfidence.weights.datakart * 100}% DataKart · ${ocr.evidenceConfidence.weights.gemini * 100}% Gemini · ${ocr.evidenceConfidence.weights.rapidocr * 100}% RapidOCR` : (ocr.needsReview ? "Review required" : "Confident")}</span></div><div><strong>Unreadable fields</strong><span>{ocr.unreadableFields?.length || 0}</span></div></div>{ocr?.presentationChecks && <div className="presentation-check-panel">
   <div className="section-heading"><div><h3>Readability, text-size & placement screening</h3><p>Assistive visual screening for SIH-required readability, font-size and placement checks. Exact statutory font-size measurement still requires calibrated officer verification.</p></div></div>
   <div className="ocr-status-grid">
     <div><strong>Readable signals</strong><span>{ocr.presentationChecks.summary?.likelyReadable ?? 0}</span></div>
