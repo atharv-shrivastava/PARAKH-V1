@@ -1,0 +1,43 @@
+name: V1 DataKart result UI patch
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch Scan DataKart status
+        env:
+          FILE: frontend/src/pages/Scan.jsx
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('frontend/src/pages/Scan.jsx')
+          text = path.read_text()
+          old = '<div><strong>DataKart verification</strong><span>{ocr.dataKartVerification?.status || "NOT_RUN"}{ocr.dataKartVerification?.gtin ? ` · GTIN ${ocr.dataKartVerification.gtin}` : ""}</span></div>'
+          new = '''<div className="datakart-result-card" style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "16px 18px", borderRadius: 12, border: `1px solid ${ocr.dataKartVerification?.status === "REGISTERED" ? "#86efac" : ocr.dataKartVerification?.status === "NOT_FOUND" ? "#fca5a5" : "#fcd34d"}`, background: ocr.dataKartVerification?.status === "REGISTERED" ? "#f0fdf4" : ocr.dataKartVerification?.status === "NOT_FOUND" ? "#fef2f2" : "#fffbeb" }}>
+  <div>
+    <strong style={{ display: "block", fontSize: 15 }}>DataKart product verification</strong>
+    <span style={{ display: "block", marginTop: 4, fontWeight: 800, color: ocr.dataKartVerification?.status === "REGISTERED" ? "#15803d" : ocr.dataKartVerification?.status === "NOT_FOUND" ? "#b91c1c" : "#a16207" }}>
+      {ocr.dataKartVerification?.status === "REGISTERED" ? "✓ Product found in DataKart" : ocr.dataKartVerification?.status === "NOT_FOUND" ? "✕ Product not found in DataKart" : ocr.dataKartVerification?.status === "UNAVAILABLE" ? "? DataKart could not be reached" : "? Product could not be checked: no GTIN detected"}
+    </span>
+  </div>
+  <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>{ocr.dataKartVerification?.gtin ? `GTIN ${ocr.dataKartVerification.gtin}` : "No GTIN"}</span>
+</div>'''
+          if old not in text:
+              raise SystemExit('Expected DataKart UI block not found')
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+      - name: Commit patch and remove temporary workflow
+        run: |
+          rm -f .github/workflows/v1-datakart-ui.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src/pages/Scan.jsx .github/workflows/v1-datakart-ui.yml
+          git commit -m "fix(v1): show explicit DataKart product lookup result"
+          git push
