@@ -26,16 +26,21 @@ jobs:
           text = path.read_text(encoding='utf-8')
           original = text
 
-          # RapidOCR is the only OCR provider in PARAKH-V1.
+          # PARAKH-V1 uses RapidOCR only for OCR. No Puter OCR fallback.
           text = text.replace('const MAX_PUTER_IMAGE_SIZE = 10 * 1024 * 1024;\n', '')
           text = text.replace('''      } catch (rapidError) {\n        setMessage("RapidOCR unavailable. Using Puter.js fallback OCR...");\n        extracted = await runPuterOcr(images.map(({ file }) => file));\n      }''', '''      } catch (rapidError) {\n        throw rapidError;\n      }''', 1)
 
-          # Remove the entire Puter OCR fallback implementation.
-          text = re.sub(r'\nfunction normalizePuterOcr\\(.*?\\nfunction Scan\\(\\)', '\nfunction Scan()', text, count=1, flags=re.S)
+          text = re.sub(
+              r'\nfunction normalizePuterOcr\(.*?\nfunction Scan\(\)',
+              '\nfunction Scan()',
+              text,
+              count=1,
+              flags=re.S,
+          )
 
-          # Render the verification badge for every displayed OCR field.
-          text = text.replace('''{value?.status === "found" && <span title={badge.label}''', '''<span title={badge.label}''', 1)
-          text = text.replace('''</span>}</div><input value={value.value ?? ""}''', '''</span></div><input value={value.value ?? ""}''', 1)
+          # Always render the badge. VerificationBadge itself maps to ✓/✕/? .
+          text = text.replace('{value?.status === "found" && <span title={badge.label}', '<span title={badge.label}', 1)
+          text = text.replace('</span>}</div><input value={value.value ?? ""}', '</span></div><input value={value.value ?? ""}', 1)
 
           if text == original:
               raise SystemExit('No source changes matched; aborting.')
@@ -43,7 +48,7 @@ jobs:
           path.write_text(text, encoding='utf-8')
           PY
 
-      - name: Verify
+      - name: Verify source
         run: |
           ! grep -q 'runPuterOcr' frontend/src/pages/Scan.jsx
           ! grep -q 'normalizePuterOcr' frontend/src/pages/Scan.jsx
