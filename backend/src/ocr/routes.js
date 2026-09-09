@@ -34,7 +34,7 @@ function addEvidence(evidence, field, item, sourceType = "OCR", explicitField = 
   });
 }
 
-function makeRulesEvidence(ocr) {
+function makeRulesEvidence(ocr, datakartVerification = null) {
   const declarations = Array.isArray(ocr?.declarationEvidence) ? ocr.declarationEvidence : [];
   const evidence = [];
 
@@ -83,11 +83,29 @@ function makeRulesEvidence(ocr) {
     });
   }
 
+  if (datakartVerification?.found && datakartVerification.comparison) {
+    for (const [field, comparison] of Object.entries(datakartVerification.comparison.comparisons || {})) {
+      evidence.push({
+        evidenceId: `datakart-${field}-${crypto.randomUUID()}`,
+        field: `reference.${field}`,
+        rawValue: comparison.referenceValue,
+        normalizedValue: comparison.referenceValue,
+        confidence: Number(comparison.score || 0),
+        source: "DATAKART_REFERENCE",
+        referenceGtin: datakartVerification.gtin,
+        match: Boolean(comparison.match),
+        timestamp: new Date().toISOString(),
+        reliability: "REFERENCE",
+      });
+    }
+  }
+
   return evidence;
 }
 
 async function evaluateRules(req, ocr) {
   const rulesEngineUrl = process.env.RULES_ENGINE_URL || "http://localhost:8090";
+  const datakartVerification = req.body?.datakartVerification || null;
   const body = {
     inspectionId: req.body?.inspectionId || crypto.randomUUID(),
     productId: req.body?.productId || crypto.randomUUID(),
@@ -101,8 +119,17 @@ async function evaluateRules(req, ocr) {
       countryOfOrigin: ocr?.countryOfOrigin?.value || undefined,
       packageType: req.body?.packageType || "retail",
     },
-    evidence: makeRulesEvidence(ocr),
+    evidence: makeRulesEvidence(ocr, datakartVerification),
     visualFlags: req.body?.visualFlags || {},
+    referenceVerification: datakartVerification ? {
+      source: "DataKart",
+      gtin: datakartVerification.gtin || null,
+      found: Boolean(datakartVerification.found),
+      matchedFields: datakartVerification.comparison?.matchedFields || 0,
+      comparedFields: datakartVerification.comparison?.comparedFields || 0,
+      matchRate: datakartVerification.comparison?.matchRate ?? null,
+      confidence: req.body?.verificationConfidence || null,
+    } : null,
   };
 
   const response = await fetch(`${rulesEngineUrl}/api/rules-engine/evaluate`, {
@@ -127,8 +154,6 @@ router.post("/evaluate-structured", authenticate, async (req, res) => {
     res.json({ compliance, complianceError: null });
   } catch (error) {
     console.error("[ocr:evaluate-structured]", error);
-    // OCR fields remain usable even when the compliance dependency is unavailable.
-    // Return 200 so ScanV2 can display/edit/register the extracted data and surface the compliance error separately.
     res.status(200).json({
       compliance: null,
       complianceError: { message: error?.message || "Rules Engine evaluation failed." },
