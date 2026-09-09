@@ -12,11 +12,15 @@ function isFound(field) {
   return field?.status === "found" && text(field?.value) !== "";
 }
 
+function verificationStateForMissing(observations) {
+  if (!observations.length) return "MISSING";
+  const statuses = observations.map((item) => String(item.field?.status || "").toLowerCase());
+  if (statuses.some((status) => status === "ambiguous" || status === "unreadable")) return "NEED_VERIFICATION";
+  return statuses.every((status) => status === "absent") ? "MISSING" : "NEED_VERIFICATION";
+}
+
 // Manufacturing/batch/inkjet codes are frequently short alphanumeric strings.
 // Do not let them become product names simply because a semantic model selected them.
-// Keep common consumer-facing names such as 7UP or 5 STAR valid by requiring a
-// stronger code signature: either an explicit # numeric code or a compact run of
-// letters followed by at least two digits.
 function looksLikeProductCode(value) {
   const source = text(value).toUpperCase().replace(/\s+/g, "");
   if (!source) return false;
@@ -42,23 +46,53 @@ function sanitizeField(key, field) {
   return field;
 }
 
+function calculateAgreementConfidence(winningGroup, enabledCount) {
+  if (!winningGroup?.length || !enabledCount) return 0;
+  const agreement = winningGroup.length / enabledCount;
+  const modelConfidence = winningGroup.reduce((sum, item) => sum + confidence(item.field?.confidence), 0) / winningGroup.length;
+  // Agreement is intentionally the dominant signal. The remaining weight is
+  // each participating model's own confidence, so this remains evidence-based
+  // rather than presenting a raw model confidence as system confidence.
+  return Math.max(0, Math.min(1, agreement * 0.7 + modelConfidence * 0.3));
+}
+
 function voteField(key, providers) {
-  const observations = providers
-    .filter((provider) => provider?.enabled && provider?.fields?.[key])
-    .map((provider) => ({
-      provider: provider.provider,
-      field: sanitizeField(key, provider.fields[key]),
-      normalized: comparable(provider.fields[key].value),
-    }));
+  const enabledProviders = providers.filter((provider) => provider?.enabled);
+  const observations = enabledProviders
+    .filter((provider) => provider?.fields?.[key])
+    .map((provider) => {
+      const field = sanitizeField(key, provider.fields[key]);
+      return {
+        provider: provider.provider,
+        model: provider.model || null,
+        field,
+        normalized: comparable(field?.value),
+      };
+    });
 
   const found = observations.filter((item) => isFound(item.field));
-  const votes = observations.map((item) => ({ provider: item.provider, status: item.field.status, value: item.field.value ?? null }));
+  const votes = observations.map((item) => ({
+    provider: item.provider,
+    model: item.model,
+    status: item.field?.status || "absent",
+    value: item.field?.value ?? null,
+    confidence: Math.round(confidence(item.field?.confidence) * 100),
+  }));
 
   if (!found.length) {
-    const statuses = observations.map((item) => item.field.status);
-    const ambiguous = statuses.filter((status) => status === "ambiguous").length;
-    const unreadable = statuses.filter((status) => status === "unreadable").length;
-    return { value: null, raw: null, evidence: null, confidence: 0, status: ambiguous >= 2 ? "ambiguous" : unreadable >= 2 ? "unreadable" : "absent", verification: "consensus", source: "SEMANTIC_CONSENSUS", votes };
+    const verificationStatus = verificationStateForMissing(observations);
+    return {
+      value: null,
+      raw: null,
+      evidence: null,
+      confidence: 0,
+      verificationConfidence: 0,
+      status: verificationStatus === "MISSING" ? "absent" : "ambiguous",
+      verificationStatus,
+      verification: verificationStatus,
+      source: "SEMANTIC_CONSENSUS",
+      votes,
+    };
   }
 
   const groups = new Map();
@@ -69,19 +103,57 @@ function voteField(key, providers) {
   }
 
   let winningGroup = null;
-  for (const group of groups.values()) if (!winningGroup || group.length > winningGroup.length) winningGroup = group;
+  for (const group of groups.values()) {
+    if (!winningGroup || group.length > winningGroup.length) winningGroup = group;
+  }
 
   if (winningGroup?.length >= 2) {
-    const best = [...winningGroup].sort((a, b) => confidence(b.field.confidence) - confidence(a.field.confidence))[0];
-    return { ...best.field, raw: best.field.raw ?? best.field.value, evidence: best.field.evidence ?? best.field.raw ?? best.field.value, verification: `majority-${winningGroup.length}/${providers.filter((item) => item?.enabled).length}`, source: "SEMANTIC_CONSENSUS", votes };
+    const calculatedConfidence = calculateAgreementConfidence(winningGroup, enabledProviders.length);
+    const verificationStatus = calculatedConfidence >= 0.85 && winningGroup.length === enabledProviders.length
+      ? "VERIFIED"
+      : "NEED_VERIFICATION";
+    const best = [...winningGroup].sort((a, b) => confidence(b.field?.confidence) - confidence(a.field?.confidence))[0];
+    return {
+      ...best.field,
+      raw: best.field.raw ?? best.field.value,
+      evidence: best.field.evidence ?? best.field.raw ?? best.field.value,
+      confidence: calculatedConfidence,
+      verificationConfidence: Math.round(calculatedConfidence * 100),
+      status: best.field.status || "found",
+      verificationStatus,
+      verification: `agreement-${winningGroup.length}/${enabledProviders.length}`,
+      source: "SEMANTIC_CONSENSUS",
+      votes,
+    };
   }
 
   if (found.length === 1) {
     const only = found[0];
-    return { ...only.field, verification: "single-model", confidence: Math.min(confidence(only.field.confidence), 0.74), source: "SEMANTIC_CONSENSUS", votes };
+    const calculatedConfidence = Math.min(0.74, confidence(only.field?.confidence) * 0.7 + (1 / Math.max(1, enabledProviders.length)) * 0.3);
+    return {
+      ...only.field,
+      verificationConfidence: Math.round(calculatedConfidence * 100),
+      confidence: calculatedConfidence,
+      verificationStatus: "NEED_VERIFICATION",
+      verification: "single-model",
+      source: "SEMANTIC_CONSENSUS",
+      votes,
+    };
   }
 
-  return { value: null, raw: found.map((item) => item.field.raw || item.field.value).filter(Boolean).join(" | ") || null, evidence: found.map((item) => `${item.provider}: ${item.field.evidence || item.field.value}`).join(" | "), confidence: 0, status: "ambiguous", verification: "conflict", source: "SEMANTIC_CONSENSUS", votes };
+  const fallbackConfidence = Math.round((winningGroup?.length || 1) / Math.max(1, enabledProviders.length) * 60);
+  return {
+    value: null,
+    raw: found.map((item) => item.field.raw || item.field.value).filter(Boolean).join(" | ") || null,
+    evidence: found.map((item) => `${item.provider}: ${item.field.evidence || item.field.value}`).join(" | "),
+    confidence: fallbackConfidence / 100,
+    verificationConfidence: fallbackConfidence,
+    status: "ambiguous",
+    verificationStatus: "NEED_VERIFICATION",
+    verification: "conflict",
+    source: "SEMANTIC_CONSENSUS",
+    votes,
+  };
 }
 
 function voteCategory(providers, categoryOptions) {
@@ -133,7 +205,12 @@ export function reconcileSemanticResults(providers = [], categoryOptions = []) {
   return {
     enabled: enabledProviders.length > 0,
     providerCount: enabledProviders.length,
-    providers: providers.map((provider) => ({ provider: provider?.provider || "unknown", model: provider?.model || null, enabled: Boolean(provider?.enabled), reason: provider?.enabled ? null : provider?.reason || "Provider unavailable." })),
+    providers: providers.map((provider) => ({
+      provider: provider?.provider || "unknown",
+      model: provider?.model || null,
+      enabled: Boolean(provider?.enabled),
+      reason: provider?.enabled ? null : provider?.reason || "Provider unavailable.",
+    })),
     fields,
     suggestedCategory: voteCategory(providers, categoryOptions),
   };
