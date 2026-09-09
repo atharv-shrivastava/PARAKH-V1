@@ -1,1 +1,0 @@
-Temporary one-time trigger. CI removes this file after applying the patch.
