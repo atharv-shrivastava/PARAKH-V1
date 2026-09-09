@@ -15,53 +15,74 @@ const STATE_MARKER = "const [barcodeFile, setBarcodeFile] = useState(null);";
 const HANDLER_MARKER = "function addBarcodeFile(input)";
 const UI_MARKER = "data-parallel-barcode-ui";
 
+function replaceOnce(needle, replacement, label) {
+  if (source.includes(needle)) {
+    source = source.replace(needle, replacement);
+    return true;
+  }
+  if (label) console.warn(`PARAKH patch anchor missing: ${label}`);
+  return false;
+}
+
 if (!source.includes(IMPORT_MARKER)) {
-  source = source.replace(
+  replaceOnce(
     'import { apiFetch } from "../lib/auth";',
     'import { apiFetch } from "../lib/auth";\n' + IMPORT_MARKER,
+    "verification import",
   );
 }
 
 if (!source.includes("const BARCODE_TIMEOUT_MS")) {
-  source = source.replace(
+  replaceOnce(
     "const MAX_IMAGES = 4;",
     'const MAX_IMAGES = 4;\nconst BARCODE_MAX_SIZE = 8 * 1024 * 1024;\nconst BARCODE_TIMEOUT_MS = 4000;',
+    "barcode constants",
   );
 }
 
 if (!source.includes(STATE_MARKER)) {
-  source = source.replace(
+  replaceOnce(
     '  const [message, setMessage] = useState("");',
     '  const [message, setMessage] = useState("");\n  const [barcodeFile, setBarcodeFile] = useState(null);\n  const [barcodePreviewUrl, setBarcodePreviewUrl] = useState("");\n  const [manualGtin, setManualGtin] = useState("");\n  const [barcodeResult, setBarcodeResult] = useState(null);\n  const [datakartVerification, setDatakartVerification] = useState(null);\n  const [verificationConfidence, setVerificationConfidence] = useState(null);',
+    "barcode state",
   );
 }
 
-if (!source.includes("URL.createObjectURL(barcodeFile)")) {
-  const effectAnchor = '  useEffect(() => {\n    if (!analyzing) return undefined;';
-  if (!source.includes(effectAnchor)) throw new Error("Could not find analysis timer effect anchor.");
-  const effect = `  useEffect(() => {
-    if (!barcodeFile) {
-      setBarcodePreviewUrl("");
-      return undefined;
-    }
-    const url = URL.createObjectURL(barcodeFile);
-    setBarcodePreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [barcodeFile]);
+// Preview is managed directly by addBarcodeFile, so startup does not depend on
+// the exact shape/location of the analysis timer useEffect.
+if (!source.includes(HANDLER_MARKER)) {
+  const updateAnchor = '  function update(key, value) {\n    setForm((current) => ({ ...current, [key]: value }));\n  }';
+  const handler = `  function update(key, value) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
 
-`;
-  source = source.replace(effectAnchor, effect + effectAnchor);
-}
-
-if (!source.includes("setBarcodeResult(null);")) {
-  const resetAnchor = '  function resetAnalysisState() {\n    setOcr(null);\n    setCompliance(null);\n    setComplianceError(null);\n    setAcceptedFindingIds([]);\n    setManualViolations([]);\n    setManualViolationReason("");\n    setManualRuleNumber("");\n    setProviderInfo(null);\n    setAiSuggestedCategory(null);';
-  const resetReplacement = resetAnchor + '\n    setBarcodeResult(null);\n    setDatakartVerification(null);\n    setVerificationConfidence(null);';
-  if (source.includes(resetAnchor)) source = source.replace(resetAnchor, resetReplacement);
+  function addBarcodeFile(input) {
+    const file = input?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return setMessage("Barcode upload must be an image.");
+    if (file.size > BARCODE_MAX_SIZE) return setMessage("Barcode image is too large. Use an image smaller than 8 MB.");
+    setBarcodeFile((previous) => {
+      if (previous && previous !== file) {
+        // The previous object URL is revoked when the preview element is replaced.
+      }
+      return file;
+    });
+    setBarcodePreviewUrl((previous) => {
+      if (previous) URL.revokeObjectURL(previous);
+      return URL.createObjectURL(file);
+    });
+    setBarcodeResult(null);
+    setDatakartVerification(null);
+    setVerificationConfidence(null);
+    setMessage("Barcode image ready. It will be decoded in parallel with package OCR when Analyze Images is clicked.");
+  }`;
+  if (!replaceOnce(updateAnchor, handler, "barcode handler")) {
+    throw new Error("Could not find ScanV2 component update anchor.");
+  }
 }
 
 if (!source.includes("async function resolveGtin(")) {
   const helperAnchor = "function formatElapsed(ms) {";
-  if (!source.includes(helperAnchor)) throw new Error("Could not find formatElapsed anchor.");
   const helper = `async function resolveGtin(barcodeFileValue, manualGtinValue) {
   const manual = String(manualGtinValue || "").replace(/\\s+/g, "").trim();
   if (barcodeFileValue) {
@@ -96,31 +117,17 @@ if (!source.includes("async function resolveGtin(")) {
 }
 
 `;
-  source = source.replace(helperAnchor, helper + helperAnchor);
-}
-
-if (!source.includes(HANDLER_MARKER)) {
-  const updateAnchor = '  function update(key, value) {\n    setForm((current) => ({ ...current, [key]: value }));\n  }';
-  const handler = `${updateAnchor}
-
-  function addBarcodeFile(input) {
-    const file = input?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) return setMessage("Barcode upload must be an image.");
-    if (file.size > BARCODE_MAX_SIZE) return setMessage("Barcode image is too large. Use an image smaller than 8 MB.");
-    setBarcodeFile(file);
-    setBarcodeResult(null);
-    setDatakartVerification(null);
-    setVerificationConfidence(null);
-    setMessage("Barcode image ready. It will be decoded in parallel with package OCR when Analyze Images is clicked.");
-  }`;
-  if (!source.includes(updateAnchor)) throw new Error("Could not find ScanV2 component update anchor.");
-  source = source.replace(updateAnchor, handler);
+  if (!replaceOnce(helperAnchor, helper + helperAnchor, "formatElapsed helper anchor")) {
+    throw new Error("Could not find formatElapsed anchor.");
+  }
 }
 
 if (!source.includes("const [ocrOutcome, barcodeOutcome] = await Promise.allSettled")) {
   const analyzeRegex = /  async function analyze\(\)\s*\{[\s\S]*?\n  \}\s*\n\s*function updateOcrField/;
-  if (!analyzeRegex.test(source)) throw new Error("Could not safely locate analyze() in ScanV2.jsx.");
+  if (!analyzeRegex.test(source)) {
+    throw new Error("Could not safely locate analyze() in ScanV2.jsx. Restore ScanV2.jsx from git and rerun npm run dev.");
+  }
+
   const analyze = `  async function analyze() {
     if (!images.length) return setMessage("Add at least one package image first.");
     setAnalyzing(true);
@@ -218,7 +225,6 @@ if (!source.includes("const [ocrOutcome, barcodeOutcome] = await Promise.allSett
         datakartVerification: dk ? { ...dk, comparison: dkComparison } : null,
         verificationConfidence: confidenceResult,
       });
-
       if (Number.isFinite(info.timing?.totalMs)) setAnalysisDurationMs(Number(info.timing.totalMs));
       setManualViolations([]);
       setManualViolationReason("");
@@ -238,7 +244,8 @@ if (!source.includes("const [ocrOutcome, barcodeOutcome] = await Promise.allSett
   }
 
   function updateOcrField`;
-  source = source.replace(analyzeRegex, analyze);
+
+  replaceOnce(analyzeRegex, analyze, "analyze function");
 }
 
 if (!source.includes(UI_MARKER)) {
@@ -255,8 +262,9 @@ if (!source.includes(UI_MARKER)) {
         </div>}
         {!barcodePreviewUrl && manualGtin && <div className="status-message">Manual GTIN entered: {manualGtin}</div>}
       </div>`;
-  if (!source.includes(uploadAnchor)) throw new Error("Could not find scan upload area.");
-  source = source.replace(uploadAnchor, uploadAnchor + "\n      " + ui);
+  if (!replaceOnce(uploadAnchor, uploadAnchor + "\n      " + ui, "scan upload area")) {
+    throw new Error("Could not find scan upload area in ScanV2.jsx.");
+  }
 }
 
 if (!source.includes("Barcode / GTIN") && source.includes("{providerInfo && <section className=\"ocr-status-grid\">")) {
@@ -268,8 +276,8 @@ if (!source.includes("Barcode / GTIN") && source.includes("{providerInfo && <sec
     </section>}
 
     `;
-  source = source.replace(anchor, verification + anchor);
+  replaceOnce(anchor, verification + anchor, "verification status panel");
 }
 
 await fs.writeFile(scanPath, source, "utf8");
-console.log("PARAKH final scan patch applied: barcode UI restored; barcode + OCR/Gemini parallel; Rules Engine + DataKart parallel.");
+console.log("PARAKH final scan patch applied: barcode UI + preview restored; barcode + OCR/Gemini parallel; Rules Engine + DataKart parallel.");
