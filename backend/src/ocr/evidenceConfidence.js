@@ -124,11 +124,12 @@ async function fetchDataKartByGtin(gtin) {
   return Array.isArray(data) && data.length ? data[0] : null;
 }
 
-export async function applyEvidenceConfidence(result) {
+export async function applyEvidenceConfidence(result, options = {}) {
+  const barcodeImageProvided = Boolean(options?.barcodeImageProvided);
   const next = { ...result };
   const evidence = Array.isArray(result?.rawOcrEvidence) ? result.rawOcrEvidence : [];
   const explicitBarcode = String(next.barcode?.value ?? "").replace(/\D/g, "");
-  const rapidBarcode = extractGtinFromRapidEvidence(evidence);
+  const rapidBarcode = barcodeImageProvided ? null : extractGtinFromRapidEvidence(evidence);
   const barcode = explicitBarcode || rapidBarcode || null;
   if (!explicitBarcode && rapidBarcode) {
     next.barcode = {

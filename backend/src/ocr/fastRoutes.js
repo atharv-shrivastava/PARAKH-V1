@@ -24,7 +24,7 @@ const upload = multer({
   fileFilter: (_req, file, cb) => allowedTypes.has(file.mimetype)
     ? cb(null, true)
     : cb(Object.assign(new Error("Only JPEG, PNG and WebP images are supported."), { code: "OCR_UNSUPPORTED_FORMAT", statusCode: 415 })),
-  limits: { files: config.maxImages, fileSize: config.maxImageSizeBytes },
+  limits: { files: config.maxImages + 1, fileSize: config.maxImageSizeBytes },
 });
 
 function extension(mediaType) {
@@ -545,7 +545,7 @@ async function runSemanticProviders({ images, rapid, categoryOptions }) {
   return { ...consensus, timing: Object.fromEntries(settled.map((provider) => [provider.provider, provider.timingMs])) };
 }
 
-async function handleFastAnalyze(req, res, files) {
+async function handleFastAnalyze(req, res, files, barcodeFile = null) {
   const startedAt = Date.now();
   try {
     if (!files.length) return res.status(400).json({ error: { code: "OCR_NO_IMAGES", message: "Upload at least one package image." } });
@@ -553,6 +553,8 @@ async function handleFastAnalyze(req, res, files) {
     let categoryOptions = [];
     try { categoryOptions = JSON.parse(req.body?.categoryOptions || "[]"); if (!Array.isArray(categoryOptions)) categoryOptions = []; } catch { categoryOptions = []; }
 
+    const barcodeImageProvided = Boolean(barcodeFile);
+    const submittedBarcode = String(req.body?.barcodeGtin || "").replace(/\D/g, "").trim();
     const uploadMs = Date.now() - startedAt;
     const rapidStart = Date.now();
     const rapid = await analyzeWithRapid(images);
@@ -560,7 +562,18 @@ async function handleFastAnalyze(req, res, files) {
     const semanticStart = Date.now();
     const aiSemantic = await runSemanticProviders({ images, rapid, categoryOptions });
     const semanticMs = Date.now() - semanticStart;
-    const result = await applyEvidenceConfidence(buildStructuredResult(rapid, aiSemantic));
+    const structuredResult = buildStructuredResult(rapid, aiSemantic);
+    if (submittedBarcode) {
+      structuredResult.barcode = {
+        value: submittedBarcode,
+        raw: submittedBarcode,
+        confidence: 1,
+        evidence: submittedBarcode,
+        status: "found",
+        source: "BARCODE_IMAGE_DECODER",
+      };
+    }
+    const result = await applyEvidenceConfidence(structuredResult, { barcodeImageProvided });
     const totalMs = Date.now() - startedAt;
     const parallelMs = totalMs - uploadMs;
 
@@ -595,10 +608,20 @@ async function handleFastAnalyze(req, res, files) {
     const status = error.statusCode || 502;
     res.status(status).json({ error: { code: error.code || "OCR_FAST_ERROR", message: error.message || "Fast OCR analysis failed." } });
   } finally {
-    await Promise.all(files.map((file) => fs.unlink(file.path).catch(() => {})));
+    await Promise.all([
+      ...files.map((file) => fs.unlink(file.path).catch(() => {})),
+      ...(barcodeFile ? [fs.unlink(barcodeFile.path).catch(() => {})] : []),
+    ]);
   }
 }
 
-router.post("/analyze", authenticate, upload.array("images", config.maxImages), (req, res) => handleFastAnalyze(req, res, req.files || []));
+router.post("/analyze", authenticate, upload.fields([
+  { name: "images", maxCount: config.maxImages },
+  { name: "barcodeImage", maxCount: 1 },
+]), (req, res) => {
+  const packageFiles = Array.isArray(req.files?.images) ? req.files.images : [];
+  const barcodeFile = Array.isArray(req.files?.barcodeImage) ? req.files.barcodeImage[0] : null;
+  return handleFastAnalyze(req, res, packageFiles, barcodeFile);
+});
 
 export default router;

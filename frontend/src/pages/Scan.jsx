@@ -128,6 +128,7 @@ function Scan() {
   const [cameraError, setCameraError] = useState("");
   const [categories, setCategories] = useState([]);
   const [images, setImages] = useState([]);
+  const [barcodeImage, setBarcodeImage] = useState(null);
   const [ocr, setOcr] = useState(null);
   const [compliance, setCompliance] = useState(null);
   const [complianceError, setComplianceError] = useState(null);
@@ -167,6 +168,12 @@ function Scan() {
       });
     };
   }, [images]);
+
+  useEffect(() => {
+    return () => {
+      if (barcodeImage?.url) URL.revokeObjectURL(barcodeImage.url);
+    };
+  }, [barcodeImage]);
 
   useEffect(() => {
     if (!analyzing || !analysisStartedAt) return undefined;
@@ -228,6 +235,51 @@ function Scan() {
   function handleImages(event) {
     addFiles(event.target.files);
     event.target.value = "";
+  }
+
+  function handleBarcodeImage(event) {
+    const file = Array.from(event.target.files || []).find((item) => item instanceof File && item.type.startsWith("image/"));
+    event.target.value = "";
+    if (!file) return;
+    setBarcodeImage((current) => {
+      if (current?.url) URL.revokeObjectURL(current.url);
+      return { file, url: URL.createObjectURL(file) };
+    });
+    setOcr(null);
+    setCompliance(null);
+    setAcceptedFindingIds([]);
+    setComplianceError(null);
+    setShowRegistration(false);
+    setUseExtractedData(false);
+    setForm(emptyForm);
+    setMessage("Barcode image ready. It will be decoded separately for GTIN/DataKart verification when Analyze Images is clicked.");
+  }
+
+  function removeBarcodeImage() {
+    setBarcodeImage((current) => {
+      if (current?.url) URL.revokeObjectURL(current.url);
+      return null;
+    });
+    setOcr(null);
+    setCompliance(null);
+    setAcceptedFindingIds([]);
+    setComplianceError(null);
+  }
+
+  async function decodeBarcodeImage(file) {
+    if (!("BarcodeDetector" in globalThis)) {
+      throw new Error("Barcode scanning is not supported by this browser. Use a Chromium browser with BarcodeDetector support.");
+    }
+    const supported = typeof BarcodeDetector.getSupportedFormats === "function"
+      ? await BarcodeDetector.getSupportedFormats()
+      : [];
+    const formats = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "itf", "codabar", "qr_code", "data_matrix"]
+      .filter((format) => !supported.length || supported.includes(format));
+    const detector = new BarcodeDetector(formats.length ? { formats } : undefined);
+    const detected = await detector.detect(file);
+    const raw = detected.find((item) => String(item?.rawValue || "").replace(/\D/g, "").length >= 8)?.rawValue || detected[0]?.rawValue || "";
+    const digits = String(raw).replace(/\D/g, "");
+    return [digits, digits.length === 12 ? `0${digits}` : ""].find((value) => /^(?:\d{8}|\d{12}|\d{13}|\d{14})$/.test(value)) || "";
   }
 
   async function openCamera() {
@@ -300,9 +352,23 @@ function Scan() {
     setMessage("Running RapidOCR primary OCR + semantic analysis...");
     try {
       let extracted;
+      let barcodeGtin = "";
+      if (barcodeImage) {
+        setMessage("Decoding dedicated barcode image for GTIN...");
+        try {
+          barcodeGtin = await decodeBarcodeImage(barcodeImage.file);
+          setMessage(barcodeGtin
+            ? `Barcode decoded: GTIN ${barcodeGtin}. Running package OCR and DataKart verification...`
+            : "Barcode image could not be decoded. Continuing package analysis.");
+        } catch (barcodeError) {
+          setMessage(`Barcode decoding unavailable: ${barcodeError.message}`);
+        }
+      }
       try {
         const formData = new FormData();
         images.forEach(({ file }) => formData.append("images", file));
+        if (barcodeImage) formData.append("barcodeImage", barcodeImage.file);
+        if (barcodeGtin) formData.append("barcodeGtin", barcodeGtin);
         formData.append("categoryOptions", JSON.stringify(finalCategories.map((item) => ({ id: item.id, name: item.name, path: item.path.map((x) => x.name).join(" → ") }))));
         const rapidResponse = await apiFetch(API_URL + "/ocr/analyze", { method: "POST", body: formData });
         const rapidData = await rapidResponse.json().catch(() => ({}));
@@ -446,6 +512,7 @@ function Scan() {
   return <div className="scan-page">
     <div className="page-header"><p className="eyebrow">PRODUCT INSPECTION</p><h1>Scan Product</h1><p>Capture or upload package images, extract declarations, run the Legal Metrology Rules Engine, then register the inspected product.</p></div>
     <section className="scan-area"><div className="scan-icon">⌁</div><h2>Capture or upload package images</h2><p>Use the camera or choose up to {MAX_IMAGES} images showing different sides of the package.</p><div className="scan-upload-actions"><button type="button" className="primary-button" onClick={openCamera}>Open Camera</button><label className="secondary-button scan-file-button">Upload Images<input type="file" accept="image/*" multiple onChange={handleImages} hidden /></label></div><p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>{cameraError && <div className="status-message">{cameraError}</div>}</section>
+    <section className="scan-area" style={{ marginTop: 16 }}><div className="scan-icon">▥</div><h2>Upload Barcode</h2><p>Upload a clear barcode image separately. Parakh decodes it for the GTIN and uses the GTIN to verify the product in DataKart.</p><div className="scan-upload-actions"><label className="secondary-button scan-file-button">{barcodeImage ? "Replace Barcode" : "Upload Barcode"}<input type="file" accept="image/*" onChange={handleBarcodeImage} hidden /></label>{barcodeImage && <button type="button" className="secondary-button" onClick={removeBarcodeImage}>Remove</button>}</div>{barcodeImage && <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}><img src={barcodeImage.url} alt="Uploaded barcode" style={{ width: 180, maxHeight: 100, objectFit: "contain", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff" }} /><span style={{ fontSize: 13, fontWeight: 700 }}>{barcodeImage.file.name}<br /><small style={{ fontWeight: 500, opacity: 0.75 }}>Decoded when Analyze Images is clicked.</small></span></div>}</section>
     {cameraOpen && <div className="camera-overlay" role="dialog" aria-modal="true"><div className="camera-modal"><div className="camera-header"><h2>Capture package image</h2><button type="button" onClick={closeCamera}>Close</button></div><video ref={videoRef} className="camera-video" autoPlay playsInline muted /><div className="camera-actions"><button type="button" className="primary-button" onClick={capturePhoto}>Capture Photo</button><button type="button" className="secondary-button" onClick={closeCamera}>Cancel</button></div></div></div>}
     {images.length > 0 && <section className="scan-review"><div className="section-heading"><div><h2>Evidence images</h2><p>All selected images will be retained on the registered product.</p></div></div><div className="scan-image-grid">{images.map(({ url, file }, i) => <div className="scan-image-card" key={`${file.name}-${i}`}><img src={url} alt={`Package evidence ${i + 1}`} /><button type="button" onClick={() => removeImage(i)}>Remove</button><span>{file.name}</span></div>)}</div><button type="button" className="primary-button" onClick={analyzeImages} disabled={analyzing}>{analyzing ? "Analyzing..." : "Analyze Images"}</button></section>}
     {ocr && <section className="scan-review"><div className="section-heading"><div><h2>OCR extraction and Rules Engine result</h2><p>Edit the extracted values here if OCR needs correction. Use the registration actions below to carry them into the editable product form.</p></div></div><div className="ocr-fields-grid">{Object.entries(ocr).filter(([key, value]) => key !== "rawText" && value && typeof value === "object" && ["found","absent","unreadable","ambiguous"].includes(value.status)).map(([key, value]) => { const badge = verificationBadge(value); const overall = Number.isFinite(Number(value?.evidenceConfidence)) ? Math.round(Number(value.evidenceConfidence) * 100) : Math.round(Number(value?.confidence || 0) * 100); const sources = value?.confidenceSources || {}; return <label key={key} className="ocr-edit-field" style={{ position: "relative" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6 }}><strong>{key.replace(/([A-Z])/g, " $1")}</strong><span title={badge.label} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 8px", borderRadius: 999, border: `1px solid ${badge.border}`, background: badge.background, color: badge.tone, fontWeight: 800, fontSize: 11, letterSpacing: 0.3, whiteSpace: "nowrap" }}><VerificationIcon type={badge.icon} />{badge.label}</span></div><input value={value.value ?? ""} placeholder={value.status === "found" ? "Review value" : value.status} onChange={(e) => updateOcrField(key, e.target.value)} /><small>{value.status === "found" ? <>{value?.evidenceConfidence != null ? `${overall}% evidence confidence` : `${overall}% confidence`} · DataKart {sources.datakart == null ? "—" : `${Math.round(sources.datakart * 100)}%`} · Gemini {sources.gemini == null ? "—" : `${Math.round(sources.gemini * 100)}%`} · RapidOCR {sources.rapidocr == null ? "—" : `${Math.round(sources.rapidocr * 100)}%`}</> : value.status}</small></label>; })}</div><div className="ocr-status-grid"><div><strong>Rules Engine</strong><span>{compliance?.overallStatus || "Not evaluated"}</span></div><div className="datakart-result-card" style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "16px 18px", borderRadius: 12, border: `1px solid ${ocr.dataKartVerification?.status === "REGISTERED" ? "#86efac" : ocr.dataKartVerification?.status === "NOT_FOUND" ? "#fca5a5" : "#fcd34d"}`, background: ocr.dataKartVerification?.status === "REGISTERED" ? "#f0fdf4" : ocr.dataKartVerification?.status === "NOT_FOUND" ? "#fef2f2" : "#fffbeb" }}>
