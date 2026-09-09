@@ -10,9 +10,6 @@ on:
       - 'rules-engine/**'
       - '.github/workflows/rules-engine.yml'
 
-permissions:
-  contents: write
-
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -21,55 +18,6 @@ jobs:
         working-directory: rules-engine
     steps:
       - uses: actions/checkout@v4
-
-      - name: Enforce RapidOCR-only Scan path and verification badges
-        working-directory: ${{ github.workspace }}
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import re
-
-          path = Path('frontend/src/pages/Scan.jsx')
-          text = path.read_text(encoding='utf-8')
-          original = text
-
-          fallback = '''      } catch (rapidError) {
-            setMessage("RapidOCR unavailable. Using Puter.js fallback OCR...");
-            extracted = await runPuterOcr(images.map(({ file }) => file));
-          }'''
-          if fallback in text:
-              text = text.replace(fallback, '''      } catch (rapidError) {
-            throw rapidError;
-          }''', 1)
-
-          text = text.replace('{value?.status === "found" && (', '{(', 1)
-
-          text = re.sub(
-              r'function normalizePuterOcr\(candidate, rawText\) \{.*?\n\nfunction Scan\(\)',
-              'function Scan()',
-              text,
-              count=1,
-              flags=re.S,
-          )
-          text = text.replace('const MAX_PUTER_IMAGE_SIZE = 10 * 1024 * 1024;\n', '')
-
-          if text != original:
-              path.write_text(text, encoding='utf-8')
-          PY
-
-          if grep -q 'runPuterOcr' frontend/src/pages/Scan.jsx; then echo 'Puter OCR path still present'; exit 1; fi
-          if grep -q 'RapidOCR unavailable. Using Puter.js fallback OCR' frontend/src/pages/Scan.jsx; then echo 'Puter OCR fallback still active'; exit 1; fi
-          if grep -q '{value?.status === "found" && (' frontend/src/pages/Scan.jsx; then echo 'Found-only badge guard still present'; exit 1; fi
-          grep -q 'function verificationBadge(field)' frontend/src/pages/Scan.jsx
-
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add frontend/src/pages/Scan.jsx
-          if ! git diff --cached --quiet; then
-            git commit -m 'fix(v1): show verification badges and use RapidOCR only'
-            git push
-          fi
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
