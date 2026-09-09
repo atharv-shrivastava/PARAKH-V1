@@ -1,14 +1,12 @@
-# PARAKH AI and OCR Modules
+# PARAKH AI, OCR and Evidence Modules
 
-## 1. AI Philosophy
+## 1. AI philosophy
 
-PARAKH uses AI where it adds value: semantic interpretation, structured field extraction, classification assistance, uncertainty handling, and package understanding.
+PARAKH uses AI where semantic interpretation is useful. Deterministic software remains responsible for deterministic validation and legal-rule evaluation.
 
-Deterministic software is preferred for deterministic checks.
+The system must never fabricate missing declarations. Unknown or unsupported evidence remains unknown and is sent for review where necessary.
 
-The system must never fabricate missing declarations.
-
-## 2. Current Pipeline
+## 2. Current scanning pipeline
 
 ```text
 Package image(s)
@@ -17,230 +15,182 @@ RapidOCR
       ↓
 OCR evidence + confidence + geometry
       ↓
-Local deterministic field reconciliation
+Deterministic field reconciliation
       ↓
-Gemini + Cloudflare semantic providers
+Gemini semantic interpretation
       ↓
-Semantic consensus
+Semantic consensus / structured fields
       ↓
-Structured inspection fields
+DataKart GTIN verification
       ↓
-Visual screening + compliance
+Evidence confidence fusion
+      ↓
+Rules Engine
+      ↓
+Officer review
 ```
 
-## 3. OCR Layer
+The current V1 default semantic path uses Gemini. Additional Cloudflare semantic providers can be enabled with `PARAKH_SEMANTIC_VERIFY_ALL=true`.
 
-The current production path uses the configured RapidOCR service.
+## 3. RapidOCR layer
 
-OCR evidence can include:
+RapidOCR is the primary local OCR/detection layer.
 
-- Text
-- Confidence
-- Image index
-- Bounding box
-- Image dimensions
+OCR evidence can contain:
 
-RapidOCR is responsible for detection/OCR evidence, not legal interpretation.
-
-## 4. Deterministic Field Reconciliation
-
-The local reconciler maps OCR detections into structured fields.
-
-Current matching strategies include:
-
-- Declaration label anchors
-- Spatial proximity
-- Relative position
-- Text similarity
-- Confidence weighting
-- Product/brand candidate scoring
-- Quantity/date/MRP/batch/barcode patterns
-- Geometry-aware evidence selection
-
-The reconciler intentionally preserves uncertainty.
-
-## 5. Target Fields
-
-Where applicable, the system can extract:
-
-- Brand
-- Product name
-- Net quantity
-- Unit
-- MRP
-- Manufacturer
-- Manufacturer address
-- Packer
-- Packer address
-- Marketer
-- Marketer address
-- Importer
-- Importer address
-- Manufacturing date
-- Packing date
-- Best-before / expiry
-- Batch number
-- Consumer-care phone
-- Consumer-care email
-- Country of origin
-- FSSAI license number
-- Barcode
-
-## 6. Semantic Providers
-
-The current semantic fan-out supports:
-
-- Gemini
-- Cloudflare Gemma
-- Cloudflare Moondream
-
-Each provider runs independently.
-
-A provider can be unavailable because of:
-
-- Missing credentials
-- Quota/rate limits
-- Authentication failures
-- Provider errors
-- Model errors
-- Empty responses
-- Timeout
-
-Provider failures are logged with the provider and model name.
-
-Moondream is currently treated as a best-effort provider with a bounded timeout so a slow vision model does not block the rest of the pipeline indefinitely.
-
-## 7. Semantic Consensus
-
-Successful provider outputs are reconciled field by field.
-
-The consensus logic can:
-
-- select majority agreement
-- preserve a single-provider result with reduced confidence
-- mark conflicting successful values as ambiguous
-- ignore unavailable providers
-
-Consensus does not convert an AI prediction into a legal determination.
-
-## 8. Confidence
-
-Confidence describes the reliability of extraction or interpretation.
-
-It is not legal certainty.
-
-The system should preserve separate concepts for:
-
+- detected text
 - OCR confidence
-- Field confidence
-- Product/category confidence
-- Rule applicability
-- Compliance result
-- Officer verification
+- source image index
+- bounding box
+- image width/height
 
-## 9. Visual Screening
+RapidOCR provides visual text evidence. It does not decide what a declaration means legally.
 
-The current scanning result can include assistive visual screening for:
+## 4. Deterministic field reconciliation
 
-- Readability
-- Relative text size
-- Declaration placement
-- Detected text regions
-- Image quality-related review signals
+The local reconciliation layer maps OCR detections to structured declaration fields using deterministic evidence rules.
 
-Approximate physical measurements derived from a photograph must be labeled as estimates unless reliable calibration exists.
+It can use:
 
-## 10. Evidence Localization
+- declaration labels and anchors
+- spatial proximity
+- relative position
+- text similarity
+- quantity/date/MRP/batch/barcode patterns
+- bounding-box geometry
+- OCR confidence
+- identity/product candidate scoring
 
-Whenever geometry is available, extracted values should retain source image and bounding-box information.
+The reconciler preserves uncertainty rather than forcing an answer when evidence is weak.
 
-This supports:
+## 5. Structured fields
 
-- Evidence highlighting
-- Source-image review
-- Declaration evidence
-- Auditable field correction
+The current extraction model supports fields including product name, brand, manufacturer, addresses, packer, marketer, importer, net quantity, unit, MRP, currency, manufacturing/packing dates, best-before/expiry, batch number, consumer-care contact, country of origin, FSSAI license number, and barcode/GTIN.
 
-## 11. Human Review Triggers
+## 6. Gemini semantic layer
 
-Manual review should be considered for:
+Gemini receives the package images and OCR evidence to interpret semantic relationships that plain OCR cannot reliably establish by itself.
 
-- Low OCR confidence
-- Low semantic confidence
-- Conflicting providers
-- Conflicting package images
-- Missing critical fields
-- Ambiguous classification
-- Poor image quality
-- Uncertain placement/readability
-- Context-dependent legal requirements
+Examples include:
 
-## 12. Compliance Boundary
+- deciding which nearby value represents MRP
+- mapping a declaration to the correct field
+- understanding product/brand identity
+- using image/spatial context to distinguish related text
+- suggesting a product category
 
-AI may suggest a likely declaration or issue.
+Gemini confidence is retained as one component of the final evidence-confidence calculation.
 
-The compliance engine determines rule outcomes from structured data and configured rule logic.
+Gemini is not the legal source of truth.
 
-Example:
+## 7. Semantic consensus
+
+The backend has support for multiple semantic providers. Successful provider results can be reconciled field by field. Failed or unavailable providers do not automatically block the scan.
+
+When enabled, Cloudflare Gemma and Cloudflare Moondream can contribute additional semantic evidence. The default V1 configuration uses Gemini as the primary semantic provider.
+
+## 8. DataKart verification
+
+DataKart is a separate product-reference registry. PARAKH extracts a GTIN/barcode and looks up an active registered product in DataKart.
+
+The returned registered fields are compared against the current inspection values. DataKart verifies product-reference agreement; it does not evaluate Legal Metrology rules.
+
+Verification states are:
+
+- `MATCH` / `✓`: the field matches the registered DataKart value
+- `MISMATCH` / `✕`: the field differs from the registered value
+- `UNVERIFIED` / `?`: no registered field or no usable DataKart verification was available
+
+## 9. Evidence confidence
+
+PARAKH combines independent evidence sources into an **Evidence Confidence** score:
 
 ```text
-OCR:
-MRP = ₹20
-      ↓
-Field reconciliation
-      ↓
-Applicable rule
-      ↓
-Deterministic / configured validation
-      ↓
-Finding + evidence
-      ↓
-Officer verification
+50% DataKart agreement
+30% Gemini semantic confidence
+20% RapidOCR evidence confidence
 ```
 
-## 13. Failure Observability
+DataKart has the largest weight because registered reference agreement is a direct cross-check of the extracted product information.
 
-Every semantic provider should produce enough backend logging to answer:
+When a source is unavailable, its weight is removed and the remaining available weights are renormalized. A missing DataKart record therefore does not automatically mean the extracted field is wrong.
 
-- Which provider ran?
-- Which model ran?
-- Did it succeed?
-- How long did it take?
-- If it failed, what status/code/reason was returned?
+A DataKart mismatch contributes zero for that field's DataKart component while the separate verification state reports the mismatch. This makes it possible to distinguish "confident extraction but registry disagreement" from "poor OCR".
 
-This is especially important when multiple providers are used in parallel.
+The score is an evidence-fusion indicator, not a calibrated probability and not legal certainty.
 
-## 14. Evaluation Metrics
+## 10. Evidence provenance
 
-Track separately:
+Structured fields can retain:
 
-- OCR accuracy
-- Field precision/recall
-- Product classification accuracy
-- Rule evaluation correctness
-- False-positive rate
-- False-negative rate
-- Processing time
-- Manual correction rate
-- Provider success/failure rates
+- OCR confidence
+- semantic confidence
+- source/evidence text
+- source image index
+- bounding box
+- DataKart registered value
+- DataKart verification state
+- final evidence confidence
 
-## 15. Privacy and Security
+The provenance should remain available when an officer corrects or confirms a field.
 
-Package images may contain commercially sensitive information.
+## 11. Visual screening
 
-Do not copy them to unnecessary services.
+The scanning result can include assistive screening for readability, relative text size, declaration location, and detected text regions.
 
-Protect:
+These are screening signals. Exact statutory physical measurements still require appropriate verification and calibration.
 
-- uploaded images
-- API credentials
-- inspection records
-- audit information
+## 12. Human review
 
-## 16. AI Governance
+Review should be triggered or encouraged when:
 
-Officer corrections should be preserved as feedback data where appropriate.
+- OCR evidence is weak or missing
+- semantic confidence is low
+- semantic providers disagree
+- DataKart conflicts with the extracted value
+- critical declarations are missing
+- placement/readability cannot be established
+- image quality prevents reliable extraction
+- legal applicability depends on information unavailable from the photograph
 
-The prototype should not silently retrain production models from every correction.
+## 13. Compliance boundary
 
-Model/provider changes should be documented and evaluated separately.
+AI and OCR extract or interpret evidence. The configurable Rules Engine evaluates legal requirements from structured inputs.
+
+```text
+Package image
+   ↓
+RapidOCR + Gemini
+   ↓
+Structured field
+   ↓
+Evidence confidence / DataKart verification
+   ↓
+Rules Engine
+   ↓
+Finding
+   ↓
+Officer decision
+```
+
+No LLM should silently replace deterministic legal-rule evaluation.
+
+## 14. Failure observability
+
+Provider execution should record enough information to identify:
+
+- provider
+- model
+- success/failure
+- execution time
+- failure reason
+
+The user-facing result should stay understandable while detailed diagnostics remain in backend logs.
+
+## 15. Evaluation metrics
+
+Evaluate OCR accuracy, field extraction accuracy, DataKart agreement accuracy, semantic agreement, rule correctness, false positives/negatives, manual correction rate, processing time, and provider reliability separately.
+
+## 16. Governance
+
+Officer corrections are review data, not an instruction to silently retrain production models. Changes to OCR models, semantic providers, matching logic, or evidence weights should be documented and evaluated separately.
