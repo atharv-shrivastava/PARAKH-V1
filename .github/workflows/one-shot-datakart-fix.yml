@@ -1,0 +1,54 @@
+name: One-shot DataKart integration fix
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "!contains(github.event.head_commit.message, '[datakart-patch]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Patch V1 DataKart path
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('backend/src/ocr/fastRoutes.js')
+          s = p.read_text()
+          old = 'import { reconcileSemanticResults } from "./semanticConsensus.js";'
+          new = old + '\nimport { applyEvidenceConfidence } from "./evidenceConfidence.js";'
+          if 'from "./evidenceConfidence.js"' not in s:
+              s = s.replace(old, new, 1)
+          old2 = 'const result = buildStructuredResult(rapid, aiSemantic);'
+          new2 = 'const result = await applyEvidenceConfidence(buildStructuredResult(rapid, aiSemantic));'
+          if old2 not in s:
+              raise SystemExit('Expected result construction line not found')
+          s = s.replace(old2, new2, 1)
+          p.write_text(s)
+
+          p = Path('frontend/src/pages/Scan.jsx')
+          s = p.read_text()
+          old = ': ocr.dataKartVerification?.status === "UNAVAILABLE" ? "? DataKart could not be reached" : "? Product could not be checked: no GTIN detected"'
+          new = ': ocr.dataKartVerification?.status === "UNAVAILABLE" ? "? DataKart could not be reached" : "✕ Product not detected in DataKart"'
+          if old in s:
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+      - name: Commit real V1 fix and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm -f .github/workflows/one-shot-datakart-fix.yml
+          git add backend/src/ocr/fastRoutes.js frontend/src/pages/Scan.jsx .github/workflows/one-shot-datakart-fix.yml
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: wire DataKart verification into V1 OCR [datakart-patch]'
+          git push
