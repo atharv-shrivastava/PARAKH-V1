@@ -97,10 +97,40 @@ if (!source.includes(marker)) {
   if (!source.includes(providerAnchor)) throw new Error("ScanV2 patch anchor not found: provider status");
   source = source.replace(providerAnchor, verificationPanel + providerAnchor);
 
-  await fs.writeFile(scanPath, source, "utf8");
   console.log("PARAKH scan page patched with parallel barcode/GTIN verification, DataKart comparison, confidence calculation, and barcode preview.");
 } else {
-  console.log("PARAKH scan page barcode/DataKart verification patch already present; existing build-time patch retained.");
+  console.log("PARAKH scan page barcode/DataKart verification patch already present.");
 }
 
-console.log("PARAKH frontend scan pipeline verified: local backend OCR request plus parallel barcode/GTIN verification.");
+const previewMarker = "/* PARAKH_BARCODE_PREVIEW_V1 */";
+if (!source.includes(previewMarker)) {
+  const stateAnchor = '  const [barcodeFile, setBarcodeFile] = useState(null);';
+  if (source.includes(stateAnchor) && !source.includes('const [barcodePreviewUrl, setBarcodePreviewUrl]')) {
+    source = source.replace(stateAnchor, `${stateAnchor}\n  const [barcodePreviewUrl, setBarcodePreviewUrl] = useState("");`);
+  }
+
+  const effectAnchor = '  useEffect(() => {\n    if (!analyzing) return undefined;';
+  if (source.includes(effectAnchor) && !source.includes('URL.createObjectURL(barcodeFile)')) {
+    const effect = `  useEffect(() => {\n    if (!barcodeFile) {\n      setBarcodePreviewUrl("");\n      return undefined;\n    }\n    const url = URL.createObjectURL(barcodeFile);\n    setBarcodePreviewUrl(url);\n    return () => URL.revokeObjectURL(url);\n  }, [barcodeFile]);\n\n`;
+    source = source.replace(effectAnchor, effect + effectAnchor);
+  }
+
+  const uploadAnchor = '<p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>';
+  if (source.includes(uploadAnchor) && !source.includes('className="barcode-preview-card"')) {
+    const previewPanel = [
+      '{barcodePreviewUrl && <div className="barcode-preview-card">',
+      '  <div className="barcode-preview-heading"><strong>Uploaded barcode</strong><span>{barcodeFile?.name}</span></div>',
+      '  <img className="barcode-preview-image" src={barcodePreviewUrl} alt="Uploaded barcode for scanning" />',
+      '  <div className="barcode-preview-meta">{barcodeResult?.found ? `Decoded GTIN: ${barcodeResult.gtin}` : "Will be decoded when Analyze Images is clicked."}</div>',
+      '</div>}',
+      '',
+    ].join("\n");
+    source = source.replace(uploadAnchor, uploadAnchor + "\n      " + previewPanel);
+  }
+
+  source += `\n${previewMarker}\n`;
+  console.log("PARAKH barcode upload preview applied to ScanV2.jsx.");
+}
+
+await fs.writeFile(scanPath, source, "utf8");
+console.log("PARAKH frontend scan pipeline verified: local backend OCR request plus parallel barcode/GTIN verification with visible barcode preview.");
