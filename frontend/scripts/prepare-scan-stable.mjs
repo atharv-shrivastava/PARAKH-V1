@@ -14,39 +14,38 @@ const stateBlock = `  const [barcodeFile, setBarcodeFile] = useState(null);\n  c
 if (!source.includes(importLine)) {
   source = source.replace('import { apiFetch } from "../lib/auth";', 'import { apiFetch } from "../lib/auth";\n' + importLine);
 }
-
 if (!source.includes("const BARCODE_TIMEOUT_MS")) {
   source = source.replace("const MAX_IMAGES = 4;", "const MAX_IMAGES = 4;\nconst BARCODE_MAX_SIZE = 8 * 1024 * 1024;\nconst BARCODE_TIMEOUT_MS = 4000;");
 }
-
 if (!source.includes("const [barcodeFile, setBarcodeFile]")) {
   const stateAnchor = /  const \[message, setMessage\] = useState\(\"\"\);/;
   if (!stateAnchor.test(source)) throw new Error("Could not locate ScanV2 React state block.");
   source = source.replace(stateAnchor, (m) => m + "\n" + stateBlock);
 }
-
 if (!source.includes("async function resolveGtin(")) {
   const helperAnchor = "function formatElapsed(ms) {";
   if (!source.includes(helperAnchor)) throw new Error("Could not locate formatElapsed in ScanV2.jsx.");
   const helper = `async function resolveGtin(barcodeFileValue, manualGtinValue) {\n  const manual = String(manualGtinValue || "").replace(/\\s+/g, "").trim();\n  if (!barcodeFileValue) return { attempted: Boolean(manual), found: Boolean(manual), value: manual || null, gtin: manual || null, format: manual ? "MANUAL_GTIN" : null, confidence: manual ? 0.90 : 0, source: manual ? "MANUAL_GTIN" : "NONE", error: null };\n  const timeout = new Promise((resolve) => window.setTimeout(() => resolve({ attempted: true, found: false, value: null, gtin: manual || null, format: null, confidence: 0, source: manual ? "MANUAL_GTIN_FALLBACK" : "BARCODE_TIMEOUT", error: "Barcode decoding timed out." }), BARCODE_TIMEOUT_MS));\n  const decode = scanBarcodeImage(barcodeFileValue).then((decoded) => ({ ...decoded, gtin: decoded.found ? decoded.value : manual || null, source: decoded.found ? "BARCODE_SCAN" : manual ? "MANUAL_GTIN_FALLBACK" : "NONE" }));\n  return Promise.race([decode, timeout]);\n}\n\n`;
   source = source.replace(helperAnchor, helper + helperAnchor);
 }
-
 if (!source.includes("function addBarcodeFile(input)")) {
   const insertion = `  function addBarcodeFile(input) {\n    const file = input?.[0];\n    if (!file) return;\n    if (!file.type.startsWith("image/")) return setMessage("Barcode upload must be an image.");\n    if (file.size > BARCODE_MAX_SIZE) return setMessage("Barcode image is too large. Use an image smaller than 8 MB.");\n    setBarcodeFile(file);\n    setBarcodePreviewUrl(URL.createObjectURL(file));\n    setBarcodeResult(null);\n    setDatakartVerification(null);\n    setVerificationConfidence(null);\n    setMessage("Barcode image ready. It will be decoded in parallel with package OCR when Analyze Images is clicked.");\n  }\n\n`;
-  const anchor = /  async function openCamera\(\)/;
-  if (!anchor.test(source)) throw new Error("Could not locate openCamera in ScanV2.jsx.");
-  source = source.replace(anchor, insertion + "  async function openCamera(");
+  const cameraAnchor = /  (?:async )?function openCamera\(/;
+  if (!cameraAnchor.test(source)) throw new Error("Could not locate openCamera in ScanV2.jsx.");
+  source = source.replace(cameraAnchor, insertion + "  function openCamera(");
 }
-
 if (!source.includes("data-parallel-barcode-ui")) {
-  const uploadAnchor = '<p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>';
   const ui = `<div data-parallel-barcode-ui="true" className="barcode-upload-section">\n        <div className="scan-upload-actions">\n          <label className="secondary-button scan-file-button">Upload Barcode<input type="file" accept="image/*" onChange={(event) => { addBarcodeFile(event.target.files); event.target.value = ""; }} hidden /></label>\n          <input aria-label="Enter GTIN manually" placeholder="Enter GTIN manually" inputMode="numeric" value={manualGtin} onChange={(event) => { setManualGtin(event.target.value.replace(/\\D/g, "").slice(0, 18)); setBarcodeResult(null); }} />\n        </div>\n        {barcodePreviewUrl && <div className="barcode-preview-card">\n          <div className="barcode-preview-heading"><strong>Uploaded barcode</strong><span>{barcodeFile?.name}</span></div>\n          <img className="barcode-preview-image" src={barcodePreviewUrl} alt="Uploaded barcode for scanning" />\n          <div className="barcode-preview-meta">{barcodeResult?.found ? "Decoded GTIN: " + barcodeResult.gtin : "Will be decoded when Analyze Images is clicked."}</div>\n        </div>}\n        {!barcodePreviewUrl && manualGtin && <div className="status-message">Manual GTIN entered: {manualGtin}</div>}\n      </div>`;
-  const uploadAnchorRegex = /<p className="scan-limit">\{images\.length\/\{MAX_IMAGES\} images selected\}<\/p>/;
-  if (uploadAnchorRegex.test(source)) source = source.replace(uploadAnchorRegex, (m) => m + "\n      " + ui);
-  else throw new Error("Could not locate scan upload area.");
+  const exactAnchor = '<p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>';
+  const flexibleAnchor = /(<p[^>]*className=["']scan-limit["'][^>]*>[\s\S]*?<\/p>)/;
+  if (source.includes(exactAnchor)) source = source.replace(exactAnchor, exactAnchor + "\n      " + ui);
+  else if (flexibleAnchor.test(source)) source = source.replace(flexibleAnchor, (m) => m + "\n      " + ui);
+  else {
+    const headingAnchor = /(<h2>Capture or upload package images<\/h2>)/;
+    if (headingAnchor.test(source)) source = source.replace(headingAnchor, (m) => m + "\n      " + ui);
+    else throw new Error("Could not locate any safe scan upload insertion point.");
+  }
 }
-
 if (!source.includes("const [ocrOutcome, barcodeOutcome] = await Promise.allSettled")) {
   const analyzeRegex = /  async function analyze\(\)\s*\{[\s\S]*?\n  \}\s*\n\s*function updateOcrField/;
   if (analyzeRegex.test(source)) {
@@ -56,4 +55,4 @@ if (!source.includes("const [ocrOutcome, barcodeOutcome] = await Promise.allSett
 }
 
 await fs.writeFile(scanPath, source, "utf8");
-console.log("PARAKH stable scan integration: barcode UI + preview; barcode/OCR parallel; Rules Engine/DataKart parallel.");
+console.log("PARAKH stable scan integration ready: barcode UI + preview, barcode/OCR parallel, Rules Engine/DataKart parallel.");
