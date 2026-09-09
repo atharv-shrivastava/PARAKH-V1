@@ -1,77 +1,63 @@
 # PARAKH Technical Architecture
 
-## 1. Architecture Goals
+## 1. Architecture goals
 
-PARAKH separates presentation, API/business logic, OCR/AI processing, compliance rules, persistence, evidence, reporting, and analytics.
+PARAKH separates presentation, API/business logic, OCR/AI processing, evidence verification, compliance rules, persistence, reporting, and analytics.
 
-The application is intentionally modular while remaining practical for an SIH prototype.
+AI is an assistive layer. It is not the legal source of truth.
 
-The AI layer must not become the application's source of truth.
-
-## 2. Current High-Level Architecture
+## 2. Current high-level architecture
 
 ```text
-┌───────────────────────────────────────────────────────────────┐
-│                         PARAKH CLIENT                         │
-│ React + Vite + React Router                                  │
-│ Responsive UI / themes / cached GET data                     │
-│ Dashboard | Scan | Shops | Products | History | Reports      │
-│ E-commerce | Admin                                           │
-└───────────────────────────────┬───────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                         PARAKH CLIENT                       │
+│ React + Vite + React Router                                │
+│ Dashboard | Scan | Shops | Products | History | Reports    │
+│ E-commerce | Admin | Responsive themes                     │
+└───────────────────────────────┬─────────────────────────────┘
                                 │ REST / JSON / multipart
                                 ▼
-┌───────────────────────────────────────────────────────────────┐
-│                     NODE + EXPRESS BACKEND                    │
-│ Auth | Business Logic | Products | Shops | Categories         │
-│ Inspections | Rules | Analytics | Reports | E-commerce        │
-└───────────────┬────────────────────┬──────────────────────────┘
-                │                    │
-                │                    ├───────────────┐
-                ▼                    ▼               ▼
-        ┌──────────────┐    ┌────────────────┐  ┌──────────────┐
-        │ PostgreSQL   │    │ OCR / AI       │  │ Evidence /   │
-        │ via Prisma   │    │ processing     │  │ report data  │
-        └──────────────┘    └───────┬────────┘  └──────────────┘
-                                    │
-                                    ▼
-                          ┌──────────────────────┐
-                          │ Compliance Engine    │
-                          │ Rule evaluation       │
-                          │ Evidence + findings   │
-                          └──────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                     NODE + EXPRESS BACKEND                  │
+│ Auth | Products | Shops | Categories | Inspections         │
+│ OCR orchestration | Evidence confidence | Rules | Reports  │
+└───────────────┬────────────────┬────────────────────────────┘
+                │                │
+                ▼                ▼
+        ┌───────────────┐   ┌──────────────────────────────┐
+        │ PostgreSQL    │   │ OCR / AI / verification      │
+        │ via Prisma    │   │ RapidOCR → Gemini → DataKart│
+        └───────────────┘   └──────────────┬───────────────┘
+                                          │
+                                          ▼
+                               ┌────────────────────────┐
+                               │ Evidence confidence    │
+                               │ 50% DataKart           │
+                               │ 30% Gemini             │
+                               │ 20% RapidOCR           │
+                               └────────────┬───────────┘
+                                            │
+                                            ▼
+                               ┌────────────────────────┐
+                               │ Compliance Rules Engine │
+                               │ deterministic checks    │
+                               └────────────┬───────────┘
+                                            │
+                                            ▼
+                                     Officer review
 ```
 
-## 3. Frontend Architecture
+## 3. Frontend architecture
 
-Current frontend stack:
+The current client uses React 19, Vite, React Router, JSX/JavaScript, shared CSS/theme infrastructure, responsive layouts, session-level GET caching, mutation-triggered invalidation, and jsPDF where used.
 
-- React 19
-- Vite
-- React Router
-- JavaScript/JSX in the current repository
-- Shared CSS theme system
-- Responsive layouts
-- Client-side caching helpers
-- jsPDF where client-side report generation is used
+The Scan page supports multi-image capture/upload, OCR result review, editable fields, visual screening, compliance findings, manual violation entry, and product registration.
 
-The UI currently contains shared layout/theme infrastructure and feature-oriented pages for dashboard, scan, shops, products, history, reports, e-commerce, profile, and administration.
+## 4. Backend architecture
 
-The frontend should reuse shared components and theme variables rather than creating page-specific versions of the same control.
+The backend uses Node.js, Express 5, ES modules, Multer, Sharp, Prisma 7, and PostgreSQL.
 
-## 4. Backend Architecture
-
-Current backend stack:
-
-- Node.js
-- Express 5
-- ES modules
-- REST endpoints
-- Multer
-- Sharp
-- Prisma 7
-- PostgreSQL driver adapter
-
-Current route groups include:
+Route groups include:
 
 ```text
 /api/auth
@@ -86,247 +72,168 @@ Current route groups include:
 /api/ocr
 ```
 
-The backend owns:
+The backend owns authentication, authorization, persistence, OCR/semantic orchestration, evidence processing, rule evaluation, and data APIs.
 
-- Authentication and authorization
-- Product/category/shop operations
-- Inspection persistence
-- Rule evaluation
-- Analytics aggregation
-- OCR/semantic orchestration
-- Report-related data operations
-- Validation and error handling
+## 5. OCR and semantic pipeline
 
-## 5. Database Architecture
-
-PostgreSQL stores the structured application state through Prisma.
-
-Logical areas include:
-
-- Users and roles
-- Shops
-- Category hierarchy
-- Products and variants
-- Inspections
-- Inspection items
-- Inspection images
-- Extracted fields
-- Compliance rules and checks
-- Violations
-- Evidence
-- Verification records
-- Reports
-- Audit information
-- Analytics source data
-
-Analytics are derived from inspection records rather than maintained as manually edited counters.
-
-## 6. OCR / AI Pipeline
-
-The current fast analysis path is:
+The current fast analysis route is:
 
 ```text
-Input image(s)
+Package image(s)
       ↓
 RapidOCR service
       ↓
 OCR evidence
-(text + confidence + geometry)
+(text + confidence + bounding box + image metadata)
       ↓
-Local deterministic reconciliation
+Deterministic field reconciliation
       ↓
-Semantic provider fan-out
- ├── Gemini
- ├── Cloudflare Gemma
- └── Cloudflare Moondream
+Gemini semantic interpretation
       ↓
-Semantic consensus
+Semantic consensus / structured result
       ↓
-Structured result
+DataKart GTIN verification
       ↓
-Visual screening + compliance workflow
+Evidence confidence fusion
+      ↓
+Rules Engine
+      ↓
+Officer review
 ```
 
-The semantic providers run independently. A failed provider should not prevent the remaining providers from producing a result when enough information is available.
+Additional Cloudflare semantic providers can be enabled with configuration. They are optional and do not replace RapidOCR or the Rules Engine.
 
-Provider failures are logged with provider/model details in the backend terminal.
+## 6. RapidOCR service
 
-## 7. Local Deterministic Reconciliation
+RapidOCR is the primary OCR/detection service. The backend sends package images to the configured `RAPID_OCR_URL` and receives OCR text, confidence, and geometry where available.
 
-The local OCR reconciler maps OCR detections into structured fields using:
+Relevant environment variables include:
 
-- Declaration anchors
-- Spatial relationships
-- Text similarity
-- Confidence
-- Product/brand candidate scoring
-- Quantity/date/MRP/batch/barcode patterns
-- Bounding-box geometry
+```text
+RAPID_OCR_URL
+RAPIDOCR_LANG_TYPE
+RAPIDOCR_MAX_SIDE
+RAPIDOCR_USE_CLS
+RAPIDOCR_TEXT_SCORE
+OCR_TIMEOUT_MS
+```
 
-It preserves uncertainty instead of inventing values.
+The default local endpoint is `http://localhost:8081`.
 
-## 8. Semantic Consensus
+## 7. Deterministic field reconciliation
 
-Remote semantic providers can produce structured field interpretations and category suggestions.
+The reconciliation layer converts OCR detections into structured declarations. It uses labels, spatial relationships, text similarity, field-specific patterns, OCR confidence, and bounding-box geometry.
 
-The consensus layer:
+A resolved field can retain an `evidenceIndex`, source image, evidence text, bounding box, and OCR confidence.
 
-- ignores failed providers
-- compares field values across successful providers
-- uses majority agreement when available
-- marks conflicts as ambiguous
-- reduces confidence when only one provider returns a result
+## 8. Gemini semantic layer
 
-AI interpretation therefore acts as an assistive semantic layer rather than a legal decision-maker.
+Gemini interprets package images and OCR evidence to solve semantic mapping problems such as assigning nearby text/value pairs to the correct declaration field and understanding product/brand identity.
 
-## 9. Image Processing and Evidence
+Its field confidence contributes to Evidence Confidence when Gemini successfully supplies semantic output.
 
-The scanning system retains image-level evidence where available.
+## 9. DataKart verification layer
 
-Evidence can include:
+DataKart is an external product-reference registry maintained separately from the PARAKH PostgreSQL application database.
 
-- OCR text
-- confidence
-- source image
-- bounding box
-- semantic field mapping
-- declaration evidence
-- visual screening information
+The backend uses an extracted GTIN/barcode to query the active DataKart product and compare registered values with the current inspection fields.
 
-This enables the UI to show source evidence and supports later verification.
+DataKart is a verification source, not the legal decision-maker.
 
-## 10. Product Classification
+## 10. Evidence confidence architecture
 
-Classification combines:
+Each structured field can receive a fused Evidence Confidence score.
 
-1. Existing catalogue matching
-2. OCR-derived product/brand information
-3. Category hierarchy
-4. Semantic suggestions where available
-5. Officer confirmation
+```text
+DataKart agreement       50%
+Gemini confidence        30%
+RapidOCR confidence      20%
+```
+
+DataKart match = `1.0` for that component.
+DataKart mismatch = `0.0` for that component.
+DataKart field unavailable/unregistered = component omitted and the remaining source weights are renormalized.
+
+The result is explicitly an evidence-fusion indicator, not a calibrated probability and not a statement of legal certainty.
+
+Each field can also expose:
+
+```text
+MATCH       → ✓
+MISMATCH    → ✕
+UNVERIFIED  → ?
+```
+
+## 11. Evidence model
+
+Evidence can include OCR text, confidence, source image, bounding box, image dimensions, semantic provenance, registered DataKart value, verification state, and final Evidence Confidence.
+
+This supports explainability and officer review.
+
+## 12. Product classification
+
+Classification combines catalogue hierarchy, OCR-derived product/brand information, semantic suggestions, and officer confirmation.
 
 The canonical hierarchy remains:
 
 `Category → Subcategory → Product Type → Brand → Product → Pack Size / Variant`
 
-## 11. Compliance Engine
-
-Compliance is kept separate from OCR and AI.
+## 13. Compliance Engine boundary
 
 ```text
-Structured product data
+Structured field values
         +
-Applicable rules
+Configured legal rules
         ↓
-Validation
+Deterministic evaluation
         ↓
-Compliance findings
+Finding
         ↓
 Officer verification
 ```
 
-Deterministic checks should remain deterministic.
+Legal requirements must remain in the compliance/rules layer. They must not be encoded as hidden LLM decisions or scattered through React components.
 
-The UI must not hard-code legal requirements.
+## 14. Human-in-the-loop
 
-## 12. Human-in-the-Loop
-
-The intended workflow is:
+The intended review path is:
 
 ```text
-OCR / AI extraction
-        ↓
-Confidence + evidence
-        ↓
-Rule evaluation
-        ↓
-Inspector reviews uncertain values/findings
-        ↓
+RapidOCR + Gemini
+      ↓
+Field + Evidence Confidence
+      ↓
+DataKart verification
+      ↓
+Rules evaluation
+      ↓
+Inspector reviews uncertain/conflicting evidence
+      ↓
 Correct / accept / reject / add manual violation
-        ↓
-Registration / completion
+      ↓
+Register / complete inspection
 ```
 
-The final legal responsibility remains with the authorized inspector.
+## 15. Database architecture
 
-## 13. Frontend Data and Performance
+PARAKH application data is stored in PostgreSQL through Prisma. OCR/AI evidence and inspection metadata currently travel partly inside application JSON structures rather than requiring a dedicated database table for every evidence concept.
 
-The current client keeps successful GET responses in session storage for a short TTL and invalidates the cache after data mutations.
+DataKart remains external to the application database.
 
-The application uses targeted optimistic UI updates for selected mutations, especially deletions, to avoid unnecessary full-page remounts.
+## 16. Performance and failure handling
 
-This is a UI/data freshness optimization only. It does not replace server-side persistence.
+Independent external providers should use bounded waits where practical. The backend records provider/model timing and failure information. OCR, semantic, DataKart, database, upload, and report failures must be handled without exposing secrets or stack traces to the user.
 
-## 14. Analytics
+## 17. Scalability path
 
-The dashboard analytics are derived from actual inspection records.
+The current implementation is a modular monolith with external/local OCR and semantic services.
 
-Examples include:
-
-- Inspection counts over time
-- Total inspections
-- Total violations
-- Highest violating shop/source
-- Highest violating brand
-- Highest violating rule
-
-User-facing analytics are scoped to the authenticated user where applicable. Administrative analytics can be platform-wide.
-
-## 15. Reports
-
-Reports consume structured inspection data and should distinguish:
-
-- AI-extracted data
-- Rule-engine results
-- Officer-confirmed decisions
-
-## 16. Failure Handling
-
-The runtime must handle:
-
-- OCR failure
-- AI provider timeout
-- Provider quota/authentication errors
-- Missing provider credentials
-- Poor image quality
-- Unsupported image formats
-- Database failures
-- Duplicate or invalid data
-- Report generation failures
-
-Backend logs should contain technical provider details. User-facing errors should remain understandable.
-
-## 17. Scalability Path
-
-The current prototype is a modular monolith with external/local OCR and semantic providers.
-
-A future scale-out architecture can move OCR/AI work into background workers:
-
-```text
-Responsive Client
-      ↓
-API / Load Balancer
-      ↓
-Multiple API instances
-      ↓
-Job Queue → OCR / AI Workers
-      ↓
-PostgreSQL + Object Storage
-```
-
-The prototype does not require this complexity yet.
+A future scale-out path can move OCR/AI work into queue-backed workers without changing the conceptual pipeline.
 
 ## 18. Security
 
-- Never commit secrets
-- Validate uploads server-side
-- Authenticate protected APIs
-- Authorize role-sensitive operations
-- Preserve evidence and verification history
-- Do not expose stack traces or credentials to clients
+Never commit secrets. Validate uploads server-side. Authenticate protected APIs. Authorize role-sensitive operations. Keep DataKart credentials in environment variables. Never expose database service-role credentials to the browser.
 
-## 19. Current vs Target Documentation
+## 19. Documentation authority
 
-Earlier versions of PARAKH documentation described a Python/FastAPI implementation. The working repository has since moved to the Node.js/Express runtime described above.
-
-The specification files remain useful for requirements, but implementation details in this document and the source code should be treated as the current technical reference.
+The source code is authoritative for implemented behavior. This document describes the current architecture, while `ROADMAP.md` records future work.
