@@ -31,12 +31,17 @@ if (!source.includes(marker)) {
 
   source = source.replace(
     '  const [message, setMessage] = useState("");',
-    '  const [message, setMessage] = useState("");\n  const [barcodeFile, setBarcodeFile] = useState(null);\n  const [manualGtin, setManualGtin] = useState("");\n  const [barcodeResult, setBarcodeResult] = useState(null);\n  const [datakartVerification, setDatakartVerification] = useState(null);\n  const [verificationConfidence, setVerificationConfidence] = useState(null);',
+    '  const [message, setMessage] = useState("");\n  const [barcodeFile, setBarcodeFile] = useState(null);\n  const [barcodePreviewUrl, setBarcodePreviewUrl] = useState("");\n  const [manualGtin, setManualGtin] = useState("");\n  const [barcodeResult, setBarcodeResult] = useState(null);\n  const [datakartVerification, setDatakartVerification] = useState(null);\n  const [verificationConfidence, setVerificationConfidence] = useState(null);',
+  );
+
+  source = source.replace(
+    '  useEffect(() => {\n    if (!analyzing) return undefined;',
+    '  useEffect(() => {\n    if (!barcodeFile) {\n      setBarcodePreviewUrl("");\n      return undefined;\n    }\n    const url = URL.createObjectURL(barcodeFile);\n    setBarcodePreviewUrl(url);\n    return () => URL.revokeObjectURL(url);\n  }, [barcodeFile]);\n\n  useEffect(() => {\n    if (!analyzing) return undefined;',
   );
 
   source = source.replace(
     '    setProviderInfo(null);\n    setAiSuggestedCategory(null);',
-    '    setProviderInfo(null);\n    setAiSuggestedCategory(null);\n    setBarcodeResult(null);\n    setDatakartVerification(null);\n    setVerificationConfidence(null);',
+    '    setProviderInfo(null);\n    setAiSuggestedCategory(null);\n    setBarcodeFile(null);\n    setBarcodePreviewUrl("");\n    setBarcodeResult(null);\n    setDatakartVerification(null);\n    setVerificationConfidence(null);',
   );
 
   const helperAnchor = 'function formatElapsed(ms) {';
@@ -70,7 +75,12 @@ if (!source.includes(marker)) {
     '  <label className="secondary-button scan-file-button">Upload Barcode<input type="file" accept="image/*" onChange={(event) => { addBarcodeFile(event.target.files); event.target.value = ""; }} hidden /></label>',
     '  <input aria-label="Enter GTIN manually" placeholder="Enter GTIN manually" inputMode="numeric" value={manualGtin} onChange={(event) => { setManualGtin(event.target.value.replace(/\\D/g, "").slice(0, 18)); setBarcodeResult(null); }} />',
     '</div>',
-    '{(barcodeFile || manualGtin) && <div className="status-message">{barcodeFile ? "Barcode image: " + barcodeFile.name : "Manual GTIN entered."} {barcodeResult?.found ? "Decoded GTIN: " + barcodeResult.gtin : ""}</div>}',
+    '{barcodePreviewUrl && <div className="barcode-preview-card">',
+    '  <div className="barcode-preview-heading"><strong>Uploaded barcode</strong><span>{barcodeFile?.name}</span></div>',
+    '  <img className="barcode-preview-image" src={barcodePreviewUrl} alt="Uploaded barcode for scanning" />',
+    '  <div className="barcode-preview-meta">{barcodeResult?.found ? `Decoded GTIN: ${barcodeResult.gtin}` : "Will be decoded when Analyze Images is clicked."}</div>',
+    '</div>}',
+    '{!barcodePreviewUrl && manualGtin && <div className="status-message">Manual GTIN entered: {manualGtin}</div>}',
   ].join("\n");
   if (!source.includes(uploadAnchor)) throw new Error("ScanV2 patch anchor not found: scan-limit");
   source = source.replace(uploadAnchor, uploadAnchor + "\n      " + uploadPanel);
@@ -88,9 +98,9 @@ if (!source.includes(marker)) {
   source = source.replace(providerAnchor, verificationPanel + providerAnchor);
 
   await fs.writeFile(scanPath, source, "utf8");
-  console.log("PARAKH scan page patched with parallel barcode/GTIN verification, DataKart comparison, and confidence calculation.");
+  console.log("PARAKH scan page patched with parallel barcode/GTIN verification, DataKart comparison, confidence calculation, and barcode preview.");
 } else {
-  console.log("PARAKH scan page barcode/DataKart verification patch already present.");
+  console.log("PARAKH scan page barcode/DataKart verification patch already present; existing build-time patch retained.");
 }
 
 console.log("PARAKH frontend scan pipeline verified: local backend OCR request plus parallel barcode/GTIN verification.");
