@@ -1,0 +1,60 @@
+name: One-time PARAKH-V1 UI fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-time-v1-ui-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch Scan.jsx
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('frontend/src/pages/Scan.jsx')
+          text = path.read_text(encoding='utf-8')
+          original = text
+
+          # RapidOCR is the only OCR provider in PARAKH-V1.
+          text = text.replace('const MAX_PUTER_IMAGE_SIZE = 10 * 1024 * 1024;\n', '')
+          text = text.replace('''      } catch (rapidError) {\n        setMessage("RapidOCR unavailable. Using Puter.js fallback OCR...");\n        extracted = await runPuterOcr(images.map(({ file }) => file));\n      }''', '''      } catch (rapidError) {\n        throw rapidError;\n      }''', 1)
+
+          # Remove the entire Puter OCR fallback implementation.
+          text = re.sub(r'\nfunction normalizePuterOcr\\(.*?\\nfunction Scan\\(\\)', '\nfunction Scan()', text, count=1, flags=re.S)
+
+          # Render the verification badge for every displayed OCR field.
+          text = text.replace('''{value?.status === "found" && <span title={badge.label}''', '''<span title={badge.label}''', 1)
+          text = text.replace('''</span>}</div><input value={value.value ?? ""}''', '''</span></div><input value={value.value ?? ""}''', 1)
+
+          if text == original:
+              raise SystemExit('No source changes matched; aborting.')
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Verify
+        run: |
+          ! grep -q 'runPuterOcr' frontend/src/pages/Scan.jsx
+          ! grep -q 'normalizePuterOcr' frontend/src/pages/Scan.jsx
+          ! grep -q 'Puter.js fallback OCR' frontend/src/pages/Scan.jsx
+          ! grep -q 'value?.status === "found" && <span title={badge.label}' frontend/src/pages/Scan.jsx
+          grep -q 'function verificationBadge(field)' frontend/src/pages/Scan.jsx
+
+      - name: Commit and push
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/src/pages/Scan.jsx
+          git diff --cached --quiet || git commit -m 'fix(v1): show verification badges and use RapidOCR only'
+          git push
