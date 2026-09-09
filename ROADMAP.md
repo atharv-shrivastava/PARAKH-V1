@@ -1,9 +1,11 @@
 # PARAKH Development Roadmap
 
 ## Current status
-PARAKH is a working SIH prototype with a responsive UI, real database-backed products/shops/inspections, product hierarchy, OCR/AI scanning, compliance workflow, reports, analytics, caching, and administrative functionality.
 
-## Completed / implemented
+PARAKH is a working SIH prototype with a responsive UI, real database-backed products/shops/inspections, product hierarchy, RapidOCR scanning, semantic interpretation, DataKart reference verification, evidence-confidence fusion, compliance workflow, reports, analytics, caching, and administrative functionality.
+
+## Implemented
+
 - React/Vite responsive frontend
 - Node/Express backend
 - Prisma/PostgreSQL persistence
@@ -13,10 +15,12 @@ PARAKH is a working SIH prototype with a responsive UI, real database-backed pro
 - Multi-image scanning
 - RapidOCR integration
 - Deterministic OCR field reconciliation
-- Gemini semantic integration
-- Cloudflare Gemma semantic integration
-- Cloudflare Moondream best-effort integration
-- Semantic consensus and confidence handling
+- Gemini semantic interpretation
+- Optional Cloudflare semantic providers
+- Semantic consensus support
+- DataKart GTIN-based product-reference verification
+- 50/30/20 DataKart/Gemini/RapidOCR Evidence Confidence model
+- Match/mismatch/unverified verification states
 - Visual inspection screening
 - Editable extraction results
 - Manual violation entry
@@ -28,55 +32,75 @@ PARAKH is a working SIH prototype with a responsive UI, real database-backed pro
 - E-commerce inspection workflow
 - Responsive navigation
 - Light/dark/gradient/rainbow themes
-- Dark-theme contrast improvements
 - Client GET caching
 - Mutation-triggered cache invalidation
 - Optimistic deletion for selected operations
-- Shop query optimization
 - Backend provider/model failure logging
 
 ## Next priorities
 
-### 1. Scan performance
-- Reduce RapidOCR latency
-- Ensure slow semantic providers cannot unnecessarily delay a usable result
-- Improve staged processing feedback
-- Continue measuring provider performance
-
-### 2. Evidence experience
+### 1. Evidence experience
+- Render Evidence Confidence source contributions clearly in the Scan UI
+- Render `✓ / ✕ / ?` verification states consistently beside extracted fields
 - Stronger field-to-image highlighting
 - Better bounding-box visualization
 - Clearer source/evidence provenance
+- Preserve original values when inspectors manually edit fields
 
-### 3. Inspection/product detail
+### 2. Scan performance
+- Reduce RapidOCR latency where practical
+- Ensure optional semantic providers cannot unnecessarily delay a usable result
+- Improve staged processing feedback
+- Continue measuring provider and DataKart lookup performance
+
+### 3. DataKart and reference verification
+- Improve GTIN coverage for the prototype dataset
+- Add registry synchronization/admin workflows in a future controlled service
+- Add automated tests for field matching and normalization
+- Track DataKart lookup failures and stale/unregistered products
+
+### 4. Inspection/product detail
 - Richer inspection record pages
-- Better timelines
-- Stronger evidence presentation
+- Better evidence timelines
+- Stronger presentation of source, confidence, verification, and officer decisions
 
-### 4. Compliance
+### 5. Compliance
 - Expand representative official rules
 - Improve rule applicability configuration
 - Add automated rule tests
 - Preserve rule source/version information
+- Keep legal logic independent from AI and DataKart
 
-### 5. Reliability
+### 6. Reliability
 - Frontend/backend automated tests
 - API integration tests
 - Database performance testing
-- OCR/AI failure tests
+- OCR/AI/DataKart failure tests
 - Mobile/browser regression testing
+- Evidence-confidence edge-case tests
 
-### 6. Deployment
+### 7. Deployment
 - Production environment hardening
 - Pooled database configuration
-- OCR deployment strategy
-- Monitoring and structured logs
+- RapidOCR deployment strategy
+- DataKart service configuration and monitoring
+- Structured logging and provider health metrics
+
+## Future scope
+
+- State-level administrative controls with central oversight
+- Broader government/reference-data integrations where legally and technically available
+- Larger reference datasets
+- Calibrated confidence evaluation against labeled inspection data
+- Background job queues for OCR/AI at larger scale
+- Audit-grade evidence and verification storage
 
 ## Priority principle
+
 Protect the end-to-end path:
 
 ```text
-Scan → OCR → Extract → Classify → Rules → Review → Register → History → Analytics/Report
+Scan → RapidOCR → Extract → Gemini → DataKart → Evidence Confidence → Rules → Review → Register → History → Analytics/Report
 ```
 
 New features should not destabilize this vertical slice.
