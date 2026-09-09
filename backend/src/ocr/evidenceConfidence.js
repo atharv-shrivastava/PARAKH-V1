@@ -52,6 +52,17 @@ function numeric(value) {
   return match ? Number(match[0]) : null;
 }
 
+function extractGtinFromRapidEvidence(evidence) {
+  const candidates = [];
+  for (const item of Array.isArray(evidence) ? evidence : []) {
+    const text = String(item?.text ?? "").replace(/[^0-9]/g, "");
+    const matches = text.match(/(?:\d{14}|\d{13}|\d{12}|\d{8})/g) || [];
+    for (const value of matches) candidates.push(value);
+  }
+  const exactLengths = [13, 14, 12, 8];
+  return exactLengths.map((length) => candidates.find((value) => value.length === length)).find(Boolean) || null;
+}
+
 function dataKartMatch(fieldKey, currentValue, registeredValue) {
   if (registeredValue == null || String(registeredValue).trim() === "") return null;
   if (currentValue == null || String(currentValue).trim() === "") return false;
@@ -115,7 +126,20 @@ async function fetchDataKartByGtin(gtin) {
 
 export async function applyEvidenceConfidence(result) {
   const next = { ...result };
-  const barcode = next.barcode?.value;
+  const evidence = Array.isArray(result?.rawOcrEvidence) ? result.rawOcrEvidence : [];
+  const explicitBarcode = String(next.barcode?.value ?? "").replace(/\D/g, "");
+  const rapidBarcode = extractGtinFromRapidEvidence(evidence);
+  const barcode = explicitBarcode || rapidBarcode || null;
+  if (!explicitBarcode && rapidBarcode) {
+    next.barcode = {
+      ...(next.barcode || { raw: null, confidence: 0, evidence: null, status: "absent" }),
+      value: rapidBarcode,
+      raw: next.barcode?.raw || rapidBarcode,
+      evidence: next.barcode?.evidence || rapidBarcode,
+      status: "found",
+      source: "RAPIDOCR_EVIDENCE"
+    };
+  }
   let dataKart = null;
   let dataKartError = null;
   const geminiAvailable = Boolean(result?.aiSemantic?.providerCount);
@@ -128,7 +152,6 @@ export async function applyEvidenceConfidence(result) {
     }
   }
 
-  const evidence = Array.isArray(result?.rawOcrEvidence) ? result.rawOcrEvidence : [];
   const details = {};
 
   for (const [fieldKey, fieldValue] of Object.entries(result || {})) {

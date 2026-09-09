@@ -153,7 +153,7 @@ function resolveEvidenceIndex(key, field, rapidEvidence) {
 async function analyzeWithRapid(images) {
   const formData = new FormData();
   const ocrUrl = process.env.NODE_ENV === "production"
-    ? (process.env.RAPID_OCR_URL || process.env.PADDLE_OCR_URL || "http://localhost:8081")
+    ? (process.env.RAPID_OCR_URL || "http://localhost:8081")
     : "http://localhost:8081";
   images.forEach((image, imageIndex) => {
     const bytes = Buffer.from(image.base64, "base64");
