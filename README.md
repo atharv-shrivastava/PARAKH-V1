@@ -10,13 +10,13 @@ Help inspectors examine packaged products faster, extract declaration informatio
 
 ## Core workflow
 
-**Capture → OCR → Extract → Classify → Apply Rules → Detect → Verify → Register → Analyze**
+**Capture → RapidOCR → Extract → Classify → Verify → Apply Rules → Review → Register → Analyze**
 
-AI output is advisory. The inspector remains responsible for reviewing and confirming compliance findings.
+AI output is advisory. The authorized inspector remains responsible for reviewing and confirming compliance findings.
 
 ## Current platform
 
-PARAKH is a responsive web application for mobile, tablet, laptop, and desktop. The same core workflow is available across screen sizes.
+PARAKH is a responsive web application for mobile, tablet, laptop, and desktop.
 
 ### Frontend
 
@@ -25,8 +25,8 @@ PARAKH is a responsive web application for mobile, tablet, laptop, and desktop. 
 - React Router
 - Responsive CSS theme system
 - Light, dark, dark-gradient, gradient, and rainbow themes
-- Client-side data caching with mutation-triggered invalidation
-- jsPDF for client-side report generation where applicable
+- Client-side GET caching with mutation invalidation
+- jsPDF where client-side report generation is used
 
 ### Backend
 
@@ -40,34 +40,57 @@ PARAKH is a responsive web application for mobile, tablet, laptop, and desktop. 
 
 ### Database
 
-- PostgreSQL
-- Prisma schema and migrations
-- Structured product, category, shop, inspection, compliance, evidence, and analytics data
+- PostgreSQL through Prisma for PARAKH application data
+- A separate Supabase-backed **DataKart** registry is used as an external product-reference source keyed primarily by GTIN/barcode
 
-### OCR and AI
-
-The current scanning pipeline combines deterministic and remote semantic stages:
+## Current OCR and AI architecture
 
 ```text
 Package image(s)
       ↓
 RapidOCR service
       ↓
-OCR evidence + confidence + geometry
+OCR evidence
+(text + confidence + bounding box + image metadata)
       ↓
-Local deterministic field reconciliation
+Deterministic field reconciliation
       ↓
-Semantic providers
- ├── Gemini
- ├── Cloudflare Gemma
- └── Cloudflare Moondream (best-effort)
+Gemini semantic interpretation
       ↓
-Semantic consensus
+Semantic consensus / structured fields
       ↓
-Structured inspection result
+DataKart GTIN verification
+      ↓
+Evidence confidence fusion
+      ↓
+Rules Engine
+      ↓
+Officer review
 ```
 
-The local reconciliation layer is deterministic and evidence-driven. Remote semantic providers are used for interpretation and cross-checking rather than acting as the legal source of truth.
+RapidOCR supplies the primary machine-readable text evidence. Gemini performs semantic interpretation such as mapping package text and spatial context to structured declarations. The legal Rules Engine remains deterministic and is not replaced by AI.
+
+Additional Cloudflare semantic providers can be enabled through configuration for broader semantic consensus, but Gemini is the default semantic provider in the current V1 path.
+
+## Evidence confidence
+
+PARAKH uses a weighted **Evidence Confidence** score for extracted fields:
+
+```text
+50% DataKart agreement
+30% Gemini semantic confidence
+20% RapidOCR evidence confidence
+```
+
+DataKart is intentionally the strongest signal because a matching registered product provides a direct reference check. When DataKart is unavailable or a field is not registered, its weight is excluded and the remaining available weights are renormalized instead of treating the missing registry as a failure.
+
+The score is an evidence-fusion indicator, not a calibrated statistical probability and not legal certainty.
+
+Each field can also expose verification state:
+
+- `✓` — DataKart match
+- `✕` — DataKart mismatch
+- `?` — DataKart could not verify the field
 
 ## Product hierarchy
 
@@ -75,101 +98,56 @@ The catalogue is hierarchical and must remain intact:
 
 **Category → Subcategory → Product Type → Brand → Product → Pack Size / Variant**
 
-Example:
-
-`Food → Ready to Eat → Chips → Lay's → Classic Salted → 50 g`
-
-The implementation also supports category tree navigation, final product type selection, product registration, and category creation.
-
 ## Core modules
 
 - Dashboard and real inspection analytics
 - Multi-image package scanning
-- OCR and semantic declaration extraction
-- Confidence and uncertainty handling
+- RapidOCR extraction and evidence localization
+- Gemini semantic field mapping
+- Evidence confidence and uncertainty handling
+- DataKart GTIN-based product verification
 - Visual inspection screening
 - Product/category classification
 - Configurable Legal Metrology rules
 - Officer review and manual violations
 - Product registration
 - Shop management and shop-wise history
-- Hierarchical product catalogue
 - Inspection history and filtering
 - Reports and PDF output
 - E-commerce inspection
 - Admin controls and platform analytics
 - Theme and responsive UI system
 
-## Dashboard intelligence
-
-Dashboards use real stored inspection data.
-
-They can show:
-
-- Inspection volume over time
-- Total inspections
-- Total violations
-- Highest-violation shop/source
-- Highest-violation brand
-- Highest-violation rule
-
-User analytics are scoped to the user's inspection data. Admin analytics can represent platform-wide data.
-
-## Performance model
-
-The frontend caches successful GET responses in session storage and invalidates relevant cached data after persisted mutations such as product, shop, category, and inspection changes.
-
-The UI also uses optimistic updates for selected actions, such as deletion, so the interface does not unnecessarily remount or reload the entire page after a successful mutation.
-
 ## Compliance approach
 
 Legal requirements belong in the compliance engine, not in the UI and not inside an LLM.
 
-The system distinguishes between:
-
-- Compliant
-- Potential / confirmed violation according to configured workflow
-- Needs manual verification
-- Unable to determine
-
-Every important finding should be traceable to the rule, extracted value or observation, evidence, and officer decision.
+The system distinguishes between compliant results, violations, review states, and cases where the available evidence is insufficient. Findings should remain traceable to the rule, extracted value or observation, supporting evidence, and officer decision.
 
 AI confidence is not the same as legal certainty.
 
+## DataKart boundary
+
+DataKart is a separate product-reference registry. PARAKH queries it using an extracted GTIN/barcode and compares returned registered values against the current inspection fields. DataKart does **not** determine Legal Metrology compliance.
+
 ## Evidence
 
-Where available, extracted fields retain:
-
-- Source image
-- OCR text
-- Confidence
-- Bounding box / geometry
-- Semantic source or verification metadata
-
-This supports explainability and visual evidence inspection.
+Where available, extracted fields retain source image information, OCR text, confidence, bounding-box geometry, semantic provenance, and DataKart verification metadata.
 
 ## Security
 
-Never commit:
-
-- API keys
-- Database credentials
-- Production secrets
-- Private certificates
-- Real sensitive inspection data
-
-Use environment variables for local and deployed configuration.
+Never commit API keys, database credentials, production secrets, private certificates, or real sensitive inspection data. Use environment variables for local and deployed configuration.
 
 ## Repository documentation
 
 - `PROJECT_SPEC.md` — functional specification
 - `ARCHITECTURE.md` — current technical architecture
 - `DATABASE_SCHEMA.md` — logical data model
-- `AI_MODULES.md` — OCR, extraction, semantic interpretation, and evidence
+- `AI_MODULES.md` — OCR, semantic interpretation, and evidence confidence
 - `COMPLIANCE_ENGINE.md` — Legal Metrology rule architecture
 - `API_SPEC.md` — API contract and current endpoint groups
 - `UI_UX_SPEC.md` — interface requirements
 - `DEVELOPMENT_RULES.md` — engineering rules
 - `ROADMAP.md` — planned work
 
-The specification documents describe intended behavior; the current implementation is the authoritative reference for what is actually running.
+The working source code is authoritative for implemented behavior.
