@@ -1,0 +1,74 @@
+name: Fix PARAKH-V1 OCR UI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/src/pages/Scan.jsx'
+      - '.github/workflows/fix-v1-ocr-ui.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Patch PARAKH-V1 Scan page
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('frontend/src/pages/Scan.jsx')
+          text = path.read_text(encoding='utf-8')
+          original = text
+
+          # Do not use a second OCR provider. RapidOCR is the V1 OCR engine.
+          fallback = '''      } catch (rapidError) {
+            setMessage("RapidOCR unavailable. Using Puter.js fallback OCR...");
+            extracted = await runPuterOcr(images.map(({ file }) => file));
+          }'''
+          if fallback in text:
+              text = text.replace(fallback, '''      } catch (rapidError) {
+            throw rapidError;
+          }''', 1)
+
+          # Always show verification status for OCR fields, including UNVERIFIED.
+          text = text.replace('{value?.status === "found" && (', '{(', 1)
+
+          # Remove the now-unused Puter OCR implementation so V1 has one OCR path.
+          text = re.sub(
+              r'function normalizePuterOcr\(candidate, rawText\) \{.*?\n\nfunction Scan\(\)',
+              'function Scan()',
+              text,
+              count=1,
+              flags=re.S,
+          )
+          text = text.replace('const MAX_PUTER_IMAGE_SIZE = 10 * 1024 * 1024;\n', '')
+
+          if text == original:
+              raise SystemExit('No patch was applied; source shape changed. Aborting instead of making a blind edit.')
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Verify the V1 path
+        run: |
+          grep -q 'RapidOCR unavailable. Using Puter.js fallback OCR' frontend/src/pages/Scan.jsx && exit 1 || true
+          grep -q 'runPuterOcr' frontend/src/pages/Scan.jsx && exit 1 || true
+          grep -q '{value?.status === "found" && (' frontend/src/pages/Scan.jsx && exit 1 || true
+          grep -q 'function verificationBadge(field)' frontend/src/pages/Scan.jsx
+
+      - name: Commit and push
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/src/pages/Scan.jsx .github/workflows/fix-v1-ocr-ui.yml
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix(v1): enforce RapidOCR-only path and show verification badges'
+          git push
