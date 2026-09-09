@@ -212,11 +212,12 @@ export async function applyEvidenceConfidence(result) {
     dataKartError,
     fields: details,
   };
+  const gtin = barcode ? String(barcode).replace(/\D/g, "") : null;
   next.dataKartVerification = dataKart
-    ? { status: "REGISTERED", gtin: String(barcode).replace(/\D/g, "") }
+    ? { status: "✓ Product found in DataKart", code: "REGISTERED", gtin }
     : barcode
-      ? { status: dataKartError ? "UNAVAILABLE" : "NOT_FOUND", gtin: String(barcode).replace(/\D/g, "") }
-      : { status: "NO_GTIN" };
+      ? { status: dataKartError ? "? DataKart could not be reached" : "✕ Product not found in DataKart", code: dataKartError ? "UNAVAILABLE" : "NOT_FOUND", gtin }
+      : { status: "? Product could not be checked: no GTIN detected", code: "NO_GTIN" };
 
   return next;
 }
