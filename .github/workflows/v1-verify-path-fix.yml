@@ -1,0 +1,62 @@
+name: V1 barcode verification patch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v1-verify-path-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch backend verification path
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          fast = Path('backend/src/ocr/fastRoutes.js')
+          text = fast.read_text(encoding='utf-8')
+          old = '''  const ocrUrl = process.env.NODE_ENV === "production"\n    ? (process.env.RAPID_OCR_URL || process.env.PADDLE_OCR_URL || "http://localhost:8081")\n    : "http://localhost:8081";'''
+          new = '''  const ocrUrl = process.env.NODE_ENV === "production"\n    ? (process.env.RAPID_OCR_URL || "http://localhost:8081")\n    : "http://localhost:8081";'''
+          if old not in text:
+              raise SystemExit('RapidOCR provider fallback pattern not found')
+          fast.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          conf = Path('backend/src/ocr/evidenceConfidence.js')
+          text = conf.read_text(encoding='utf-8')
+          old = '''function numeric(value) {\n  const match = String(value ?? "").replace(/,/g, "").match(/-?\\d+(?:\\.\\d+)?/);\n  return match ? Number(match[0]) : null;\n}\n\nfunction dataKartMatch'''
+          new = '''function numeric(value) {\n  const match = String(value ?? "").replace(/,/g, "").match(/-?\\d+(?:\\.\\d+)?/);\n  return match ? Number(match[0]) : null;\n}\n\nfunction extractGtinFromRapidEvidence(evidence) {\n  const candidates = [];\n  for (const item of Array.isArray(evidence) ? evidence : []) {\n    const text = String(item?.text ?? "").replace(/[^0-9]/g, "");\n    const matches = text.match(/(?:\\d{14}|\\d{13}|\\d{12}|\\d{8})/g) || [];\n    for (const value of matches) candidates.push(value);\n  }\n  const exactLengths = [13, 14, 12, 8];\n  return exactLengths.map((length) => candidates.find((value) => value.length === length)).find(Boolean) || null;\n}\n\nfunction dataKartMatch'''
+          if old not in text:
+              raise SystemExit('Confidence helper insertion pattern not found')
+          text = text.replace(old, new, 1)
+          old = '''export async function applyEvidenceConfidence(result) {\n  const next = { ...result };\n  const barcode = next.barcode?.value;\n  let dataKart = null;'''
+          new = '''export async function applyEvidenceConfidence(result) {\n  const next = { ...result };\n  const evidence = Array.isArray(result?.rawOcrEvidence) ? result.rawOcrEvidence : [];\n  const explicitBarcode = String(next.barcode?.value ?? "").replace(/\\D/g, "");\n  const rapidBarcode = extractGtinFromRapidEvidence(evidence);\n  const barcode = explicitBarcode || rapidBarcode || null;\n  if (!explicitBarcode && rapidBarcode) {\n    next.barcode = {\n      ...(next.barcode || { raw: null, confidence: 0, evidence: null, status: "absent" }),\n      value: rapidBarcode,\n      raw: next.barcode?.raw || rapidBarcode,\n      evidence: next.barcode?.evidence || rapidBarcode,\n      status: "found",\n      source: "RAPIDOCR_EVIDENCE"\n    };\n  }\n  let dataKart = null;'''
+          if old not in text:
+              raise SystemExit('Barcode flow replacement pattern not found')
+          text = text.replace(old, new, 1)
+          old = '''  const evidence = Array.isArray(result?.rawOcrEvidence) ? result.rawOcrEvidence : [];\n  const details = {};'''
+          new = '''  const details = {};'''
+          if old not in text:
+              raise SystemExit('Duplicate evidence declaration pattern not found')
+          conf.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Remove temporary workflow and verify source
+        run: |
+          ! grep -q 'PADDLE_OCR_URL' backend/src/ocr/fastRoutes.js
+          grep -q 'RAPID_OCR_URL' backend/src/ocr/fastRoutes.js
+          grep -q 'extractGtinFromRapidEvidence' backend/src/ocr/evidenceConfidence.js
+          grep -q 'RAPIDOCR_EVIDENCE' backend/src/ocr/evidenceConfidence.js
+          grep -q 'DataKart verification' frontend/src/pages/Scan.jsx
+          git rm .github/workflows/v1-verify-path-fix.yml
+          git add backend/src/ocr/fastRoutes.js backend/src/ocr/evidenceConfidence.js
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(v1): derive GTIN from RapidOCR evidence for DataKart verification'
+          git push
