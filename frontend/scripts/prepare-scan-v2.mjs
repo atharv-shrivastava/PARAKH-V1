@@ -1,0 +1,160 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const scanPath = path.resolve(here, "../src/pages/ScanV2.jsx");
+let source = await fs.readFile(scanPath, "utf8");
+
+const MARKER = "/* PARAKH_SCAN_V2_INTEGRATION */";
+if (source.includes(MARKER)) {
+  console.log("PARAKH Scan V2 integration already present.");
+  process.exit(0);
+}
+
+if (!source.includes("/api/ocr/analyze")) throw new Error("ScanV2.jsx is missing the backend OCR request.");
+
+source = source.replace(
+  'import { apiFetch } from "../lib/auth";',
+  'import { apiFetch } from "../lib/auth";\nimport { scanBarcodeImage, lookupDataKart, compareWithDataKart, calculateVerificationConfidence } from "../lib/verification";\n'
+);
+
+source = source.replace(
+  "const MAX_IMAGES = 4;",
+  "const MAX_IMAGES = 4;\nconst BARCODE_MAX_SIZE = 8 * 1024 * 1024;\nconst BARCODE_TIMEOUT_MS = 4000;"
+);
+
+source = source.replace(
+  '  const [message, setMessage] = useState("");',
+  '  const [message, setMessage] = useState("");\n  const [barcodeFile, setBarcodeFile] = useState(null);\n  const [barcodePreviewUrl, setBarcodePreviewUrl] = useState("");\n  const [manualGtin, setManualGtin] = useState("");\n  const [barcodeResult, setBarcodeResult] = useState(null);\n  const [datakartVerification, setDatakartVerification] = useState(null);\n  const [verificationConfidence, setVerificationConfidence] = useState(null);'
+);
+
+const helper = [
+  "async function resolveGtin(barcodeFile, manualValue) {",
+  '  const manual = String(manualValue || "").replace(/\\s+/g, "").trim();',
+  "  if (!barcodeFile) return { attempted: Boolean(manual), found: Boolean(manual), value: manual || null, gtin: manual || null, format: manual ? \"MANUAL_GTIN\" : null, confidence: manual ? 0.90 : 0, source: manual ? \"MANUAL_GTIN\" : \"NONE\", error: null };",
+  "  const timeout = new Promise((resolve) => window.setTimeout(() => resolve({ attempted: true, found: false, value: null, gtin: manual || null, format: null, confidence: 0, source: manual ? \"MANUAL_GTIN_FALLBACK\" : \"BARCODE_TIMEOUT\", error: \"Barcode decoding timed out.\" }), BARCODE_TIMEOUT_MS));",
+  '  const decode = scanBarcodeImage(barcodeFile).then((decoded) => ({ ...decoded, gtin: decoded.found ? decoded.value : manual || null, source: decoded.found ? "BARCODE_SCAN" : manual ? "MANUAL_GTIN_FALLBACK" : "NONE" }));',
+  "  return Promise.race([decode, timeout]);",
+  "}",
+  "",
+].join("\n");
+const helperAnchor = "function formatElapsed(ms) {";
+if (!source.includes(helperAnchor)) throw new Error("Could not locate formatElapsed().");
+source = source.replace(helperAnchor, helper + helperAnchor);
+
+const handler = [
+  "  function addBarcodeFile(input) {",
+  "    const file = input?.[0];",
+  "    if (!file) return;",
+  '    if (!file.type.startsWith("image/")) return setMessage("Barcode upload must be an image.");',
+  '    if (file.size > BARCODE_MAX_SIZE) return setMessage("Barcode image is too large. Use an image smaller than 8 MB.");',
+  "    setBarcodeFile(file);",
+  "    setBarcodePreviewUrl(URL.createObjectURL(file));",
+  "    setBarcodeResult(null);",
+  "    setDatakartVerification(null);",
+  "    setVerificationConfidence(null);",
+  '    setMessage("Barcode image ready. It will be decoded in parallel with package OCR when Analyze Images is clicked.");',
+  "  }",
+  "",
+].join("\n");
+const handlerAnchor = /\n  async function openCamera\(/;
+if (!handlerAnchor.test(source)) throw new Error("Could not locate openCamera().");
+source = source.replace(handlerAnchor, "\n" + handler + "  async function openCamera(");
+
+const analyzeRegex = /  async function analyze\(\) \{[\s\S]*?\n  \}\n/;
+if (!analyzeRegex.test(source)) throw new Error("Could not locate analyze() safely.");
+const analyze = [
+  "  async function analyze() {",
+  '    if (!images.length) return setMessage("Add at least one package image first.");',
+  "    setAnalyzing(true);",
+  "    setAnalysisDurationMs(null);",
+  '    setMessage(barcodeFile || manualGtin.trim() ? "Running barcode, RapidOCR and Gemini in parallel..." : "Running RapidOCR + AI semantic verification...");',
+  "    const controller = new AbortController();",
+  "    controllerRef.current?.abort();",
+  "    controllerRef.current = controller;",
+  "    try {",
+  "      const categoryOptions = finalCategories.map((category) => ({ id: category.id, name: category.name, path: category.path.map((item) => item.name).join(\" → \") }));",
+  "      const [ocrOutcome, barcodeOutcome] = await Promise.allSettled([",
+  "        runOcr(images.map((item) => item.file), controller.signal, categoryOptions),",
+  "        resolveGtin(barcodeFile, manualGtin),",
+  "      ]);",
+  '      if (ocrOutcome.status !== "fulfilled") throw ocrOutcome.reason;',
+  "      const info = ocrOutcome.value;",
+  "      const identifier = barcodeOutcome.status === \"fulfilled\" ? barcodeOutcome.value : { attempted: Boolean(barcodeFile || manualGtin.trim()), found: false, value: null, gtin: manualGtin.trim() || null, confidence: 0, source: \"NONE\", error: barcodeOutcome.reason?.message || \"Barcode verification failed.\" };",
+  "      const extracted = info.result;",
+  "      const gtin = identifier.gtin || manualGtin.trim();",
+  "      window.sessionStorage.setItem(\"parakhDeclarationEvidence\", JSON.stringify(extracted.declarationEvidence || []));",
+  "      window.dispatchEvent(new CustomEvent(\"parakh:declaration-evidence\", { detail: extracted.declarationEvidence || [] }));",
+  "      setOcr(extracted);",
+  "      setForm(formFromOcr(extracted));",
+  "      setUseExtractedData(true);",
+  "      setShowRegistration(true);",
+  "      setAiSuggestedCategory(info.aiSuggestedCategory || null);",
+  "      setBarcodeResult(identifier);",
+  "      setProviderInfo({ ...info, barcodeResult: identifier });",
+  '      setMessage("OCR + Gemini completed. Rules Engine and DataKart verification are running in parallel...");',
+  "      const visualInspection = readVisualInspection();",
+  "      const rulesPromise = apiFetch(OCR_URL + \"/api/ocr/evaluate-structured\", { method: \"POST\", headers: { \"Content-Type\": \"application/json\" }, body: JSON.stringify({ ocr: extracted, visualFlags: visualInspection || {}, inspectionId: crypto.randomUUID(), productId: crypto.randomUUID(), inspectionDate: new Date().toISOString().slice(0, 10), context: \"physical_package\", commodityCategory: \"packaged commodity\", consumerType: \"general\", isImported: false, packageType: \"retail\", datakartVerification: null }), signal: controller.signal });",
+  "      const dataKartPromise = gtin ? lookupDataKart(gtin, controller.signal).then((dk) => dk ? { ...dk, comparison: compareWithDataKart(extracted, dk) } : null) : Promise.resolve(null);",
+  "      const [rulesOutcome, dataKartOutcome] = await Promise.allSettled([rulesPromise, dataKartPromise]);",
+  '      if (rulesOutcome.status === "fulfilled") {',
+  "        const response = rulesOutcome.value;",
+  "        const data = await response.json().catch(() => ({}));",
+  '        if (!response.ok) { setCompliance(null); setComplianceError({ message: data.error || "Rules Engine evaluation failed" }); }',
+  '        else { setCompliance(data.compliance || null); setComplianceError(data.complianceError || null); setAcceptedFindingIds((data.compliance?.findings || []).filter((finding) => finding.status === "VIOLATION").map((finding) => finding.findingId)); }',
+  '      } else if (rulesOutcome.reason?.name !== "AbortError") { setCompliance(null); setComplianceError({ message: rulesOutcome.reason?.message || "Rules Engine evaluation failed" }); }',
+  '      const dk = dataKartOutcome.status === "fulfilled" ? dataKartOutcome.value : null;',
+  '      const dkComparison = dk?.comparison || { matchedFields: 0, comparedFields: 0, matchRate: null, comparisons: {} };',
+  '      const confidenceResult = calculateVerificationConfidence({ ocrResult: extracted, providerInfo: info, barcodeResult: identifier, dataKartComparison: dkComparison });',
+  "      setDatakartVerification(dk);",
+  "      setVerificationConfidence(confidenceResult);",
+  "      setProviderInfo({ ...info, barcodeResult: identifier, datakartVerification: dk ? { ...dk, comparison: dkComparison } : null, verificationConfidence: confidenceResult });",
+  '      if (Number.isFinite(info.timing?.totalMs)) setAnalysisDurationMs(Number(info.timing.totalMs));',
+  '      setMessage("Analysis complete. Review the extracted fields and verification results.");',
+  "    } catch (error) {",
+  '      if (error?.name === "AbortError") return;',
+  '      setMessage(error.message || "OCR analysis failed.");',
+  "    } finally {",
+  "      if (controllerRef.current === controller) controllerRef.current = null;",
+  "      setAnalysisDurationMs((current) => current ?? analysisElapsedMs);",
+  "      setAnalyzing(false);",
+  "    }",
+  "  }",
+  "",
+].join("\n");
+source = source.replace(analyzeRegex, analyze);
+
+const uiAnchor = '<p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>';
+const ui = [
+  '<div data-parallel-barcode-ui="true" className="barcode-upload-section">',
+  '  <div className="scan-upload-actions">',
+  '    <label className="secondary-button scan-file-button">Upload Barcode<input type="file" accept="image/*" onChange={(event) => { addBarcodeFile(event.target.files); event.target.value = ""; }} hidden /></label>',
+  '    <input aria-label="Enter GTIN manually" placeholder="Enter GTIN manually" inputMode="numeric" value={manualGtin} onChange={(event) => { setManualGtin(event.target.value.replace(/\\D/g, "").slice(0, 18)); setBarcodeResult(null); }} />',
+  "  </div>",
+  "  {barcodePreviewUrl && <div className=\"barcode-preview-card\">",
+  '    <div className="barcode-preview-heading"><strong>Uploaded barcode</strong><span>{barcodeFile?.name}</span></div>',
+  '    <img className="barcode-preview-image" src={barcodePreviewUrl} alt="Uploaded barcode for scanning" />',
+  '    <div className="barcode-preview-meta">{barcodeResult?.found ? "Decoded GTIN: " + barcodeResult.gtin : "Will be decoded when Analyze Images is clicked."}</div>',
+  "  </div>}",
+  '  {!barcodePreviewUrl && manualGtin && <div className="status-message">Manual GTIN entered: {manualGtin}</div>}',
+  "</div>",
+].join("\n");
+if (!source.includes(uiAnchor)) throw new Error("Could not locate the package upload counter.");
+source = source.replace(uiAnchor, uiAnchor + "\n      " + ui);
+
+const providerAnchor = '{providerInfo && <section className="ocr-status-grid">';
+const providerUi = [
+  '{providerInfo?.verificationConfidence && <section className="ocr-status-grid">',
+  '  <div><strong>Barcode / GTIN</strong><span>{providerInfo.barcodeResult?.gtin || "Not supplied"} · {providerInfo.barcodeResult?.source || "NONE"}</span></div>',
+  '  <div><strong>DataKart</strong><span>{providerInfo.datakartVerification?.found ? providerInfo.datakartVerification.comparison.matchedFields + "/" + providerInfo.datakartVerification.comparison.comparedFields + " fields matched" : providerInfo.barcodeResult?.gtin ? "GTIN not registered" : "Not queried"}</span></div>',
+  '  <div><strong>Verification confidence</strong><span>{providerInfo.verificationConfidence.percentage}% · {providerInfo.verificationConfidence.label}</span></div>',
+  "</section>}",
+  "",
+].join("\n");
+if (source.includes(providerAnchor)) source = source.replace(providerAnchor, providerUi + providerAnchor);
+
+source = source.replace(/\n$/, "");
+source += `\n\n${MARKER}\n`;
+await fs.writeFile(scanPath, source, "utf8");
+console.log("PARAKH Scan V2 integration applied successfully.");
