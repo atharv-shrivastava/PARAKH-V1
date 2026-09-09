@@ -28,7 +28,6 @@ jobs:
           text = path.read_text(encoding='utf-8')
           original = text
 
-          # Do not use a second OCR provider. RapidOCR is the V1 OCR engine.
           fallback = '''      } catch (rapidError) {
             setMessage("RapidOCR unavailable. Using Puter.js fallback OCR...");
             extracted = await runPuterOcr(images.map(({ file }) => file));
@@ -38,10 +37,12 @@ jobs:
             throw rapidError;
           }''', 1)
 
-          # Always show verification status for OCR fields, including UNVERIFIED.
+          # Render the verification badge for every extracted field. The badge itself
+          # maps MATCH/MISMATCH/UNVERIFIED from the backend response.
           text = text.replace('{value?.status === "found" && (', '{(', 1)
 
-          # Remove the now-unused Puter OCR implementation so V1 has one OCR path.
+          # Remove the unused Puter OCR implementation. Gemini remains semantic AI;
+          # RapidOCR remains the only OCR/detection engine in PARAKH-V1.
           text = re.sub(
               r'function normalizePuterOcr\(candidate, rawText\) \{.*?\n\nfunction Scan\(\)',
               'function Scan()',
@@ -59,9 +60,9 @@ jobs:
 
       - name: Verify the V1 path
         run: |
-          grep -q 'RapidOCR unavailable. Using Puter.js fallback OCR' frontend/src/pages/Scan.jsx && exit 1 || true
-          grep -q 'runPuterOcr' frontend/src/pages/Scan.jsx && exit 1 || true
-          grep -q '{value?.status === "found" && (' frontend/src/pages/Scan.jsx && exit 1 || true
+          if grep -q 'RapidOCR unavailable. Using Puter.js fallback OCR' frontend/src/pages/Scan.jsx; then exit 1; fi
+          if grep -q 'runPuterOcr' frontend/src/pages/Scan.jsx; then exit 1; fi
+          if grep -q '{value?.status === "found" && (' frontend/src/pages/Scan.jsx; then exit 1; fi
           grep -q 'function verificationBadge(field)' frontend/src/pages/Scan.jsx
 
       - name: Commit and push
