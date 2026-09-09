@@ -59,7 +59,22 @@ if (!source.includes(marker)) {
   );
 
   const helperAnchor = 'function formatElapsed(ms) {';
-  const helperCode = `async function resolveGtin(barcodeFileValue, manualGtinValue, signal) {\n  const manual = String(manualGtinValue || "").replace(/\\s+/g, "").trim();\n  if (barcodeFileValue) {\n    const timeout = new Promise((resolve) => {\n      window.setTimeout(() => resolve({ attempted: true, found: false, value: null, gtin: manual || null, format: null, confidence: 0, source: manual ? "MANUAL_GTIN_FALLBACK" : "BARCODE_TIMEOUT", error: "Barcode decoding timed out." }), BARCODE_TIMEOUT_MS);\n    });\n    const decode = scanBarcodeImage(barcodeFileValue).then((decoded) => {\n      const gtin = decoded.found ? decoded.value : manual;\n      return { ...decoded, gtin: gtin || null, source: decoded.found ? "BARCODE_SCAN" : manual ? "MANUAL_GTIN_FALLBACK" : "NONE" };\n    });\n    return await Promise.race([decode, timeout]);\n  }\n  return { attempted: Boolean(manual), found: Boolean(manual), value: manual || null, gtin: manual || null, format: manual ? "MANUAL_GTIN" : null, confidence: manual ? 0.90 : 0, source: manual ? "MANUAL_GTIN" : "NONE", error: null };\n}\n\n`;
+  const helperCode = `async function resolveGtin(barcodeFileValue, manualGtinValue) {
+  const manual = String(manualGtinValue || "").replace(/\\s+/g, "").trim();
+  if (barcodeFileValue) {
+    const timeout = new Promise((resolve) => {
+      window.setTimeout(() => resolve({ attempted: true, found: false, value: null, gtin: manual || null, format: null, confidence: 0, source: manual ? "MANUAL_GTIN_FALLBACK" : "BARCODE_TIMEOUT", error: "Barcode decoding timed out." }), BARCODE_TIMEOUT_MS);
+    });
+    const decode = scanBarcodeImage(barcodeFileValue).then((decoded) => {
+      const gtin = decoded.found ? decoded.value : manual;
+      return { ...decoded, gtin: gtin || null, source: decoded.found ? "BARCODE_SCAN" : manual ? "MANUAL_GTIN_FALLBACK" : "NONE" };
+    });
+    return await Promise.race([decode, timeout]);
+  }
+  return { attempted: Boolean(manual), found: Boolean(manual), value: manual || null, gtin: manual || null, format: manual ? "MANUAL_GTIN" : null, confidence: manual ? 0.90 : 0, source: manual ? "MANUAL_GTIN" : "NONE", error: null };
+}
+
+`;
   if (!source.includes(helperAnchor)) throw new Error("ScanV2 patch anchor not found: formatElapsed");
   source = source.replace(helperAnchor, helperCode + helperAnchor);
 }
@@ -67,22 +82,35 @@ if (!source.includes(marker)) {
 // Repair any earlier version that accidentally placed addBarcodeFile at module scope.
 if (!source.includes(scopeFixMarker)) {
   const globalHandlerRegex = /\nfunction addBarcodeFile\(input\) \{[\s\S]*?\n\}\n\n(?=function formatElapsed\()/;
-  const globalMatch = source.match(globalHandlerRegex);
-  if (globalMatch) {
-    source = source.replace(globalHandlerRegex, "\nfunction formatElapsed(");
-  }
+  if (globalHandlerRegex.test(source)) source = source.replace(globalHandlerRegex, "\nfunction formatElapsed(");
+
   const componentAnchor = '  function update(key, value) {\n    setForm((current) => ({ ...current, [key]: value }));\n  }';
-  const scopedHandler = `  function update(key, value) {\n    setForm((current) => ({ ...current, [key]: value }));\n  }\n\n  function addBarcodeFile(input) {\n    const file = input?.[0];\n    if (!file) return;\n    if (!file.type.startsWith("image/")) return setMessage("Barcode upload must be an image.");\n    if (file.size > BARCODE_MAX_SIZE) return setMessage("Barcode image is too large. Use an image smaller than 8 MB.");\n    setBarcodeFile(file);\n    setBarcodeResult(null);\n    setDatakartVerification(null);\n    setVerificationConfidence(null);\n    setMessage("Barcode image ready. It will be decoded in parallel with package OCR when Analyze Images is clicked.");\n  }`;
+  const scopedHandler = `  function update(key, value) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function addBarcodeFile(input) {
+    const file = input?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return setMessage("Barcode upload must be an image.");
+    if (file.size > BARCODE_MAX_SIZE) return setMessage("Barcode image is too large. Use an image smaller than 8 MB.");
+    setBarcodeFile(file);
+    setBarcodeResult(null);
+    setDatakartVerification(null);
+    setVerificationConfidence(null);
+    setMessage("Barcode image ready. It will be decoded in parallel with package OCR when Analyze Images is clicked.");
+  }`;
   if (!source.includes('  function addBarcodeFile(input) {') && source.includes(componentAnchor)) {
     source = source.replace(componentAnchor, scopedHandler);
   }
   source += `\n${scopeFixMarker}\n`;
 }
 
-if (!source.includes(concurrencyMarker)) {
-  const analyzeRegex = /  async function analyze\(\) \{[\s\S]*?\n  \}\n\n  function updateOcrField/;
-  if (!analyzeRegex.test(source)) throw new Error("Could not locate ScanV2 analyze function for concurrency patch.");
-  const analyzeFunction = `  async function analyze() {
+// Apply concurrency only if it is not already present in the generated/local ScanV2.jsx.
+if (!source.includes(concurrencyMarker) && !source.includes("const [ocrOutcome, barcodeOutcome] = await Promise.allSettled")) {
+  const analyzeRegex = /  async function analyze\(\)\s*\{[\s\S]*?\n  \}\s*\n\s*function updateOcrField/;
+  if (analyzeRegex.test(source)) {
+    const analyzeFunction = `  async function analyze() {
     if (!images.length) return setMessage("Add at least one package image first.");
     setAnalyzing(true);
     setAnalysisDurationMs(null);
@@ -92,10 +120,9 @@ if (!source.includes(concurrencyMarker)) {
     controllerRef.current = controller;
     try {
       const categoryOptions = finalCategories.map((category) => ({ id: category.id, name: category.name, path: category.path.map((item) => item.name).join(" → ") }));
-
       const [ocrOutcome, barcodeOutcome] = await Promise.allSettled([
         runOcr(images.map((item) => item.file), controller.signal, categoryOptions),
-        resolveGtin(barcodeFile, manualGtin, controller.signal),
+        resolveGtin(barcodeFile, manualGtin),
       ]);
       if (ocrOutcome.status === "rejected") throw ocrOutcome.reason;
 
@@ -119,29 +146,10 @@ if (!source.includes(concurrencyMarker)) {
       const rulesPromise = apiFetch(OCR_URL + "/api/ocr/evaluate-structured", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ocr: extracted,
-          visualFlags: visualInspection ? { readability: visualInspection.readability, readable: visualInspection.readable, textDetected: visualInspection.textDetected, placementReview: visualInspection.placementReview, fontSizeCalibrated: visualInspection.fontSizeCalibrated, estimatedTextHeightMm: visualInspection.estimatedTextHeightMm, declarationCoverageScreened: visualInspection.declarationCoverageScreened } : {},
-          inspectionId: crypto.randomUUID(),
-          productId: crypto.randomUUID(),
-          inspectionDate: new Date().toISOString().slice(0, 10),
-          context: "physical_package",
-          commodityCategory: "packaged commodity",
-          consumerType: "general",
-          isImported: false,
-          packageType: "retail",
-          datakartVerification: null,
-        }),
+        body: JSON.stringify({ ocr: extracted, visualFlags: visualInspection || {}, inspectionId: crypto.randomUUID(), productId: crypto.randomUUID(), inspectionDate: new Date().toISOString().slice(0, 10), context: "physical_package", commodityCategory: "packaged commodity", consumerType: "general", isImported: false, packageType: "retail", datakartVerification: null }),
         signal: controller.signal,
       });
-
-      const dataKartPromise = gtin
-        ? lookupDataKart(gtin, controller.signal).then((dk) => {
-            const comparison = dk ? compareWithDataKart(extracted, dk) : { matchedFields: 0, comparedFields: 0, matchRate: null, comparisons: {} };
-            return dk ? { ...dk, comparison } : null;
-          })
-        : Promise.resolve(null);
-
+      const dataKartPromise = gtin ? lookupDataKart(gtin, controller.signal).then((dk) => dk ? { ...dk, comparison: compareWithDataKart(extracted, dk) } : null) : Promise.resolve(null);
       const [rulesOutcome, dataKartOutcome] = await Promise.allSettled([rulesPromise, dataKartPromise]);
 
       if (rulesOutcome.status === "fulfilled") {
@@ -163,11 +171,9 @@ if (!source.includes(concurrencyMarker)) {
       const dk = dataKartOutcome.status === "fulfilled" ? dataKartOutcome.value : null;
       const dkComparison = dk?.comparison || { matchedFields: 0, comparedFields: 0, matchRate: null, comparisons: {} };
       const confidenceResult = calculateVerificationConfidence({ ocrResult: extracted, providerInfo: info, barcodeResult: identifier, dataKartComparison: dkComparison });
-      setBarcodeResult(identifier);
       setDatakartVerification(dk);
       setVerificationConfidence(confidenceResult);
       setProviderInfo({ ...info, barcodeResult: identifier, datakartVerification: dk ? { ...dk, comparison: dkComparison } : null, verificationConfidence: confidenceResult });
-
       if (Number.isFinite(info.timing?.totalMs)) setAnalysisDurationMs(Number(info.timing.totalMs));
       setManualViolations([]);
       setManualViolationReason("");
@@ -185,18 +191,19 @@ if (!source.includes(concurrencyMarker)) {
       setAnalyzing(false);
     }
   }`;
-  source = source.replace(analyzeRegex, `${analyzeFunction}\n\n  function updateOcrField`);
+    source = source.replace(analyzeRegex, `${analyzeFunction}\n\n  function updateOcrField`);
+  } else {
+    console.warn("PARAKH: analyze() already appears patched or has a different shape; leaving it unchanged.");
+  }
   source += `\n${concurrencyMarker}\n`;
 }
 
 if (!source.includes(previewMarker)) {
-  addOnce(
-    '<p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>',
-    '<p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>\n      {barcodePreviewUrl && <div className="barcode-preview-card">\n        <div className="barcode-preview-heading"><strong>Uploaded barcode</strong><span>{barcodeFile?.name}</span></div>\n        <img className="barcode-preview-image" src={barcodePreviewUrl} alt="Uploaded barcode for scanning" />\n        <div className="barcode-preview-meta">{barcodeResult?.found ? `Decoded GTIN: ${barcodeResult.gtin}` : "Will be decoded when Analyze Images is clicked."}</div>\n      </div>}',
-    "barcode preview markup",
-  );
+  const uploadAnchor = '<p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>';
+  const previewPanel = '<p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>\n      {barcodePreviewUrl && <div className="barcode-preview-card">\n        <div className="barcode-preview-heading"><strong>Uploaded barcode</strong><span>{barcodeFile?.name}</span></div>\n        <img className="barcode-preview-image" src={barcodePreviewUrl} alt="Uploaded barcode for scanning" />\n        <div className="barcode-preview-meta">{barcodeResult?.found ? "Decoded GTIN: " + barcodeResult.gtin : "Will be decoded when Analyze Images is clicked."}</div>\n      </div>}';
+  addOnce(uploadAnchor, previewPanel, "barcode preview markup");
   source += `\n${previewMarker}\n`;
 }
 
 await fs.writeFile(scanPath, source, "utf8");
-console.log("PARAKH scan pipeline: barcode + OCR/Gemini together, then Rules Engine + DataKart together; registration remains available as soon as OCR finishes.");
+console.log("PARAKH scan pipeline ready: barcode + OCR/Gemini together, then Rules Engine + DataKart together; registration is exposed as soon as OCR finishes.");
