@@ -14,8 +14,6 @@ export function text(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-// Keep the API schema deliberately conservative. Gemini structured output supports
-// a limited JSON-Schema subset, so nullable/optional nested properties are avoided.
 const FIELD_VALUE_SCHEMA = {
   type: "object",
   properties: {
@@ -66,35 +64,39 @@ export function buildSemanticPrompt({ detections = [], rawText = "", categoryOpt
     name: text(item.name),
     path: text(item.path),
   }));
-  return `PARAKH semantic package mapper. Inspect the package image(s) AND RapidOCR text together.
+  return `PARAKH semantic package mapper. Inspect the ORIGINAL package image(s) AND RapidOCR text/boxes together.
 
-Map only fields supported by the image/OCR. Use visual context and nearby headings, not literal keyword matching. A value can belong to a label on another line or nearby, such as "READ MRP HERE" followed by a price. Correct OCR mistakes only when the image supports the correction. Never invent values.
+Use visual evidence first and OCR as supporting text. You have access to the original package images in this request. Do not rely only on the OCR text. Use spatial relationships between labels, logos, product-name text, prices, quantities and dates. Correct OCR mistakes only when the actual image supports the correction. Never invent values.
 
-CRITICAL PRODUCT NAME RULES:
-1. productName means the consumer-facing marketed name of the actual product, not an internal identifier.
-2. NEVER classify batch numbers, lot numbers, manufacturing/inkjet codes, serial codes, MRP values, dates, weights, barcodes, FSSAI numbers, license numbers, phone numbers, addresses, USP markings, or other regulatory/production codes as productName.
-3. A compact alphanumeric token containing letters and multiple digits, such as "BAAYZ011", is strongly indicative of a batch/printing code. It MUST NOT be returned as productName, even if it is prominent in OCR or visually easy to read.
-4. A token such as "#0326" or a similar short numeric/marked code MUST NOT be returned as productName.
-5. Do not infer a productName merely because a candidate is the largest remaining OCR box. Product-name selection requires positive semantic and visual evidence that the text is consumer-facing product branding/name.
-6. Common legitimate marketed names containing numbers (for example 7UP or a product line with a number) may be accepted only when the image/context clearly presents them as branding or a product name. Do not reject every alphanumeric product name blindly.
-7. If the product name is not confidently visible, return value="", status="absent". Do NOT guess from batch codes, manufacturer text, slogans, claims, ingredients, or category names.
-8. Keep productName separate from brandName. A brand logo/name is not automatically the product name, and a batch code is never the product name.
+CRITICAL PRODUCT IDENTITY RULES:
+1. productName means the consumer-facing marketed name of the actual product shown on the package.
+2. brandName means the brand identity shown on the package. Keep brandName and productName separate when the package clearly distinguishes them.
+3. A brand can also function as the complete consumer-facing product name. For example, if the package clearly shows "DANT KANTI" and the product is toothpaste, productName may legitimately be "Dant Kanti" even if the longer descriptive wording is "Dant Kanti Toothpaste".
+4. Treat capitalization, punctuation and spacing differences as the same text identity. "DANT KANTI", "Dant Kanti" and "dant-kanti" are the same lexical identity.
+5. When one product-name candidate is a shorter brand-led form and the other is the same phrase plus a generic commodity descriptor such as "toothpaste", "shampoo", "soap", "face wash", "biscuit", "juice", "flour", "detergent", "oil", "cream", "lotion" or similar, treat them as the same underlying product identity rather than different products.
+6. Do NOT split a single product into different identities merely because one source says the concise marketed name and another source appends the generic commodity type. Preserve the concise consumer-facing name in productName when that is what is visibly printed.
+7. Never classify batch numbers, lot numbers, manufacturing/inkjet codes, serial codes, MRP values, dates, weights, barcodes, FSSAI numbers, license numbers, phone numbers, addresses, USP markings, ingredients or regulatory/production codes as productName.
+8. A compact alphanumeric token containing letters and multiple digits, such as "BAAYZ011", is strongly indicative of a batch/printing code. It MUST NOT be returned as productName.
+9. A token such as "#0326" or a similar short numeric/marked code MUST NOT be returned as productName.
+10. Do not infer productName merely because a candidate is the largest remaining OCR box. Product-name selection requires positive semantic and visual evidence that the text is consumer-facing product branding/name.
+11. Common legitimate marketed names containing numbers (for example 7UP or a product line with a number) may be accepted only when the image/context clearly presents them as branding or a product name.
+12. If the product name is not confidently visible, return value="", status="absent". Do NOT guess from batch codes, manufacturer text, slogans, claims, ingredients, or category names.
 
 CRITICAL EVIDENCE RULES:
-1. evidenceIndex refers ONLY to the numbered RapidOCR detection objects below. It is not a guessed position in the image.
-2. For every FOUND field, evidenceIndex MUST point to the OCR detection containing the actual value text or the closest OCR fragment of that value. Do NOT point to a label-only detection such as "MRP", "Net Weight", "Manufactured by", "Contact", or "READ MRP HERE" when the actual value appears in another detection.
-3. For MRP, evidenceIndex must point to the numeric retail price (for example 229.00), ideally including the currency symbol/value if that same OCR detection contains it. Never use a standalone "MRP" label as MRP evidence.
-4. For netQuantity, evidenceIndex must point to the quantity value and unit (for example 500 g, 1 kg, 100 ml), not a standalone "Net Weight" or "Net Quantity" label.
-5. For dates, evidenceIndex must point to the actual date/month-year text, not the words "Mfg", "PKD", "Best Before", or "Expiry" alone.
-6. For productName, evidenceIndex MUST point to the actual product-name text. Never point to a batch/lot/inkjet code as productName evidence. If there is no trustworthy product-name OCR detection, return productName as absent rather than attaching an unrelated box.
-7. For manufacturer/packer/importer/marketer and their addresses, evidenceIndex must point to the actual entity/address text, not the role heading alone. Use spatial context when the role heading and value are on adjacent lines.
+1. evidenceIndex refers ONLY to the numbered RapidOCR detection objects below.
+2. For every FOUND field, evidenceIndex MUST point to the OCR detection containing the actual value text or the closest OCR fragment of that value.
+3. For MRP, evidenceIndex must point to the numeric retail price, not a standalone "MRP" label.
+4. For netQuantity, evidenceIndex must point to the quantity value and unit, not a standalone quantity label.
+5. For dates, evidenceIndex must point to the actual date/month-year text, not a label such as "Mfg" or "Best Before".
+6. For productName, evidenceIndex MUST point to actual product-name text. Never point to a batch/lot/inkjet code as productName evidence.
+7. For manufacturer/packer/importer/marketer and addresses, evidenceIndex must point to the actual entity/address text, using nearby spatial context when the role heading and value are on adjacent lines.
 8. For consumer care phone/email and barcode, evidenceIndex must point to the actual phone/email/barcode text.
-9. Prefer the OCR fragment whose text has the greatest lexical overlap with the field value. A semantically related label with poor value overlap is NOT valid evidence.
-10. When no OCR detection corresponds to the value, set evidenceIndex=0 only because the schema requires an integer, but set status to unreadable or absent as appropriate. Do not invent geometry from an unrelated detection.
+9. Prefer the OCR fragment with the greatest lexical overlap with the field value. A semantically related label with poor value overlap is NOT valid evidence.
+10. When no OCR detection corresponds to the value, set status to unreadable or absent as appropriate instead of inventing geometry.
 
-For every field return an object. Use empty strings for value/raw/evidence/imageIndex/evidenceIndex when the field is not detected, and status=absent. For a detected field return value, confidence (0..1), status (found/absent/not_detected/unreadable/ambiguous), imageIndex, and evidenceIndex. Correct OCR mistakes only when the image supports the correction. Keep product name and brand separate. Distinguish manufacturer/packer/marketer/importer, net quantity vs serving size, and MRP vs sale/offer price. Do not assess legal compliance.
+For every field return an object. Use empty strings for value/raw/evidence/imageIndex/evidenceIndex when the field is not detected, with status=absent. For a detected field return value, confidence (0..1), status, imageIndex and evidenceIndex. Distinguish manufacturer/packer/marketer/importer, net quantity vs serving size, and MRP vs sale/offer price. Do not assess legal compliance.
 
-suggestedCategory is optional. When uncertain, omit it. When supplied, use only one of the supplied category ids. Use empty strings for categoryId/categoryName/categoryPath/reason when no suggestion is made.
+suggestedCategory is optional. When uncertain, omit it. When supplied, use only one supplied category id.
 
 RapidOCR detections (evidenceIndex is the key):
 ${JSON.stringify(compactDetections)}
