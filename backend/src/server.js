@@ -13,6 +13,12 @@ import fastOcrRouter from "./ocr/fastRoutes.js";
 import ocrRouter from "./ocr/routes.js";
 import ecommerceOcrRouter from "./routes/ecommerceOcr.js";
 
+// When local Qwen is configured, turn on the existing parallel semantic-provider
+// orchestration so Gemini and Qwen are evaluated independently.
+if (process.env.QWEN_OLLAMA_URL && process.env.PARAKH_SEMANTIC_VERIFY_ALL !== "true") {
+  process.env.PARAKH_SEMANTIC_VERIFY_ALL = "true";
+}
+
 const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: "25mb" }));
