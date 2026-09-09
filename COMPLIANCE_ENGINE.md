@@ -4,17 +4,43 @@
 
 The Compliance Engine is PARAKH's legal/business-rule layer. It evaluates structured inspection information against configured Legal Metrology requirements.
 
-It is intentionally separate from OCR and AI semantic interpretation.
+It is intentionally separate from OCR, semantic AI, and DataKart verification.
 
-## 2. Legal Scope
+## 2. Legal scope
 
-The implementation is intended around the Legal Metrology Act, 2009 and the Legal Metrology (Packaged Commodities) Rules, 2011, together with the specific official requirements and amendments adopted into PARAKH's rule set.
+The implementation is intended around the Legal Metrology Act, 2009 and the Legal Metrology (Packaged Commodities) Rules, 2011, together with the official requirements and amendments adopted into PARAKH's configured rule set.
 
 Every implemented legal requirement should retain an identifiable source/reference and version information.
 
-## 3. Current Rule Representation
+## 3. Current architecture
 
-The current database stores rules as `ComplianceRule` records with fields including:
+```text
+Package images
+      ↓
+RapidOCR
+      ↓
+Structured declarations
+      ↑
+Gemini semantic interpretation
+      ↓
+DataKart GTIN reference verification
+      ↓
+Evidence confidence
+      ↓
+Applicable compliance rules
+      ↓
+Rule evaluation
+      ↓
+Findings
+      ↓
+Officer review
+```
+
+The OCR/AI/registry layers provide evidence and interpretation. The compliance engine performs the legal-rule evaluation.
+
+## 4. Rule representation
+
+The current database stores configurable rules as `ComplianceRule` records with fields including:
 
 - ruleId
 - ruleCode
@@ -26,97 +52,116 @@ The current database stores rules as `ComplianceRule` records with fields includ
 - defaultSeverity
 - enabled
 - isBuiltin
-- definition (JSON)
+- definition JSON
 - createdById
 - timestamps
 
-The JSON definition is intended to carry machine-readable validation/configuration data.
+The JSON definition carries machine-readable validation/configuration data where required.
 
-## 4. Rule Separation
+## 5. Rule separation
 
-The system separates:
+Legal decisions must not be hidden inside an LLM prompt or React component.
 
 ```text
-Package image / OCR / AI
+OCR / semantic interpretation
         ↓
-Structured product data
+Structured field values
         ↓
-Compliance rules
+Configured compliance rules
         ↓
-Rule evaluation / finding
+Deterministic validation
         ↓
-Officer review
+Finding + evidence
+        ↓
+Officer decision
 ```
 
-Do not put legal decisions inside an LLM prompt or React component.
+## 6. Result states
 
-## 5. Result States
-
-PARAKH should distinguish among:
+The application supports compliance outcomes such as:
 
 - compliant
-- potential or confirmed violation according to workflow
+- violation
 - needs manual verification
-- not applicable
 - unable to determine
+- not applicable where supported by rule logic
 
-The exact stored status strings used by the running application remain the implementation authority.
+Exact stored status values remain implementation-defined by the running Rules Engine.
 
-## 6. Deterministic Checks
+## 7. Evidence confidence vs legal result
+
+The field-level **Evidence Confidence** score is calculated separately from legal compliance.
+
+Current weighting:
+
+```text
+50% DataKart agreement
+30% Gemini confidence
+20% RapidOCR confidence
+```
+
+This score describes the strength of supporting extraction/reference evidence. It does not decide whether the package is legally compliant.
+
+For example, a field can have high Evidence Confidence while still causing a legal violation because the extracted value itself violates a configured rule.
+
+## 8. DataKart role
+
+DataKart is a separate product-reference registry. A GTIN/barcode is used to retrieve registered product data, which is compared against extracted inspection fields.
+
+A DataKart `MATCH` strengthens evidence for that field. A `MISMATCH` flags reference disagreement. An unavailable or unregistered field is shown as unverified and does not itself create a legal violation.
+
+The Rules Engine remains the only layer responsible for configured Legal Metrology compliance evaluation.
+
+## 9. Deterministic checks
 
 Use deterministic backend logic for checks such as:
 
-- required field presence
-- numeric parsing
-- declaration presence
+- required declaration presence
+- numeric/value validation
 - category applicability
-- exact structural conditions
+- configured field requirements
+- exact structural/legal conditions
+- rule-specific thresholds where formally configured
 
-Use AI only where semantic interpretation is actually required.
+Use semantic AI only when semantic interpretation is actually required.
 
-## 7. Uncertainty
+## 10. Uncertainty
 
 Some photographic evidence cannot establish compliance conclusively.
 
-Examples:
+Examples include unclear placement, poor image quality, insufficient scale for physical measurement, missing declarations, ambiguous text, and context-dependent legal conditions.
 
-- unclear placement
-- poor image quality
-- uncertain text
-- insufficient scale for exact physical measurement
-- conflicting evidence
+These cases should lead to review rather than fabricated certainty.
 
-These should lead to review rather than fabricated certainty.
-
-## 8. Evidence
+## 11. Evidence traceability
 
 A finding should be traceable to:
 
-1. Inspection/product
-2. Applicable rule
-3. Actual extracted value or observation
-4. Supporting package evidence where available
-5. Explanation
-6. Officer decision
+1. inspection/product
+2. applicable rule
+3. extracted value or officer observation
+4. supporting package evidence where available
+5. explanation
+6. officer decision
 
-## 9. Manual Officer Violations
+## 12. Manual officer violations
 
 The scan workflow supports manual violation entry in addition to automated rule findings.
 
-Manual entries must remain distinguishable from automated detections and should remain part of the inspection record.
+Manual entries remain distinguishable from automated detections and are stored with the inspection outcome.
 
-## 10. Versioning
+## 13. Versioning
 
 When a legal requirement changes, create a new rule/version configuration rather than silently changing the interpretation of historical inspections.
 
-## 11. Administration
+## 14. Administration
 
-Built-in rules and administrator-created rules can coexist. Administrative interfaces should protect rule creation/editing with appropriate authorization.
+Built-in rules and administrator-created rules can coexist. Rule creation/editing must require appropriate authorization.
 
-## 12. Testing
+## 15. Testing
 
 Rules should be tested independently of the UI with valid, invalid, missing, ambiguous, and not-applicable cases where relevant.
 
-## 13. Important Limitation
+## 16. Important limitation
 
-PARAKH is inspection decision support. Its AI and rule output is not itself a final legal determination. The authorized enforcement officer and applicable official procedure remain authoritative.
+PARAKH is inspection decision support. OCR, AI, DataKart verification, and Rules Engine outputs are aids to the authorized officer and do not by themselves constitute a final legal determination.
