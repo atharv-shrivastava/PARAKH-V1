@@ -57,6 +57,7 @@ if (!source.includes(marker)) {
     '  function resetAnalysisState() {\n    setOcr(null);\n    setCompliance(null);\n    setComplianceError(null);\n    setAcceptedFindingIds([]);\n    setManualViolations([]);\n    setManualViolationReason("");\n    setManualRuleNumber("");\n    setProviderInfo(null);\n    setAiSuggestedCategory(null);\n    setBarcodeResult(null);\n    setDatakartVerification(null);\n    setVerificationConfidence(null);',
     "reset analysis",
   );
+
   const helperAnchor = 'function formatElapsed(ms) {';
   const helperCode = `async function resolveGtin(barcodeFileValue, manualGtinValue, signal) {\n  const manual = String(manualGtinValue || "").replace(/\\s+/g, "").trim();\n  if (barcodeFileValue) {\n    const timeout = new Promise((resolve) => {\n      window.setTimeout(() => resolve({ attempted: true, found: false, value: null, gtin: manual || null, format: null, confidence: 0, source: manual ? "MANUAL_GTIN_FALLBACK" : "BARCODE_TIMEOUT", error: "Barcode decoding timed out." }), BARCODE_TIMEOUT_MS);\n    });\n    const decode = scanBarcodeImage(barcodeFileValue).then((decoded) => {\n      const gtin = decoded.found ? decoded.value : manual;\n      return { ...decoded, gtin: gtin || null, source: decoded.found ? "BARCODE_SCAN" : manual ? "MANUAL_GTIN_FALLBACK" : "NONE" };\n    });\n    return await Promise.race([decode, timeout]);\n  }\n  return { attempted: Boolean(manual), found: Boolean(manual), value: manual || null, gtin: manual || null, format: manual ? "MANUAL_GTIN" : null, confidence: manual ? 0.90 : 0, source: manual ? "MANUAL_GTIN" : "NONE", error: null };\n}\n\n`;
   if (!source.includes(helperAnchor)) throw new Error("ScanV2 patch anchor not found: formatElapsed");
@@ -81,7 +82,109 @@ if (!source.includes(scopeFixMarker)) {
 if (!source.includes(concurrencyMarker)) {
   const analyzeRegex = /  async function analyze\(\) \{[\s\S]*?\n  \}\n\n  function updateOcrField/;
   if (!analyzeRegex.test(source)) throw new Error("Could not locate ScanV2 analyze function for concurrency patch.");
-  const analyzeFunction = `  async function analyze() {\n    if (!images.length) return setMessage("Add at least one package image first.");\n    setAnalyzing(true);\n    setAnalysisDurationMs(null);\n    setMessage(barcodeFile || manualGtin.trim() ? "Running barcode, RapidOCR and Gemini in parallel..." : "Running RapidOCR + AI semantic verification...");\n    const controller = new AbortController();\n    controllerRef.current?.abort();\n    controllerRef.current = controller;\n    try {\n      const categoryOptions = finalCategories.map((category) => ({ id: category.id, name: category.name, path: category.path.map((item) => item.name).join(" → ") }));\n\n      const [ocrOutcome, barcodeOutcome] = await Promise.allSettled([\n        runOcr(images.map((item) => item.file), controller.signal, categoryOptions),\n        resolveGtin(barcodeFile, manualGtin, controller.signal),\n      ]);\n      if (ocrOutcome.status === "rejected") throw ocrOutcome.reason;\n\n      const info = ocrOutcome.value;\n      const identifier = barcodeOutcome.status === "fulfilled" ? barcodeOutcome.value : { attempted: Boolean(barcodeFile || manualGtin.trim()), found: false, value: null, gtin: manualGtin.trim() || null, confidence: 0, source: "NONE", error: barcodeOutcome.reason?.message || "Barcode verification failed." };\n      const extracted = info.result;\n      const gtin = identifier.gtin || manualGtin.trim();\n\n      window.sessionStorage.setItem("parakhDeclarationEvidence", JSON.stringify(extracted.declarationEvidence || []));\n      window.dispatchEvent(new CustomEvent("parakh:declaration-evidence", { detail: extracted.declarationEvidence || [] }));\n      setOcr(extracted);\n      setForm(formFromOcr(extracted));\n      setUseExtractedData(true);\n      setShowRegistration(true);\n      setAiSuggestedCategory(info.aiSuggestedCategory || null);\n      setBarcodeResult(identifier);\n      setProviderInfo({ ...info, barcodeResult: identifier });\n      setMessage("OCR + Gemini completed. Rules Engine and DataKart verification are running in parallel...");\n\n      const visualInspection = readVisualInspection();\n      const rulesPromise = apiFetch(\`${OCR_URL}/api/ocr/evaluate-structured\`, {\n        method: "POST",\n        headers: { "Content-Type": "application/json" },\n        body: JSON.stringify({\n          ocr: extracted,\n          visualFlags: visualInspection ? { readability: visualInspection.readability, readable: visualInspection.readable, textDetected: visualInspection.textDetected, placementReview: visualInspection.placementReview, fontSizeCalibrated: visualInspection.fontSizeCalibrated, estimatedTextHeightMm: visualInspection.estimatedTextHeightMm, declarationCoverageScreened: visualInspection.declarationCoverageScreened } : {},\n          inspectionId: crypto.randomUUID(),\n          productId: crypto.randomUUID(),\n          inspectionDate: new Date().toISOString().slice(0, 10),\n          context: "physical_package",\n          commodityCategory: "packaged commodity",\n          consumerType: "general",\n          isImported: false,\n          packageType: "retail",\n          datakartVerification: null,\n        }),\n        signal: controller.signal,\n      });\n\n      const dataKartPromise = gtin\n        ? lookupDataKart(gtin, controller.signal).then((dk) => {\n            const comparison = dk ? compareWithDataKart(extracted, dk) : { matchedFields: 0, comparedFields: 0, matchRate: null, comparisons: {} };\n            return dk ? { ...dk, comparison } : null;\n          })\n        : Promise.resolve(null);\n\n      const [rulesOutcome, dataKartOutcome] = await Promise.allSettled([rulesPromise, dataKartPromise]);\n\n      if (rulesOutcome.status === "fulfilled") {\n        const response = rulesOutcome.value;\n        const data = await response.json().catch(() => ({}));\n        if (!response.ok) {\n          setCompliance(null);\n          setComplianceError({ message: data.error || "Rules Engine evaluation failed" });\n        } else {\n          setCompliance(data.compliance || null);\n          setComplianceError(data.complianceError || null);\n          setAcceptedFindingIds((data.compliance?.findings || []).filter((finding) => finding.status === "VIOLATION").map((finding) => finding.findingId));\n        }\n      } else if (rulesOutcome.reason?.name !== "AbortError") {\n        setCompliance(null);\n        setComplianceError({ message: rulesOutcome.reason?.message || "Rules Engine evaluation failed" });\n      }\n\n      const dk = dataKartOutcome.status === "fulfilled" ? dataKartOutcome.value : null;\n      const dkComparison = dk?.comparison || { matchedFields: 0, comparedFields: 0, matchRate: null, comparisons: {} };\n      const confidenceResult = calculateVerificationConfidence({ ocrResult: extracted, providerInfo: info, barcodeResult: identifier, dataKartComparison: dkComparison });\n      setBarcodeResult(identifier);\n      setDatakartVerification(dk);\n      setVerificationConfidence(confidenceResult);\n      setProviderInfo({ ...info, barcodeResult: identifier, datakartVerification: dk ? { ...dk, comparison: dkComparison } : null, verificationConfidence: confidenceResult });\n\n      if (Number.isFinite(info.timing?.totalMs)) setAnalysisDurationMs(Number(info.timing.totalMs));\n      setManualViolations([]);\n      setManualViolationReason("");\n      setManualRuleNumber("");\n      setSelectedCategoryId("");\n      const rulesDone = rulesOutcome.status === "fulfilled" && rulesOutcome.value.ok;\n      const dataKartDone = dataKartOutcome.status === "fulfilled";\n      setMessage(`${rulesDone ? "Rules Engine completed" : "Rules Engine needs review"}. ${dataKartDone ? "DataKart verification completed" : "DataKart verification unavailable"}. Extracted fields are ready for review and registration.`);\n    } catch (error) {\n      if (error?.name === "AbortError") return;\n      setMessage(error.message || "OCR analysis failed.");\n    } finally {\n      if (controllerRef.current === controller) controllerRef.current = null;\n      setAnalysisDurationMs((current) => current ?? analysisElapsedMs);\n      setAnalyzing(false);\n    }\n  }`;
+  const analyzeFunction = `  async function analyze() {
+    if (!images.length) return setMessage("Add at least one package image first.");
+    setAnalyzing(true);
+    setAnalysisDurationMs(null);
+    setMessage(barcodeFile || manualGtin.trim() ? "Running barcode, RapidOCR and Gemini in parallel..." : "Running RapidOCR + AI semantic verification...");
+    const controller = new AbortController();
+    controllerRef.current?.abort();
+    controllerRef.current = controller;
+    try {
+      const categoryOptions = finalCategories.map((category) => ({ id: category.id, name: category.name, path: category.path.map((item) => item.name).join(" → ") }));
+
+      const [ocrOutcome, barcodeOutcome] = await Promise.allSettled([
+        runOcr(images.map((item) => item.file), controller.signal, categoryOptions),
+        resolveGtin(barcodeFile, manualGtin, controller.signal),
+      ]);
+      if (ocrOutcome.status === "rejected") throw ocrOutcome.reason;
+
+      const info = ocrOutcome.value;
+      const identifier = barcodeOutcome.status === "fulfilled" ? barcodeOutcome.value : { attempted: Boolean(barcodeFile || manualGtin.trim()), found: false, value: null, gtin: manualGtin.trim() || null, confidence: 0, source: "NONE", error: barcodeOutcome.reason?.message || "Barcode verification failed." };
+      const extracted = info.result;
+      const gtin = identifier.gtin || manualGtin.trim();
+
+      window.sessionStorage.setItem("parakhDeclarationEvidence", JSON.stringify(extracted.declarationEvidence || []));
+      window.dispatchEvent(new CustomEvent("parakh:declaration-evidence", { detail: extracted.declarationEvidence || [] }));
+      setOcr(extracted);
+      setForm(formFromOcr(extracted));
+      setUseExtractedData(true);
+      setShowRegistration(true);
+      setAiSuggestedCategory(info.aiSuggestedCategory || null);
+      setBarcodeResult(identifier);
+      setProviderInfo({ ...info, barcodeResult: identifier });
+      setMessage("OCR + Gemini completed. Rules Engine and DataKart verification are running in parallel...");
+
+      const visualInspection = readVisualInspection();
+      const rulesPromise = apiFetch(OCR_URL + "/api/ocr/evaluate-structured", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ocr: extracted,
+          visualFlags: visualInspection ? { readability: visualInspection.readability, readable: visualInspection.readable, textDetected: visualInspection.textDetected, placementReview: visualInspection.placementReview, fontSizeCalibrated: visualInspection.fontSizeCalibrated, estimatedTextHeightMm: visualInspection.estimatedTextHeightMm, declarationCoverageScreened: visualInspection.declarationCoverageScreened } : {},
+          inspectionId: crypto.randomUUID(),
+          productId: crypto.randomUUID(),
+          inspectionDate: new Date().toISOString().slice(0, 10),
+          context: "physical_package",
+          commodityCategory: "packaged commodity",
+          consumerType: "general",
+          isImported: false,
+          packageType: "retail",
+          datakartVerification: null,
+        }),
+        signal: controller.signal,
+      });
+
+      const dataKartPromise = gtin
+        ? lookupDataKart(gtin, controller.signal).then((dk) => {
+            const comparison = dk ? compareWithDataKart(extracted, dk) : { matchedFields: 0, comparedFields: 0, matchRate: null, comparisons: {} };
+            return dk ? { ...dk, comparison } : null;
+          })
+        : Promise.resolve(null);
+
+      const [rulesOutcome, dataKartOutcome] = await Promise.allSettled([rulesPromise, dataKartPromise]);
+
+      if (rulesOutcome.status === "fulfilled") {
+        const response = rulesOutcome.value;
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          setCompliance(null);
+          setComplianceError({ message: data.error || "Rules Engine evaluation failed" });
+        } else {
+          setCompliance(data.compliance || null);
+          setComplianceError(data.complianceError || null);
+          setAcceptedFindingIds((data.compliance?.findings || []).filter((finding) => finding.status === "VIOLATION").map((finding) => finding.findingId));
+        }
+      } else if (rulesOutcome.reason?.name !== "AbortError") {
+        setCompliance(null);
+        setComplianceError({ message: rulesOutcome.reason?.message || "Rules Engine evaluation failed" });
+      }
+
+      const dk = dataKartOutcome.status === "fulfilled" ? dataKartOutcome.value : null;
+      const dkComparison = dk?.comparison || { matchedFields: 0, comparedFields: 0, matchRate: null, comparisons: {} };
+      const confidenceResult = calculateVerificationConfidence({ ocrResult: extracted, providerInfo: info, barcodeResult: identifier, dataKartComparison: dkComparison });
+      setBarcodeResult(identifier);
+      setDatakartVerification(dk);
+      setVerificationConfidence(confidenceResult);
+      setProviderInfo({ ...info, barcodeResult: identifier, datakartVerification: dk ? { ...dk, comparison: dkComparison } : null, verificationConfidence: confidenceResult });
+
+      if (Number.isFinite(info.timing?.totalMs)) setAnalysisDurationMs(Number(info.timing.totalMs));
+      setManualViolations([]);
+      setManualViolationReason("");
+      setManualRuleNumber("");
+      setSelectedCategoryId("");
+      const rulesDone = rulesOutcome.status === "fulfilled" && rulesOutcome.value.ok;
+      const dataKartDone = dataKartOutcome.status === "fulfilled";
+      setMessage((rulesDone ? "Rules Engine completed" : "Rules Engine needs review") + ". " + (dataKartDone ? "DataKart verification completed" : "DataKart verification unavailable") + ". Extracted fields are ready for review and registration.");
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      setMessage(error.message || "OCR analysis failed.");
+    } finally {
+      if (controllerRef.current === controller) controllerRef.current = null;
+      setAnalysisDurationMs((current) => current ?? analysisElapsedMs);
+      setAnalyzing(false);
+    }
+  }`;
   source = source.replace(analyzeRegex, `${analyzeFunction}\n\n  function updateOcrField`);
   source += `\n${concurrencyMarker}\n`;
 }
