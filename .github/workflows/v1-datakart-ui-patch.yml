@@ -1,0 +1,39 @@
+name: One-time DataKart result UI patch
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch DataKart result UI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('frontend/src/pages/Scan.jsx')
+          s = p.read_text()
+          old = '<div><strong>DataKart verification</strong><span>{ocr.dataKartVerification?.status || "NOT_RUN"}{ocr.dataKartVerification?.gtin ? ` · GTIN ${ocr.dataKartVerification.gtin}` : ""}</span></div>'
+          new = '''<div className="datakart-result-card" style={{ gridColumn: "1 / -1", padding: "18px 20px", borderRadius: 14, border: `1px solid ${ocr.dataKartVerification?.status === "REGISTERED" ? "#86efac" : ocr.dataKartVerification?.status === "NOT_FOUND" ? "#fca5a5" : "#fcd34d"}`, background: ocr.dataKartVerification?.status === "REGISTERED" ? "#f0fdf4" : ocr.dataKartVerification?.status === "NOT_FOUND" ? "#fef2f2" : "#fffbeb" }}>
+  <strong style={{ display: "block", fontSize: 13, textTransform: "uppercase", letterSpacing: 0.6 }}>DataKart product verification</strong>
+  <span style={{ display: "block", marginTop: 6, fontSize: 16, fontWeight: 800, color: ocr.dataKartVerification?.status === "REGISTERED" ? "#15803d" : ocr.dataKartVerification?.status === "NOT_FOUND" ? "#b91c1c" : "#a16207" }}>
+    {ocr.dataKartVerification?.status === "REGISTERED" ? "✓ Product found in DataKart" : ocr.dataKartVerification?.status === "NOT_FOUND" ? "✕ Product not found in DataKart" : ocr.dataKartVerification?.status === "UNAVAILABLE" ? "? DataKart could not be reached" : "? Product could not be checked: no GTIN detected"}
+  </span>
+  <span style={{ display: "block", marginTop: 5, fontSize: 12, fontWeight: 700 }}>{ocr.dataKartVerification?.gtin ? `GTIN ${ocr.dataKartVerification.gtin}` : "No GTIN detected"}</span>
+</div>'''
+          if old not in s:
+              raise SystemExit('Expected DataKart status block not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+      - name: Verify and commit
+        run: |
+          grep -q 'Product found in DataKart' frontend/src/pages/Scan.jsx
+          grep -q 'Product not found in DataKart' frontend/src/pages/Scan.jsx
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/src/pages/Scan.jsx
+          git commit -m 'fix(v1): show explicit DataKart product lookup result'
+          git push
