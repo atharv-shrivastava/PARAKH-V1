@@ -65,12 +65,25 @@ if (!source.includes(marker)) {
   );
 
   const uploadAnchor = '<p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>';
-  const uploadPanel = `<div className="scan-upload-actions">\n        <label className="secondary-button scan-file-button">Upload Barcode<input type="file" accept="image/*" onChange={(event) => { addBarcodeFile(event.target.files); event.target.value = ""; }} hidden /></label>\n        <input aria-label="Enter GTIN manually" placeholder="Enter GTIN manually" inputMode="numeric" value={manualGtin} onChange={(event) => { setManualGtin(event.target.value.replace(/\\D/g, "").slice(0, 18)); setBarcodeResult(null); }} />\n      </div>\n      {(barcodeFile || manualGtin) && <div className="status-message">{barcodeFile ? `Barcode image: ${barcodeFile.name}` : "Manual GTIN entered."} {barcodeResult?.found ? `Decoded GTIN: ${barcodeResult.gtin}` : ""}</div>}`;
+  const uploadPanel = [
+    '<div className="scan-upload-actions">',
+    '  <label className="secondary-button scan-file-button">Upload Barcode<input type="file" accept="image/*" onChange={(event) => { addBarcodeFile(event.target.files); event.target.value = ""; }} hidden /></label>',
+    '  <input aria-label="Enter GTIN manually" placeholder="Enter GTIN manually" inputMode="numeric" value={manualGtin} onChange={(event) => { setManualGtin(event.target.value.replace(/\\D/g, "").slice(0, 18)); setBarcodeResult(null); }} />',
+    '</div>',
+    '{(barcodeFile || manualGtin) && <div className="status-message">{barcodeFile ? "Barcode image: " + barcodeFile.name : "Manual GTIN entered."} {barcodeResult?.found ? "Decoded GTIN: " + barcodeResult.gtin : ""}</div>}',
+  ].join("\n");
   if (!source.includes(uploadAnchor)) throw new Error("ScanV2 patch anchor not found: scan-limit");
   source = source.replace(uploadAnchor, uploadAnchor + "\n      " + uploadPanel);
 
   const providerAnchor = '{providerInfo && <section className="ocr-status-grid">';
-  const verificationPanel = `{providerInfo?.verificationConfidence && <section className="ocr-status-grid">\n      <div><strong>Barcode / GTIN</strong><span>{providerInfo.barcodeResult?.gtin || "Not supplied"} · {providerInfo.barcodeResult?.source || "NONE"}</span></div>\n      <div><strong>DataKart</strong><span>{providerInfo.datakartVerification?.found ? `${providerInfo.datakartVerification.comparison.matchedFields}/${providerInfo.datakartVerification.comparison.comparedFields} fields matched` : providerInfo.datakartVerification?.attempted ? "GTIN not registered" : "Not queried"}</span></div>\n      <div><strong>Verification confidence</strong><span>{providerInfo.verificationConfidence.percentage}% · {providerInfo.verificationConfidence.label}</span></div>\n    </section>}\n\n    `;
+  const verificationPanel = [
+    '{providerInfo?.verificationConfidence && <section className="ocr-status-grid">',
+    '  <div><strong>Barcode / GTIN</strong><span>{providerInfo.barcodeResult?.gtin || "Not supplied"} · {providerInfo.barcodeResult?.source || "NONE"}</span></div>',
+    '  <div><strong>DataKart</strong><span>{providerInfo.datakartVerification?.found ? providerInfo.datakartVerification.comparison.matchedFields + "/" + providerInfo.datakartVerification.comparison.comparedFields + " fields matched" : providerInfo.datakartVerification?.attempted ? "GTIN not registered" : "Not queried"}</span></div>',
+    '  <div><strong>Verification confidence</strong><span>{providerInfo.verificationConfidence.percentage}% · {providerInfo.verificationConfidence.label}</span></div>',
+    '</section>}',
+    '',
+  ].join("\n");
   if (!source.includes(providerAnchor)) throw new Error("ScanV2 patch anchor not found: provider status");
   source = source.replace(providerAnchor, verificationPanel + providerAnchor);
 
