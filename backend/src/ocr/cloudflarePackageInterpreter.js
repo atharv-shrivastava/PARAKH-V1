@@ -5,6 +5,7 @@ import {
   normalizeSemanticResult,
   parseJsonContent,
 } from "./semanticPackageCommon.js";
+import { interpretPackageWithQwen } from "./qwenPackageInterpreter.js";
 
 async function buildContactSheet(images) {
   if (!images.length) return null;
@@ -32,6 +33,14 @@ export async function interpretPackageWithCloudflare({
   images = [], detections = [], rawText = "", categoryOptions = [], signal,
   modelOverride = null, providerName = "cloudflare",
 } = {}) {
+  // Preserve the existing provider slot while using it for the requested local
+  // open-source Qwen verifier whenever Ollama is configured. This lets the
+  // existing Promise.all orchestration run Gemini and Qwen in parallel without
+  // introducing a second semantic pipeline.
+  if (providerName === "cloudflare-gemma" && process.env.QWEN_OLLAMA_URL) {
+    return interpretPackageWithQwen({ images, detections, rawText, categoryOptions, signal });
+  }
+
   const apiToken = process.env.CLOUDFLARE_API_TOKEN || process.env.CLOUDFLARE_AUTH_TOKEN || process.env.CLOUDFLARE_API_KEY || "";
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || "";
   const model = modelOverride || process.env.CLOUDFLARE_SEMANTIC_MODEL || "@cf/google/gemma-4-26b-a4b-it";
