@@ -452,7 +452,7 @@ function Scan() {
   <div>
     <strong style={{ display: "block", fontSize: 15 }}>DataKart product verification</strong>
     <span style={{ display: "block", marginTop: 4, fontWeight: 800, color: ocr.dataKartVerification?.status === "REGISTERED" ? "#15803d" : ocr.dataKartVerification?.status === "NOT_FOUND" ? "#b91c1c" : "#a16207" }}>
-      {ocr.dataKartVerification?.status === "REGISTERED" ? "✓ Product found in DataKart" : ocr.dataKartVerification?.status === "NOT_FOUND" ? "✕ Product not found in DataKart" : ocr.dataKartVerification?.status === "UNAVAILABLE" ? "? DataKart could not be reached" : "? Product could not be checked: no GTIN detected"}
+      {ocr.dataKartVerification?.status === "REGISTERED" ? "✓ Product found in DataKart" : ocr.dataKartVerification?.status === "NOT_FOUND" ? "✕ Product not found in DataKart" : ocr.dataKartVerification?.status === "UNAVAILABLE" ? "? DataKart could not be reached" : "✕ Product not detected in DataKart"}
     </span>
   </div>
   <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>{ocr.dataKartVerification?.gtin ? `GTIN ${ocr.dataKartVerification.gtin}` : "No GTIN"}</span>

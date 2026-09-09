@@ -10,6 +10,7 @@ import { interpretOcrFields } from "./ocrFieldInterpreter.js";
 import { interpretPackageWithGemini } from "./geminiPackageInterpreter.js";
 import { interpretPackageWithCloudflare } from "./cloudflarePackageInterpreter.js";
 import { reconcileSemanticResults } from "./semanticConsensus.js";
+import { applyEvidenceConfidence } from "./evidenceConfidence.js";
 
 const router = express.Router();
 const config = getOcrConfig();
@@ -559,7 +560,7 @@ async function handleFastAnalyze(req, res, files) {
     const semanticStart = Date.now();
     const aiSemantic = await runSemanticProviders({ images, rapid, categoryOptions });
     const semanticMs = Date.now() - semanticStart;
-    const result = buildStructuredResult(rapid, aiSemantic);
+    const result = await applyEvidenceConfidence(buildStructuredResult(rapid, aiSemantic));
     const totalMs = Date.now() - startedAt;
     const parallelMs = totalMs - uploadMs;
 
