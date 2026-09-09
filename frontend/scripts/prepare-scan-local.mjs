@@ -22,51 +22,76 @@ if (stale.length) throw new Error(`ScanV2.jsx still contains legacy browser OCR 
 if (!source.includes("/api/ocr/analyze")) throw new Error("ScanV2.jsx is missing the local backend OCR request.");
 
 const marker = "/* PARAKH_BARCODE_DATAKART_VERIFY_V1 */";
+const previewMarker = "/* PARAKH_BARCODE_PREVIEW_V1 */";
+
+function addOnce(needle, replacement, label) {
+  if (source.includes(needle)) source = source.replace(needle, replacement);
+  else if (label) console.warn(`PARAKH patch anchor missing: ${label}`);
+}
+
 if (!source.includes(marker)) {
-  source = source.replace(
+  addOnce(
     'import { apiFetch } from "../lib/auth";',
     'import { apiFetch } from "../lib/auth";\nimport { scanBarcodeImage, lookupDataKart, compareWithDataKart, calculateVerificationConfidence } from "../lib/verification";',
+    "verification import",
   );
-  source = source.replace('const MAX_IMAGES = 4;', `${marker}\nconst MAX_IMAGES = 4;\nconst BARCODE_MAX_SIZE = 8 * 1024 * 1024;`);
+  addOnce(
+    'const MAX_IMAGES = 4;',
+    `${marker}\nconst MAX_IMAGES = 4;\nconst BARCODE_MAX_SIZE = 8 * 1024 * 1024;\nconst BARCODE_TIMEOUT_MS = 4000;`,
+    "MAX_IMAGES",
+  );
 
-  source = source.replace(
+  addOnce(
     '  const [message, setMessage] = useState("");',
     '  const [message, setMessage] = useState("");\n  const [barcodeFile, setBarcodeFile] = useState(null);\n  const [barcodePreviewUrl, setBarcodePreviewUrl] = useState("");\n  const [manualGtin, setManualGtin] = useState("");\n  const [barcodeResult, setBarcodeResult] = useState(null);\n  const [datakartVerification, setDatakartVerification] = useState(null);\n  const [verificationConfidence, setVerificationConfidence] = useState(null);',
+    "barcode state",
   );
 
-  source = source.replace(
+  addOnce(
     '  useEffect(() => {\n    if (!analyzing) return undefined;',
     '  useEffect(() => {\n    if (!barcodeFile) {\n      setBarcodePreviewUrl("");\n      return undefined;\n    }\n    const url = URL.createObjectURL(barcodeFile);\n    setBarcodePreviewUrl(url);\n    return () => URL.revokeObjectURL(url);\n  }, [barcodeFile]);\n\n  useEffect(() => {\n    if (!analyzing) return undefined;',
+    "barcode preview effect",
   );
 
-  source = source.replace(
-    '    setProviderInfo(null);\n    setAiSuggestedCategory(null);',
-    '    setProviderInfo(null);\n    setAiSuggestedCategory(null);\n    setBarcodeFile(null);\n    setBarcodePreviewUrl("");\n    setBarcodeResult(null);\n    setDatakartVerification(null);\n    setVerificationConfidence(null);',
+  addOnce(
+    '  function resetAnalysisState() {\n    setOcr(null);\n    setCompliance(null);\n    setComplianceError(null);\n    setAcceptedFindingIds([]);\n    setManualViolations([]);\n    setManualViolationReason("");\n    setManualRuleNumber("");\n    setProviderInfo(null);\n    setAiSuggestedCategory(null);',
+    '  function resetAnalysisState() {\n    setOcr(null);\n    setCompliance(null);\n    setComplianceError(null);\n    setAcceptedFindingIds([]);\n    setManualViolations([]);\n    setManualViolationReason("");\n    setManualRuleNumber("");\n    setProviderInfo(null);\n    setAiSuggestedCategory(null);\n    setBarcodeResult(null);\n    setDatakartVerification(null);\n    setVerificationConfidence(null);',
+    "reset analysis state",
   );
 
   const helperAnchor = 'function formatElapsed(ms) {';
-  const helperCode = `async function resolveGtin(barcodeFileValue, manualGtinValue, signal) {\n  const manual = String(manualGtinValue || "").replace(/\\s+/g, "").trim();\n  if (barcodeFileValue) {\n    const decoded = await scanBarcodeImage(barcodeFileValue);\n    const gtin = decoded.found ? decoded.value : manual;\n    return { ...decoded, gtin: gtin || null, source: decoded.found ? "BARCODE_SCAN" : manual ? "MANUAL_GTIN_FALLBACK" : "NONE" };\n  }\n  return { attempted: Boolean(manual), found: Boolean(manual), value: manual || null, gtin: manual || null, format: manual ? "MANUAL_GTIN" : null, confidence: manual ? 0.90 : 0, source: manual ? "MANUAL_GTIN" : "NONE", error: null };\n}\n\nfunction addBarcodeFile(input) {\n  const file = input?.[0];\n  if (!file) return;\n  if (!file.type.startsWith("image/")) return setMessage("Barcode upload must be an image.");\n  if (file.size > BARCODE_MAX_SIZE) return setMessage("Barcode image is too large. Use an image smaller than 8 MB.");\n  setBarcodeFile(file);\n  setBarcodeResult(null);\n  setDatakartVerification(null);\n  setVerificationConfidence(null);\n  setMessage("Barcode image ready. It will be decoded in parallel with package OCR when Analyze Images is clicked.");\n}\n\n`;
+  const helperCode = `async function resolveGtin(barcodeFileValue, manualGtinValue, signal) {\n  const manual = String(manualGtinValue || "").replace(/\\s+/g, "").trim();\n  if (barcodeFileValue) {\n    const timeout = new Promise((resolve) => {\n      window.setTimeout(() => resolve({\n        attempted: true,\n        found: false,\n        value: null,\n        gtin: manual || null,\n        format: null,\n        confidence: 0,\n        source: manual ? "MANUAL_GTIN_FALLBACK" : "BARCODE_TIMEOUT",\n        error: "Barcode decoding timed out."\n      }), BARCODE_TIMEOUT_MS);\n    });\n    const decode = scanBarcodeImage(barcodeFileValue).then((decoded) => {\n      const gtin = decoded.found ? decoded.value : manual;\n      return { ...decoded, gtin: gtin || null, source: decoded.found ? "BARCODE_SCAN" : manual ? "MANUAL_GTIN_FALLBACK" : "NONE" };\n    });\n    return await Promise.race([decode, timeout]);\n  }\n  return { attempted: Boolean(manual), found: Boolean(manual), value: manual || null, gtin: manual || null, format: manual ? "MANUAL_GTIN" : null, confidence: manual ? 0.90 : 0, source: manual ? "MANUAL_GTIN" : "NONE", error: null };\n}\n\n`;
   if (!source.includes(helperAnchor)) throw new Error("ScanV2 patch anchor not found: formatElapsed");
   source = source.replace(helperAnchor, helperCode + helperAnchor);
 
-  source = source.replace(
+  addOnce(
+    '  function update(key, value) {\n    setForm((current) => ({ ...current, [key]: value }));\n  }',
+    '  function update(key, value) {\n    setForm((current) => ({ ...current, [key]: value }));\n  }\n\n  function addBarcodeFile(input) {\n    const file = input?.[0];\n    if (!file) return;\n    if (!file.type.startsWith("image/")) return setMessage("Barcode upload must be an image.");\n    if (file.size > BARCODE_MAX_SIZE) return setMessage("Barcode image is too large. Use an image smaller than 8 MB.");\n    setBarcodeFile(file);\n    setBarcodeResult(null);\n    setDatakartVerification(null);\n    setVerificationConfidence(null);\n    setMessage("Barcode image ready. It will be decoded in parallel with package OCR when Analyze Images is clicked.");\n  }',
+    "barcode handler",
+  );
+
+  addOnce(
     '    setAnalyzing(true);\n    setAnalysisDurationMs(null);\n    setMessage("Running RapidOCR + AI semantic verification...");',
     '    setAnalyzing(true);\n    setAnalysisDurationMs(null);\n    setMessage(barcodeFile || manualGtin.trim() ? "Running barcode/GTIN verification and RapidOCR + Gemini in parallel..." : "Running RapidOCR + AI semantic verification...");',
+    "analysis message",
   );
 
-  source = source.replace(
+  addOnce(
     '      const info = await runOcr(images.map((item) => item.file), controller.signal, categoryOptions);\n      const extracted = info.result;',
-    '      const [ocrOutcome, barcodeOutcome] = await Promise.allSettled([\n        runOcr(images.map((item) => item.file), controller.signal, categoryOptions),\n        resolveGtin(barcodeFile, manualGtin, controller.signal),\n      ]);\n      if (ocrOutcome.status === "rejected") throw ocrOutcome.reason;\n      const info = ocrOutcome.value;\n      const identifier = barcodeOutcome.status === "fulfilled" ? barcodeOutcome.value : { attempted: Boolean(barcodeFile || manualGtin.trim()), found: false, value: null, gtin: manualGtin.trim() || null, confidence: 0, source: "NONE", error: barcodeOutcome.reason?.message || "Barcode verification failed." };\n      const extracted = info.result;\n      const gtin = identifier.gtin || manualGtin.trim();\n      const dk = gtin ? await lookupDataKart(gtin, controller.signal) : null;\n      const dkComparison = dk ? compareWithDataKart(extracted, dk) : { matchedFields: 0, comparedFields: 0, matchRate: null, comparisons: {} };\n      const confidenceResult = calculateVerificationConfidence({ ocrResult: extracted, providerInfo: info, barcodeResult: identifier, dataKartComparison: dkComparison });\n      setBarcodeResult(identifier);\n      setDatakartVerification(dk ? { ...dk, comparison: dkComparison } : null);\n      setVerificationConfidence(confidenceResult);',
+    '      const [ocrOutcome, barcodeOutcome] = await Promise.allSettled([\n        runOcr(images.map((item) => item.file), controller.signal, categoryOptions),\n        resolveGtin(barcodeFile, manualGtin, controller.signal),\n      ]);\n      if (ocrOutcome.status === "rejected") throw ocrOutcome.reason;\n      const info = ocrOutcome.value;\n      const identifier = barcodeOutcome.status === "fulfilled" ? barcodeOutcome.value : { attempted: Boolean(barcodeFile || manualGtin.trim()), found: false, value: null, gtin: manualGtin.trim() || null, confidence: 0, source: "NONE", error: barcodeOutcome.reason?.message || "Barcode verification failed." };\n      const extracted = info.result;\n      setOcr(extracted);\n      setForm(formFromOcr(extracted));\n      const gtin = identifier.gtin || manualGtin.trim();\n      const dk = gtin ? await lookupDataKart(gtin, controller.signal) : null;\n      const dkComparison = dk ? compareWithDataKart(extracted, dk) : { matchedFields: 0, comparedFields: 0, matchRate: null, comparisons: {} };\n      const confidenceResult = calculateVerificationConfidence({ ocrResult: extracted, providerInfo: info, barcodeResult: identifier, dataKartComparison: dkComparison });\n      setBarcodeResult(identifier);\n      setDatakartVerification(dk ? { ...dk, comparison: dkComparison } : null);\n      setVerificationConfidence(confidenceResult);',
+    "parallel analysis",
   );
 
-  source = source.replace(
+  addOnce(
     '      setProviderInfo(info);',
     '      setProviderInfo({ ...info, barcodeResult: identifier, datakartVerification: dk ? { ...dk, comparison: dkComparison } : null, verificationConfidence: confidenceResult });',
+    "provider state",
   );
 
-  source = source.replace(
+  addOnce(
     '          packageType: "retail",\n        }),',
     '          packageType: "retail",\n          datakartVerification: dk ? { ...dk, comparison: dkComparison } : null,\n          verificationConfidence: confidenceResult,\n        }),',
+    "rules engine evidence",
   );
 
   const uploadAnchor = '<p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>';
@@ -75,12 +100,6 @@ if (!source.includes(marker)) {
     '  <label className="secondary-button scan-file-button">Upload Barcode<input type="file" accept="image/*" onChange={(event) => { addBarcodeFile(event.target.files); event.target.value = ""; }} hidden /></label>',
     '  <input aria-label="Enter GTIN manually" placeholder="Enter GTIN manually" inputMode="numeric" value={manualGtin} onChange={(event) => { setManualGtin(event.target.value.replace(/\\D/g, "").slice(0, 18)); setBarcodeResult(null); }} />',
     '</div>',
-    '{barcodePreviewUrl && <div className="barcode-preview-card">',
-    '  <div className="barcode-preview-heading"><strong>Uploaded barcode</strong><span>{barcodeFile?.name}</span></div>',
-    '  <img className="barcode-preview-image" src={barcodePreviewUrl} alt="Uploaded barcode for scanning" />',
-    '  <div className="barcode-preview-meta">{barcodeResult?.found ? `Decoded GTIN: ${barcodeResult.gtin}` : "Will be decoded when Analyze Images is clicked."}</div>',
-    '</div>}',
-    '{!barcodePreviewUrl && manualGtin && <div className="status-message">Manual GTIN entered: {manualGtin}</div>}',
   ].join("\n");
   if (!source.includes(uploadAnchor)) throw new Error("ScanV2 patch anchor not found: scan-limit");
   source = source.replace(uploadAnchor, uploadAnchor + "\n      " + uploadPanel);
@@ -92,45 +111,60 @@ if (!source.includes(marker)) {
     '  <div><strong>DataKart</strong><span>{providerInfo.datakartVerification?.found ? providerInfo.datakartVerification.comparison.matchedFields + "/" + providerInfo.datakartVerification.comparison.comparedFields + " fields matched" : providerInfo.datakartVerification?.attempted ? "GTIN not registered" : "Not queried"}</span></div>',
     '  <div><strong>Verification confidence</strong><span>{providerInfo.verificationConfidence.percentage}% · {providerInfo.verificationConfidence.label}</span></div>',
     '</section>}',
-    '',
   ].join("\n");
   if (!source.includes(providerAnchor)) throw new Error("ScanV2 patch anchor not found: provider status");
-  source = source.replace(providerAnchor, verificationPanel + providerAnchor);
-
-  console.log("PARAKH scan page patched with parallel barcode/GTIN verification, DataKart comparison, confidence calculation, and barcode preview.");
-} else {
-  console.log("PARAKH scan page barcode/DataKart verification patch already present.");
+  source = source.replace(providerAnchor, verificationPanel + "\n" + providerAnchor);
 }
 
-const previewMarker = "/* PARAKH_BARCODE_PREVIEW_V1 */";
-if (!source.includes(previewMarker)) {
-  const stateAnchor = '  const [barcodeFile, setBarcodeFile] = useState(null);';
-  if (source.includes(stateAnchor) && !source.includes('const [barcodePreviewUrl, setBarcodePreviewUrl]')) {
-    source = source.replace(stateAnchor, `${stateAnchor}\n  const [barcodePreviewUrl, setBarcodePreviewUrl] = useState("");`);
-  }
+// Repair any earlier generated version of the patch. The previous build-time patch
+// accidentally placed addBarcodeFile at module scope, where React setters do not exist.
+const brokenHelperPattern = /\nfunction addBarcodeFile\(input\) \{[\s\S]*?\n\}\n\n(?=function formatElapsed\(ms\))/;
+if (brokenHelperPattern.test(source)) {
+  source = source.replace(brokenHelperPattern, "\n");
+}
 
+if (!source.includes("function addBarcodeFile(input) {")) {
+  const componentHelperAnchor = '  function update(key, value) {\n    setForm((current) => ({ ...current, [key]: value }));\n  }';
+  const componentHelper = '  function addBarcodeFile(input) {\n    const file = input?.[0];\n    if (!file) return;\n    if (!file.type.startsWith("image/")) return setMessage("Barcode upload must be an image.");\n    if (file.size > BARCODE_MAX_SIZE) return setMessage("Barcode image is too large. Use an image smaller than 8 MB.");\n    setBarcodeFile(file);\n    setBarcodeResult(null);\n    setDatakartVerification(null);\n    setVerificationConfidence(null);\n    setMessage("Barcode image ready. It will be decoded in parallel with package OCR when Analyze Images is clicked.");\n  }';
+  if (!source.includes(componentHelperAnchor)) throw new Error("Could not repair barcode helper scope.");
+  source = source.replace(componentHelperAnchor, componentHelperAnchor + "\n\n" + componentHelper);
+}
+
+// Do not let resetAnalysisState discard the selected barcode. resetScan still clears it explicitly.
+source = source.replace('    setAiSuggestedCategory(null);\n    setBarcodeFile(null);\n    setBarcodePreviewUrl("");\n    setBarcodeResult(null);', '    setAiSuggestedCategory(null);\n    setBarcodeResult(null);');
+
+if (!source.includes('setBarcodePreviewUrl("");')) {
+  const resetScanAnchor = '    setEditingImageIndex(null);\n    resetAnalysisState();';
+  if (source.includes(resetScanAnchor)) {
+    source = source.replace(resetScanAnchor, '    setEditingImageIndex(null);\n    setBarcodeFile(null);\n    setBarcodePreviewUrl("");\n    setManualGtin("");\n    resetAnalysisState();');
+  }
+}
+
+if (!source.includes('URL.createObjectURL(barcodeFile)')) {
   const effectAnchor = '  useEffect(() => {\n    if (!analyzing) return undefined;';
-  if (source.includes(effectAnchor) && !source.includes('URL.createObjectURL(barcodeFile)')) {
-    const effect = `  useEffect(() => {\n    if (!barcodeFile) {\n      setBarcodePreviewUrl("");\n      return undefined;\n    }\n    const url = URL.createObjectURL(barcodeFile);\n    setBarcodePreviewUrl(url);\n    return () => URL.revokeObjectURL(url);\n  }, [barcodeFile]);\n\n`;
-    source = source.replace(effectAnchor, effect + effectAnchor);
-  }
-
-  const uploadAnchor = '<p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>';
-  if (source.includes(uploadAnchor) && !source.includes('className="barcode-preview-card"')) {
-    const previewPanel = [
-      '{barcodePreviewUrl && <div className="barcode-preview-card">',
-      '  <div className="barcode-preview-heading"><strong>Uploaded barcode</strong><span>{barcodeFile?.name}</span></div>',
-      '  <img className="barcode-preview-image" src={barcodePreviewUrl} alt="Uploaded barcode for scanning" />',
-      '  <div className="barcode-preview-meta">{barcodeResult?.found ? `Decoded GTIN: ${barcodeResult.gtin}` : "Will be decoded when Analyze Images is clicked."}</div>',
-      '</div>}',
-      '',
-    ].join("\n");
-    source = source.replace(uploadAnchor, uploadAnchor + "\n      " + previewPanel);
-  }
-
-  source += `\n${previewMarker}\n`;
-  console.log("PARAKH barcode upload preview applied to ScanV2.jsx.");
+  const effect = '  useEffect(() => {\n    if (!barcodeFile) {\n      setBarcodePreviewUrl("");\n      return undefined;\n    }\n    const url = URL.createObjectURL(barcodeFile);\n    setBarcodePreviewUrl(url);\n    return () => URL.revokeObjectURL(url);\n  }, [barcodeFile]);\n\n';
+  if (source.includes(effectAnchor)) source = source.replace(effectAnchor, effect + effectAnchor);
 }
+
+if (!source.includes('className="barcode-preview-card"')) {
+  const uploadAnchor = '<p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>';
+  const previewPanel = [
+    '{barcodePreviewUrl && <div className="barcode-preview-card">',
+    '  <div className="barcode-preview-heading"><strong>Uploaded barcode</strong><span>{barcodeFile?.name}</span></div>',
+    '  <img className="barcode-preview-image" src={barcodePreviewUrl} alt="Uploaded barcode for scanning" />',
+    '  <div className="barcode-preview-meta">{barcodeResult?.found ? `Decoded GTIN: ${barcodeResult.gtin}` : "Will be decoded when Analyze Images is clicked."}</div>',
+    '</div>}',
+  ].join("\n");
+  if (source.includes(uploadAnchor)) source = source.replace(uploadAnchor, uploadAnchor + "\n      " + previewPanel);
+}
+
+// Ensure extracted OCR is visible immediately instead of waiting on the Rules Engine.
+if (!source.includes('setForm(formFromOcr(extracted));')) {
+  source = source.replace('      const extracted = info.result;', '      const extracted = info.result;\n      setOcr(extracted);\n      setForm(formFromOcr(extracted));');
+}
+
+// Mark the source after repair so subsequent Vite starts do not duplicate UI patches.
+if (!source.includes(previewMarker)) source += `\n${previewMarker}\n`;
 
 await fs.writeFile(scanPath, source, "utf8");
-console.log("PARAKH frontend scan pipeline verified: local backend OCR request plus parallel barcode/GTIN verification with visible barcode preview.");
+console.log("PARAKH scan pipeline prepared: visible barcode preview, scoped barcode handler, parallel OCR/Gemini + barcode verification, bounded barcode decoding, and immediate extracted fields.");
