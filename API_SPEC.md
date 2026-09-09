@@ -58,22 +58,20 @@ Gemini semantic interpretation / optional semantic consensus
   ↓
 Structured result
   ↓
-DataKart GTIN verification
+Backend DataKart GTIN verification
   ↓
 Evidence confidence fusion
 ```
 
 The response contains a `result` object with extracted fields and metadata, together with provider/timing information and warnings.
 
-## 7. DataKart verification
+## 7. DataKart verification boundary
 
-DataKart is a separate product-reference registry. In the current V1 frontend integration, the API route is:
+DataKart is a separate product-reference registry and is not a PARAKH route group.
 
-`GET /api/datakart/gtin/:gtin`
+For the current V1 architecture, the backend evidence-confidence layer uses the extracted GTIN/barcode to query the DataKart registry directly. The returned registered values are compared against the structured inspection fields before the final result is returned.
 
-The route looks up an active DataKart product by GTIN and returns the registered product reference. A missing record returns `404` and provider/database failures return an appropriate gateway/server error.
-
-DataKart does not evaluate Legal Metrology compliance.
+DataKart does not evaluate Legal Metrology compliance and does not replace the Rules Engine.
 
 ## 8. Evidence confidence response
 
