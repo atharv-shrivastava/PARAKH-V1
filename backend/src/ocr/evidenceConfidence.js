@@ -32,16 +32,6 @@ function numeric(value) {
   return match ? Number(match[0]) : null;
 }
 
-function extractGtinFromRapidEvidence(evidence) {
-  const candidates = [];
-  for (const item of Array.isArray(evidence) ? evidence : []) {
-    const text = String(item?.text ?? "").replace(/[^0-9]/g, "");
-    const matches = text.match(/(?:\d{14}|\d{13}|\d{12}|\d{8})/g) || [];
-    for (const value of matches) candidates.push(value);
-  }
-  return [14, 13, 12, 8].map((length) => candidates.find((value) => value.length === length)).find(Boolean) || null;
-}
-
 function dataKartMatch(fieldKey, currentValue, registeredValue) {
   if (registeredValue == null || String(registeredValue).trim() === "") return null;
   if (currentValue == null || String(currentValue).trim() === "") return false;
@@ -121,11 +111,14 @@ export async function applyEvidenceConfidence(result, options = {}) {
   const barcodeImageProvided = Boolean(options?.barcodeImageProvided);
   const next = { ...result };
   const evidence = Array.isArray(result?.rawOcrEvidence) ? result.rawOcrEvidence : [];
-  const explicitBarcode = String(next.barcode?.value ?? "").replace(/\D/g, "");
-  const rapidBarcode = barcodeImageProvided ? null : extractGtinFromRapidEvidence(evidence);
-  const barcode = explicitBarcode || rapidBarcode || null;
-  console.log(`[DataKart] candidate GTIN explicit=${explicitBarcode || "none"} rapid=${rapidBarcode || "none"} selected=${barcode || "none"}`);
-  if (!explicitBarcode && rapidBarcode) next.barcode = { ...(next.barcode || {}), value: rapidBarcode, raw: next.barcode?.raw || rapidBarcode, evidence: next.barcode?.evidence || rapidBarcode, status: "found", source: "RAPIDOCR_EVIDENCE" };
+
+  // IMPORTANT: DataKart must use the actual barcode scanner result only.
+  // RapidOCR/Gemini may read human-readable barcode digits as evidence, but
+  // those values are never allowed to become the authoritative GTIN.
+  const scannedBarcode = String(next.barcode?.source === "BARCODE_IMAGE_DECODER" ? next.barcode?.value : "")
+    .replace(/\D/g, "");
+  const barcode = scannedBarcode || null;
+  console.log(`[DataKart] barcode source=${barcode ? "BARCODE_SCANNER" : barcodeImageProvided ? "BARCODE_UNREADABLE" : "NONE"} gtin=${barcode || "none"}`);
 
   next.ruleEngineInput = buildRuleEngineInput(result);
   next.majorityVote = next.ruleEngineInput;
@@ -146,8 +139,16 @@ export async function applyEvidenceConfidence(result, options = {}) {
   }
 
   if (!dataKart && !dataKartError) {
-    try { webMrpRange = await searchMrpRange({ productName: result?.productName?.value, brandName: result?.brandName?.value, netQuantity: result?.netQuantity?.value, unit: result?.unit?.value }); }
-    catch (error) { webMrpRange = { status: "UNAVAILABLE", error: error?.message || "Web MRP search failed." }; }
+    try {
+      webMrpRange = await searchMrpRange({
+        productName: result?.productName?.value,
+        brandName: result?.brandName?.value,
+        netQuantity: result?.netQuantity?.value,
+        unit: result?.unit?.value,
+      });
+    } catch (error) {
+      webMrpRange = { status: "UNAVAILABLE", error: error?.message || "Web MRP search failed." };
+    }
   }
 
   const details = {};
@@ -158,10 +159,9 @@ export async function applyEvidenceConfidence(result, options = {}) {
     const registeredValue = dataKart?.[FIELD_MAP[fieldKey]];
     const dataKartMatchState = dataKartMatch(fieldKey, fieldValue.value, registeredValue);
     const datakart = dataKartMatchState == null ? null : dataKartMatchState ? 1 : 0;
-    const datakartScore = datakart ?? 0;
-    const geminiScore = gemini ?? 0;
-    const rapidScore = rapidocr ?? 0;
-    const fused = (WEIGHTS.datakart * datakartScore) + (WEIGHTS.gemini * geminiScore) + (WEIGHTS.rapidocr * rapidScore);
+    const fused = (WEIGHTS.datakart * (datakart ?? 0))
+      + (WEIGHTS.gemini * (gemini ?? 0))
+      + (WEIGHTS.rapidocr * (rapidocr ?? 0));
     const verification = dataKartMatchState === true ? "MATCH" : dataKartMatchState === false ? "MISMATCH" : "UNVERIFIED";
     const state = verification === "MATCH" ? "verified" : verification === "MISMATCH" ? "mismatch" : fused >= 0.375 ? "likely" : "review";
 
@@ -180,12 +180,16 @@ export async function applyEvidenceConfidence(result, options = {}) {
   }
 
   if (next.mrp && webMrpRange?.min != null && webMrpRange?.max != null && next.mrp.value != null) {
-    next.mrp = { ...next.mrp, webMarketRange: webMrpRange, value: `${next.mrp.value} · web MRP range ₹${webMrpRange.min}–₹${webMrpRange.max}` };
+    next.mrp = {
+      ...next.mrp,
+      webMarketRange: webMrpRange,
+      value: `${next.mrp.value} · web MRP range ₹${webMrpRange.min}–₹${webMrpRange.max}`,
+    };
   }
 
   next.evidenceConfidence = {
     weights: { ...WEIGHTS },
-    method: "Fixed evidence voting: DataKart 50% + Gemini 30% + RapidOCR 20%. Missing DataKart evidence contributes 0%; OCR+Gemini therefore max out at 50%. A DataKart contradiction is a 0 vote and is marked MISMATCH. DataKart never determines compliance.",
+    method: "Fixed evidence voting: DataKart 50% + Gemini 30% + RapidOCR 20%. DataKart GTIN lookup uses only the barcode scanner result; OCR/Gemini barcode text is evidence only.",
     dataKartAvailable: Boolean(dataKart),
     dataKartError,
     dataKartMatchedGtin,
@@ -193,10 +197,36 @@ export async function applyEvidenceConfidence(result, options = {}) {
     fields: details,
   };
 
-  const gtin = barcode ? String(barcode).replace(/\D/g, "") : null;
-  const dataKartStatus = dataKart ? "REGISTERED" : dataKartError ? "UNAVAILABLE" : barcodeImageProvided && !barcode ? "BARCODE_UNREADABLE" : barcode ? "NOT_FOUND" : "NO_GTIN";
-  const dataKartMessage = dataKart ? "✓ Product found in DataKart" : dataKartError ? "? DataKart could not be reached" : dataKartStatus === "BARCODE_UNREADABLE" ? "? Barcode could not be decoded" : "✕ Product not found in DataKart";
-  next.dataKartVerification = { status: dataKartStatus, code: dataKartStatus, message: dataKartMessage, gtin, matchedGtin: dataKartMatchedGtin };
-  next.dataKartReference = dataKart ? { gtin, matchedGtin: dataKartMatchedGtin, product: dataKart, note: "Reference verification only. DataKart does not determine compliance." } : null;
+  const gtin = barcode;
+  const dataKartStatus = dataKart
+    ? "REGISTERED"
+    : dataKartError
+      ? "UNAVAILABLE"
+      : barcodeImageProvided && !barcode
+        ? "BARCODE_UNREADABLE"
+        : barcode
+          ? "NOT_FOUND"
+          : "NO_GTIN";
+  const dataKartMessage = dataKart
+    ? "✓ Product found in DataKart"
+    : dataKartError
+      ? "? DataKart could not be reached"
+      : dataKartStatus === "BARCODE_UNREADABLE"
+        ? "? Barcode could not be decoded"
+        : barcode
+          ? "✕ Product not found in DataKart"
+          : "? No barcode scan result";
+
+  next.dataKartVerification = {
+    status: dataKartStatus,
+    code: dataKartStatus,
+    message: dataKartMessage,
+    gtin,
+    matchedGtin: dataKartMatchedGtin,
+  };
+  next.dataKartReference = dataKart
+    ? { gtin, matchedGtin: dataKartMatchedGtin, product: dataKart, note: "Reference verification only. DataKart does not determine compliance." }
+    : null;
+
   return next;
 }
