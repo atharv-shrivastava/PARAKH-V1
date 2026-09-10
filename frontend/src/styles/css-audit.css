@@ -2,45 +2,11 @@
 
 :root{--ui-gap:14px;--ui-control-height:42px;}
 
-/* Prevent flex/grid children from forcing horizontal overflow. */
-.main-content>* ,
-.page-header,
-.section-heading,
-.scan-review,
-.ecommerce-panel,
-.admin-panel,
-.profile-card,
-.shop-card,
-.product-card,
-.category-card,
-.history-item,
-.report-card,
-.status-message{min-width:0;}
-
+.main-content>* ,.page-header,.section-heading,.scan-review,.ecommerce-panel,.admin-panel,.profile-card,.shop-card,.product-card,.category-card,.history-item,.report-card,.status-message{min-width:0;}
 .main-content img{max-width:100%;height:auto;}
 .main-content h1,.main-content h2,.main-content h3,.main-content h4,.main-content p,.main-content span,.main-content strong,.main-content small{overflow-wrap:anywhere;}
 
-/* Shared grids: no squashed columns and no mystery overflow. */
-.ocr-fields-grid,
-.registration-grid,
-.form-grid,
-.rule-form-grid,
-.shop-form-grid,
-.filter-grid,
-.ocr-details-grid,
-.check-grid,
-.product-image-gallery,
-.category-grid,
-.products-grid,
-.shops-grid,
-.card-grid,
-.ecommerce-fields,
-.ecommerce-result-summary,
-.admin-stat-grid,
-.admin-rule-grid,
-.admin-command-grid,
-.admin-ecommerce-grid{min-width:0;}
-
+.ocr-fields-grid,.registration-grid,.form-grid,.rule-form-grid,.shop-form-grid,.filter-grid,.ocr-details-grid,.check-grid,.product-image-gallery,.category-grid,.products-grid,.shops-grid,.card-grid,.ecommerce-fields,.ecommerce-result-summary,.admin-stat-grid,.admin-rule-grid,.admin-command-grid,.admin-ecommerce-grid{min-width:0;}
 .ocr-fields-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}
 .ocr-fields-grid>*{min-width:0;}
 .ocr-edit-field{min-width:0;}
@@ -52,53 +18,44 @@
 .registration-grid .span-2{grid-column:1/-1;}
 .registration-grid input,.registration-grid select,.registration-grid textarea{width:100%;min-width:0;}
 
-/* Shared controls. */
-.scan-review input,.scan-review select,.scan-review textarea,
-.ecommerce-panel input,.ecommerce-panel select,.ecommerce-panel textarea,
-.admin-panel input,.admin-panel select,.admin-panel textarea,
-.profile-card input,.profile-card select,.profile-card textarea{font-size:14px;}
+.scan-review input,.scan-review select,.scan-review textarea,.ecommerce-panel input,.ecommerce-panel select,.ecommerce-panel textarea,.admin-panel input,.admin-panel select,.admin-panel textarea,.profile-card input,.profile-card select,.profile-card textarea{font-size:14px;}
 
-.scan-upload-actions>*{min-width:0;}
+/* Upload controls: labels own the click target; hidden file inputs must never be affected by layout rules. */
+.scan-upload-actions{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;min-width:0;}
+.scan-upload-actions>.scan-file-button{display:inline-flex!important;align-items:center;justify-content:center;position:relative;width:auto;min-width:140px;min-height:42px;margin:0;cursor:pointer;user-select:none;box-sizing:border-box;}
+.scan-upload-actions>.scan-file-button input[type="file"]{display:none!important;width:0!important;height:0!important;position:absolute!important;opacity:0!important;pointer-events:none!important;}
+.scan-upload-actions>button{display:inline-flex;align-items:center;justify-content:center;}
 .scan-upload-actions input[aria-label="Enter GTIN manually"]{flex:1 1 220px;max-width:320px;height:42px;padding:0 12px;}
 .barcode-upload-section{width:100%;max-width:760px;margin:18px auto 0;}
-.barcode-upload-section .scan-upload-actions{align-items:center;}
+.barcode-upload-section>.scan-upload-actions{width:100%;align-items:center;justify-content:center;}
+.barcode-upload-section>.scan-upload-actions>.scan-file-button{min-width:160px;}
 .barcode-preview-card{width:100%;}
 .barcode-preview-image{max-width:100%;max-height:220px;object-fit:contain;}
 .barcode-preview-card button{margin-top:10px;}
 
-/* Comparison fields must remain visible and readable. */
 .barcode-data-comparison{min-width:0;overflow:hidden;}
 .barcode-data-comparison .ocr-fields-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
 .barcode-data-comparison .ocr-edit-field input{display:block;visibility:visible;opacity:1;}
 .barcode-data-comparison .ocr-edit-field{overflow:hidden;}
 .barcode-data-comparison .ocr-edit-field small{white-space:normal;}
-
-/* Status hierarchy. */
 .barcode-data-comparison .ocr-edit-field small[data-comparison-detail]{font-weight:700;}
 .status-message{line-height:1.5;overflow-wrap:anywhere;}
 
-/* Tables and long URLs stay inside their containers. */
 .table-wrap,.data-table,.history-table,.report-table{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;}
 table{min-width:620px;}
 
-/* Buttons never become microscopic beside long labels. */
 button,.primary-button,.secondary-button,.secondary-action,.report-button,.history-clear,.register-product-button{min-height:42px;}
 button:disabled{cursor:not-allowed;transform:none!important;box-shadow:none!important;}
 
-/* Modals and overlays must stay inside the viewport. */
 .camera-overlay,.image-editor-overlay{position:fixed;inset:0;z-index:2000;overflow:auto;}
 .camera-modal,.image-editor-modal{max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);overflow:auto;}
 .camera-video{max-width:100%;height:auto;object-fit:contain;}
 
-/* Navigation text should not collide with icons. */
 .sidebar,.navigation,.sidebar-user{min-width:0;}
 .navigation a{min-width:0;}
 .nav-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
-/* Accessible focus without changing the visual theme. */
 a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:2px solid var(--theme-primary,#2563eb);outline-offset:2px;}
-
-/* Keep decorative effects from creating accidental scrollbars. */
 .dashboard-hero,.dashboard-feature-card,.admin-hero,.scan-area,.scan-review{overflow:hidden;}
 
 @media(max-width:900px){
@@ -111,8 +68,10 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,te
   .section-heading{align-items:flex-start;}
   .section-heading>div{min-width:0;width:100%;}
   .scan-upload-actions{width:100%;}
-  .scan-upload-actions>*{flex:1 1 100%;width:100%;max-width:none;}
-  .scan-upload-actions .scan-file-button{width:100%;text-align:center;}
+  .scan-upload-actions>.scan-file-button,.scan-upload-actions>button{flex:1 1 100%;width:100%;max-width:none;}
+  .scan-upload-actions input[aria-label="Enter GTIN manually"]{flex:1 1 100%;max-width:none;width:100%;}
+  .barcode-upload-section>.scan-upload-actions{display:grid;width:100%;grid-template-columns:minmax(0,1fr);gap:10px;}
+  .barcode-upload-section>.scan-upload-actions>.scan-file-button,.barcode-upload-section>.scan-upload-actions>input[aria-label="Enter GTIN manually"]{width:100%;max-width:none;min-width:0;}
   .barcode-preview-heading{align-items:flex-start;flex-direction:column;gap:4px;}
   .barcode-preview-heading span{max-width:100%;}
   .registration-grid .span-2{grid-column:auto;}
