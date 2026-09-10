@@ -33,13 +33,32 @@
 .barcode-preview-image{max-width:100%;max-height:220px;object-fit:contain;}
 .barcode-preview-card button{margin-top:10px;}
 
-.barcode-data-comparison{min-width:0;overflow:hidden;}
+.barcode-data-comparison{min-width:0;overflow:visible;}
 .barcode-data-comparison .ocr-fields-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
 .barcode-data-comparison .ocr-edit-field input{display:block;visibility:visible;opacity:1;}
-.barcode-data-comparison .ocr-edit-field{overflow:hidden;}
+.barcode-data-comparison .ocr-edit-field{overflow:visible;}
 .barcode-data-comparison .ocr-edit-field small{white-space:normal;}
 .barcode-data-comparison .ocr-edit-field small[data-comparison-detail]{font-weight:700;}
 .status-message{line-height:1.5;overflow-wrap:anywhere;}
+
+/* Rule-review cards must remain fully visible and usable inside scan review. */
+.scan-review:has(.rule-review-panel){overflow:visible;}
+.rule-review-panel{min-width:0;overflow:visible;display:grid;gap:12px;}
+.rule-review-dropdown{display:block;width:100%;min-width:0;overflow:visible;box-sizing:border-box;}
+.rule-review-dropdown summary{display:flex;align-items:flex-start;gap:10px;width:100%;min-width:0;padding:12px 14px;cursor:pointer;list-style:none;box-sizing:border-box;}
+.rule-review-dropdown summary::-webkit-details-marker{display:none;}
+.rule-review-dropdown summary::before{content:"▸";flex:0 0 auto;margin-top:1px;font-size:14px;transition:transform .15s ease;}
+.rule-review-dropdown[open] summary::before{transform:rotate(90deg);}
+.rule-review-dropdown summary>input[type="checkbox"]{flex:0 0 auto;width:18px;height:18px;margin:2px 0 0;}
+.rule-review-dropdown summary>span{display:grid;gap:4px;min-width:0;flex:1 1 auto;}
+.rule-review-dropdown summary strong{display:block;min-width:0;line-height:1.3;}
+.rule-review-dropdown summary small{display:block;min-width:0;line-height:1.4;white-space:normal;}
+.rule-review-dropdown-body{display:grid;gap:10px;padding:0 14px 14px 42px;min-width:0;box-sizing:border-box;}
+.rule-review-dropdown-body p{margin:0;line-height:1.5;white-space:normal;overflow-wrap:anywhere;}
+.rule-review-dropdown-body p strong{display:block;margin-bottom:3px;}
+.rule-reference-preview{display:grid;gap:5px;min-width:0;}
+.rule-reference-preview strong,.rule-reference-preview span{overflow-wrap:anywhere;}
+.manual-violation-panel{min-width:0;overflow:visible;}
 
 .table-wrap,.data-table,.history-table,.report-table{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;}
 table{min-width:620px;}
@@ -56,12 +75,14 @@ button:disabled{cursor:not-allowed;transform:none!important;box-shadow:none!impo
 .nav-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:2px solid var(--theme-primary,#2563eb);outline-offset:2px;}
-.dashboard-hero,.dashboard-feature-card,.admin-hero,.scan-area,.scan-review{overflow:hidden;}
+.dashboard-hero,.dashboard-feature-card,.admin-hero{overflow:hidden;}
+.scan-area{overflow:hidden;}
 
 @media(max-width:900px){
   .ocr-fields-grid,.registration-grid{grid-template-columns:1fr;}
   .barcode-data-comparison .ocr-fields-grid{grid-template-columns:1fr;}
   .main-content{overflow-x:hidden;}
+  .rule-review-dropdown-body{padding-left:28px;}
 }
 
 @media(max-width:768px){
@@ -76,6 +97,8 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,te
   .barcode-preview-heading span{max-width:100%;}
   .registration-grid .span-2{grid-column:auto;}
   .ecommerce-url-form,.ecommerce-edit-actions,.report-actions,.admin-actions{width:100%;}
+  .rule-review-dropdown summary{padding:11px 10px;gap:8px;}
+  .rule-review-dropdown-body{padding:0 10px 12px 32px;}
 }
 
 @media(max-width:480px){
@@ -83,6 +106,8 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,te
   .scan-review{padding:15px!important;}
   .barcode-preview-card{padding:12px;}
   .ocr-fields-grid,.registration-grid{gap:10px;}
+  .rule-review-dropdown summary{align-items:flex-start;}
+  .rule-review-dropdown summary>input[type="checkbox"]{margin-top:3px;}
 }
 
 @media(prefers-reduced-motion:reduce){
