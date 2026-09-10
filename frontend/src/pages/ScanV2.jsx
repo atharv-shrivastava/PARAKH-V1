@@ -137,6 +137,15 @@ function formatElapsed(ms) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+function dataKartFieldLabel(key) {
+  return key.replace(/([A-Z])/g, " $1").replace(/^./, (value) => value.toUpperCase());
+}
+
+function formatReferenceValue(value) {
+  if (value == null || value === "") return "Not registered";
+  return String(value);
+}
+
 export default function ScanV2() {
   const videoRef = useRef(null);
   const controllerRef = useRef(null);
@@ -191,6 +200,13 @@ export default function ScanV2() {
   const violations = compliance?.findings?.filter((finding) => finding.status === "VIOLATION") || [];
   const accepted = compliance?.findings?.filter((finding) => acceptedFindingIds.includes(finding.findingId)) || [];
   const selectedViolations = [...accepted, ...manualViolations];
+  const dataKartVerification = ocr?.dataKartVerification || null;
+  const dataKartProduct = ocr?.dataKartReference?.product || null;
+  const dataKartStatusClass = dataKartVerification?.status === "REGISTERED"
+    ? "match"
+    : dataKartVerification?.status === "NOT_FOUND"
+      ? "mismatch"
+      : "unverified";
 
   function update(key, value) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -484,6 +500,7 @@ export default function ScanV2() {
 
   const editingImage = editingImageIndex == null ? null : images[editingImageIndex];
   const displayedAnalysisTime = analysisDurationMs != null ? formatElapsed(analysisDurationMs) : formatElapsed(analysisElapsedMs);
+  const majorDataKartKeys = ["productName", "brandName", "manufacturer", "manufacturerAddress", "marketer", "marketerAddress", "netQuantity", "unit", "mrp", "currency", "batchNumber", "consumerCarePhone", "consumerCareEmail", "countryOfOrigin", "fssaiLicenseNumber"];
 
   return <div className="scan-page">
     <div className="page-header">
@@ -522,7 +539,28 @@ export default function ScanV2() {
 
     {ocr && <section className="scan-review">
       <div className="section-heading"><div><h2>OCR extraction and rule review</h2><p>Extracted MRP, quantity, dates and other declarations are data. A violation appears only when a legal rule fails or an inspector explicitly records one.</p></div></div>
-      <div className="ocr-fields-grid">{Object.entries(ocr).filter(([key, value]) => key !== "rawText" && key !== "semantic" && key !== "aiSemantic" && key !== "aiSuggestedCategory" && value && typeof value === "object" && ["found", "absent", "unreadable", "ambiguous"].includes(value.status)).map(([key, value]) => <label key={key} className="ocr-edit-field"><strong>{key.replace(/([A-Z])/g, " $1")}</strong><input value={value.value ?? ""} placeholder={value.status === "found" ? "Review value" : value.status} onChange={(event) => updateOcrField(key, event.target.value)} /><small>{value.status === "found" ? `${Math.round(Number(value.confidence || 0) * 100)}% confidence` : value.status}</small></label>)}</div>
+
+      {dataKartVerification && <div className="datakart-verification-panel">
+        <div className="datakart-verification-header"><div><div className="datakart-eyebrow">REFERENCE VERIFICATION</div><h3>DataKart Verification</h3><p>Checks whether the decoded GTIN is registered and compares package-extracted fields with the registered reference. This does not determine compliance.</p></div><span className={`datakart-status-badge ${dataKartStatusClass}`}>{dataKartVerification.status === "REGISTERED" ? "✓ Registered" : dataKartVerification.status === "NOT_FOUND" ? "✕ Not registered" : dataKartVerification.status === "UNAVAILABLE" ? "? Unavailable" : dataKartVerification.status === "NO_GTIN" ? "? No GTIN" : "? Verify"}</span></div>
+        <div className="datakart-meta-row"><span><strong>GTIN</strong>{dataKartVerification.gtin || "Not detected"}</span><span><strong>Source</strong>Mock DataKart registry</span></div>
+        {dataKartProduct && <>
+          <div className="datakart-weights"><strong>Evidence confidence weights</strong><span>DataKart <b>50%</b> · Gemini <b>30%</b> · RapidOCR <b>20%</b></span></div>
+          <div className="datakart-mrp-compare">
+            <div><small>MRP on package</small><strong>{formatReferenceValue(ocr.mrp?.value)}</strong></div>
+            <div className={`datakart-mrp-icon ${ocr.mrp?.dataKart?.state === "MATCH" ? "match" : ocr.mrp?.dataKart?.state === "MISMATCH" ? "mismatch" : "unverified"}`}>{ocr.mrp?.dataKart?.state === "MATCH" ? "✓" : ocr.mrp?.dataKart?.state === "MISMATCH" ? "✕" : "?"}</div>
+            <div><small>MRP in DataKart</small><strong>{dataKartProduct.mrp == null ? "Not registered" : `₹${dataKartProduct.mrp}`}</strong></div>
+            <div className="datakart-mrp-weight"><small>Field confidence</small><strong>{Math.round(Number(ocr.mrp?.evidenceConfidence || ocr.mrp?.confidence || 0) * 100)}%</strong></div>
+          </div>
+          <div className="datakart-reference-grid">{majorDataKartKeys.filter((key) => key !== "mrp" && ocr?.[key] && typeof ocr[key] === "object" && ["found", "absent", "unreadable", "ambiguous"].includes(ocr[key].status)).map((key) => {
+            const field = ocr[key];
+            const verification = field.dataKart?.state;
+            const icon = verification === "MATCH" ? "✓" : verification === "MISMATCH" ? "✕" : "?";
+            return <div className="datakart-reference-row" key={key}><span className="datakart-reference-icon">{icon}</span><div><strong>{dataKartFieldLabel(key)}</strong><small>Package: {formatReferenceValue(field.value)} · DataKart: {formatReferenceValue(field.dataKart?.registeredValue)}</small></div><b>{Math.round(Number(field.evidenceConfidence || field.confidence || 0) * 100)}%</b></div>;
+          })}</div>
+        </>}
+      </div>}
+
+      <div className="ocr-fields-grid">{Object.entries(ocr).filter(([key, value]) => !["rawText", "semantic", "aiSemantic", "aiSuggestedCategory", "dataKartVerification", "dataKartVerificationField", "dataKartReference", "ruleEngineInput", "majorityVote", "evidenceConfidence", "presentationChecks", "suggestedCategory", "candidateEvidence", "semanticReconciliation", "warnings", "unreadableFields"].includes(key) && value && typeof value === "object" && ["found", "absent", "unreadable", "ambiguous"].includes(value.status)).map(([key, value]) => <label key={key} className="ocr-edit-field"><span className="ocr-field-title"><strong>{dataKartFieldLabel(key)}</strong>{value.dataKart?.state && <span className={`ocr-match-icon ${value.dataKart.state === "MATCH" ? "match" : value.dataKart.state === "MISMATCH" ? "mismatch" : "unverified"}`}>{value.dataKart.state === "MATCH" ? "✓" : value.dataKart.state === "MISMATCH" ? "✕" : "?"}</span>}</span><input value={value.value ?? ""} placeholder={value.status === "found" ? "Review value" : value.status} onChange={(event) => updateOcrField(key, event.target.value)} /><small>{value.status === "found" ? `${Math.round(Number(value.confidence || 0) * 100)}% evidence confidence` : value.status}{value.dataKart?.registeredValue != null ? ` · DataKart: ${value.dataKart.registeredValue}` : ""}</small></label>)}</div>
       {complianceError && <div className="status-message">Rules Engine: {complianceError.message || complianceError}</div>}
       {compliance?.summary && <div className="ocr-summary">Rules: {compliance.summary.totalRulesEvaluated} · Passed: {compliance.summary.passed} · Violations: {compliance.summary.violations} · Unable to verify: {compliance.summary.unableToVerify}</div>}
       {violations.length > 0 && <div className="rule-review-panel"><div className="section-heading"><div><h3>Engine violations</h3><p>Every detected violation is shown as a dropdown. The header gives the engine code/category; open it to see the rule statement and exactly what failed.</p></div></div>{violations.map((finding) => { const details = ruleDetails(finding); return <details className="rule-review-dropdown" key={finding.findingId}><summary><input type="checkbox" checked={acceptedFindingIds.includes(finding.findingId)} onChange={(event) => { event.preventDefault(); toggle(finding.findingId); }} onClick={(event) => event.stopPropagation()} /><span><strong>{details.code}</strong><small>Rule {details.number} · {details.title} · {finding.severity || "REVIEW"}</small></span></summary><div className="rule-review-dropdown-body"><p><strong>Rule statement</strong>{details.statement}</p><p><strong>Detected issue</strong>{details.issue}</p><p><strong>Engine category</strong>{details.code} · {details.number}</p></div></details>; })}<div className="ocr-summary">Selected engine violations: <strong>{accepted.length}</strong> of {violations.length}</div></div>}
