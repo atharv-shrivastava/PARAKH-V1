@@ -82,12 +82,31 @@ function findRapidConfidence(field, evidence) {
 async function fetchDataKartByGtin(gtin) {
   const normalizedGtin = String(gtin ?? "").replace(/\D/g, "");
   const baseUrl = String(process.env.DATAKART_API_URL || "http://localhost:4000").replace(/\/$/, "");
-  if (!normalizedGtin) return null;
-  const response = await fetch(`${baseUrl}/api/products/gtin/${encodeURIComponent(normalizedGtin)}`, { signal: AbortSignal.timeout(Number(process.env.DATAKART_TIMEOUT_MS || 4000)) });
-  if (response.status === 404) return null;
+  if (!normalizedGtin) return { product: null, matchedGtin: null };
+
+  const url = `${baseUrl}/api/products/gtin/${encodeURIComponent(normalizedGtin)}`;
+  console.log(`[DataKart] lookup gtin=${normalizedGtin} url=${url}`);
+
+  let response;
+  try {
+    response = await fetch(url, { signal: AbortSignal.timeout(Number(process.env.DATAKART_TIMEOUT_MS || 4000)) });
+  } catch (error) {
+    console.error(`[DataKart] request failed gtin=${normalizedGtin}:`, error?.message || error);
+    throw error;
+  }
+
+  const responseText = await response.text();
+  console.log(`[DataKart] response status=${response.status} gtin=${normalizedGtin} body=${responseText.slice(0, 1000)}`);
+
+  let payload = {};
+  try { payload = JSON.parse(responseText); } catch {}
+
+  if (response.status === 404) return { product: null, matchedGtin: null };
   if (!response.ok) throw new Error(`DataKart API returned HTTP ${response.status}.`);
-  const payload = await response.json().catch(() => ({}));
-  return payload?.found && payload?.product ? payload.product : null;
+  if (!payload?.found || !payload?.product) return { product: null, matchedGtin: null };
+
+  console.log(`[DataKart] MATCH gtin=${normalizedGtin} stored=${payload.matchedGtin || payload.product.gtin || "unknown"}`);
+  return { product: payload.product, matchedGtin: payload.matchedGtin || payload.product.gtin || normalizedGtin };
 }
 
 function buildRuleEngineInput(result) {
@@ -105,18 +124,25 @@ export async function applyEvidenceConfidence(result, options = {}) {
   const explicitBarcode = String(next.barcode?.value ?? "").replace(/\D/g, "");
   const rapidBarcode = barcodeImageProvided ? null : extractGtinFromRapidEvidence(evidence);
   const barcode = explicitBarcode || rapidBarcode || null;
+  console.log(`[DataKart] candidate GTIN explicit=${explicitBarcode || "none"} rapid=${rapidBarcode || "none"} selected=${barcode || "none"}`);
   if (!explicitBarcode && rapidBarcode) next.barcode = { ...(next.barcode || {}), value: rapidBarcode, raw: next.barcode?.raw || rapidBarcode, evidence: next.barcode?.evidence || rapidBarcode, status: "found", source: "RAPIDOCR_EVIDENCE" };
 
   next.ruleEngineInput = buildRuleEngineInput(result);
   next.majorityVote = next.ruleEngineInput;
 
   let dataKart = null;
+  let dataKartMatchedGtin = null;
   let dataKartError = null;
   let webMrpRange = null;
   const geminiAvailable = Boolean(result?.aiSemantic?.providerCount);
   if (barcode) {
-    try { dataKart = await fetchDataKartByGtin(barcode); }
-    catch (error) { dataKartError = error?.message || "DataKart lookup failed."; }
+    try {
+      const lookup = await fetchDataKartByGtin(barcode);
+      dataKart = lookup.product;
+      dataKartMatchedGtin = lookup.matchedGtin;
+    } catch (error) {
+      dataKartError = error?.message || "DataKart lookup failed.";
+    }
   }
 
   if (!dataKart && !dataKartError) {
@@ -132,14 +158,10 @@ export async function applyEvidenceConfidence(result, options = {}) {
     const registeredValue = dataKart?.[FIELD_MAP[fieldKey]];
     const dataKartMatchState = dataKartMatch(fieldKey, fieldValue.value, registeredValue);
     const datakart = dataKartMatchState == null ? null : dataKartMatchState ? 1 : 0;
-
-    // IMPORTANT: weights are fixed. Missing DataKart evidence is a zero vote, not a reason to renormalize.
-    // Thus OCR+Gemini agreement tops out at 50% when DataKart cannot verify the product/field.
     const datakartScore = datakart ?? 0;
     const geminiScore = gemini ?? 0;
     const rapidScore = rapidocr ?? 0;
     const fused = (WEIGHTS.datakart * datakartScore) + (WEIGHTS.gemini * geminiScore) + (WEIGHTS.rapidocr * rapidScore);
-
     const verification = dataKartMatchState === true ? "MATCH" : dataKartMatchState === false ? "MISMATCH" : "UNVERIFIED";
     const state = verification === "MATCH" ? "verified" : verification === "MISMATCH" ? "mismatch" : fused >= 0.375 ? "likely" : "review";
 
@@ -147,12 +169,7 @@ export async function applyEvidenceConfidence(result, options = {}) {
       ...fieldValue,
       confidence: Math.round(fused * 1000) / 1000,
       evidenceConfidence: Math.round(fused * 1000) / 1000,
-      confidenceSources: {
-        datakart: datakart,
-        gemini,
-        rapidocr,
-        weights: { ...WEIGHTS },
-      },
+      confidenceSources: { datakart, gemini, rapidocr, weights: { ...WEIGHTS } },
       verification,
       verificationIcon: verification === "MATCH" ? "✓" : verification === "MISMATCH" ? "✕" : "?",
       confidenceLabel: "Evidence confidence",
@@ -171,6 +188,7 @@ export async function applyEvidenceConfidence(result, options = {}) {
     method: "Fixed evidence voting: DataKart 50% + Gemini 30% + RapidOCR 20%. Missing DataKart evidence contributes 0%; OCR+Gemini therefore max out at 50%. A DataKart contradiction is a 0 vote and is marked MISMATCH. DataKart never determines compliance.",
     dataKartAvailable: Boolean(dataKart),
     dataKartError,
+    dataKartMatchedGtin,
     webMrpRange,
     fields: details,
   };
@@ -178,7 +196,7 @@ export async function applyEvidenceConfidence(result, options = {}) {
   const gtin = barcode ? String(barcode).replace(/\D/g, "") : null;
   const dataKartStatus = dataKart ? "REGISTERED" : dataKartError ? "UNAVAILABLE" : barcodeImageProvided && !barcode ? "BARCODE_UNREADABLE" : barcode ? "NOT_FOUND" : "NO_GTIN";
   const dataKartMessage = dataKart ? "✓ Product found in DataKart" : dataKartError ? "? DataKart could not be reached" : dataKartStatus === "BARCODE_UNREADABLE" ? "? Barcode could not be decoded" : "✕ Product not found in DataKart";
-  next.dataKartVerification = { status: dataKartStatus, code: dataKartStatus, message: dataKartMessage, gtin };
-  next.dataKartReference = dataKart ? { gtin, product: dataKart, note: "Reference verification only. DataKart does not determine compliance." } : null;
+  next.dataKartVerification = { status: dataKartStatus, code: dataKartStatus, message: dataKartMessage, gtin, matchedGtin: dataKartMatchedGtin };
+  next.dataKartReference = dataKart ? { gtin, matchedGtin: dataKartMatchedGtin, product: dataKart, note: "Reference verification only. DataKart does not determine compliance." } : null;
   return next;
 }
