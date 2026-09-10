@@ -1,0 +1,1 @@
+trigger local barcode reader integration
