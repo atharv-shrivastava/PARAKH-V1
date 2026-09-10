@@ -4,6 +4,13 @@ const CACHE_PREFIX = "parakh_api_cache:";
 const CACHE_TTL = 5 * 60 * 1000;
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
+const RULE_ENGINE_FIELDS = [
+  "productName", "brandName", "manufacturer", "manufacturerAddress", "packer", "packerAddress",
+  "marketer", "marketerAddress", "importer", "importerAddress", "netQuantity", "unit", "mrp",
+  "currency", "dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate", "batchNumber",
+  "consumerCarePhone", "consumerCareEmail", "countryOfOrigin", "fssaiLicenseNumber",
+];
+
 export function getToken() { return localStorage.getItem(TOKEN_KEY); }
 export function getUser() { try { return JSON.parse(localStorage.getItem(USER_KEY) || "null"); } catch { return null; } }
 
@@ -93,6 +100,31 @@ async function optimizeOcrBody(body) {
   return optimized;
 }
 
+function sanitizeRulesEngineBody(body) {
+  if (typeof body !== "string") return body;
+  try {
+    const payload = JSON.parse(body);
+    if (!payload?.ocr || typeof payload.ocr !== "object") return body;
+    const source = payload.ocr?.ruleEngineInput || payload.ocr;
+    payload.ocr = Object.fromEntries(RULE_ENGINE_FIELDS.map((key) => {
+      const field = source?.[key];
+      if (!field || typeof field !== "object") return [key, field];
+      return [key, {
+        value: field.value ?? null,
+        raw: field.raw ?? null,
+        evidence: field.evidence ?? null,
+        confidence: field.confidence ?? 0,
+        status: field.status || "absent",
+        ...(field.imageIndex != null ? { imageIndex: field.imageIndex } : {}),
+        ...(field.evidenceIndex != null ? { evidenceIndex: field.evidenceIndex } : {}),
+      }];
+    }));
+    return JSON.stringify(payload);
+  } catch {
+    return body;
+  }
+}
+
 export async function apiFetch(url, options = {}) {
   const rawUrl = String(url);
   let resolvedUrl = rawUrl;
@@ -107,7 +139,9 @@ export async function apiFetch(url, options = {}) {
     const cached = readCached(resolvedUrl);
     if (cached) return cachedResponse(cached);
   }
-  const body = resolvedUrl.includes("/api/ocr/analyze") ? await optimizeOcrBody(options.body) : options.body;
+  const isRulesEngine = resolvedUrl.includes("/api/ocr/evaluate-structured");
+  let body = resolvedUrl.includes("/api/ocr/analyze") ? await optimizeOcrBody(options.body) : options.body;
+  if (isRulesEngine) body = sanitizeRulesEngineBody(body);
   const response = await fetch(resolvedUrl, { ...options, body, headers: { ...authHeaders(Boolean(body && typeof body === "string")), ...(options.headers || {}) } });
   if (response.status === 401) clearSession();
   if (response.ok && !isRead && !isTransientPost(resolvedUrl)) invalidateApiCache();
