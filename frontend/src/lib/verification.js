@@ -93,7 +93,7 @@ export async function lookupDataKart(gtin, signal) {
 
 export function compareWithDataKart(ocrResult, dataKart) {
   const comparisons = {};
-  if (!dataKart?.found || !dataKart.product) return { matchedFields: 0, comparedFields: 0, matchRate: null, comparisons };
+  if (!dataKart?.found || !dataKart.product) return { matchedFields: 0, comparedFields: 0, unknownFields: 0, matchRate: null, comparisons };
   for (const [key, column] of Object.entries(FIELD_MAP)) {
     if (key === "barcode") continue;
     const aiField = ocrResult?.[key];
@@ -109,9 +109,12 @@ export function compareWithDataKart(ocrResult, dataKart) {
     }
   }
   const comparable = Object.values(comparisons).filter((item) => Number.isFinite(item.score));
+  const matchedFields = comparable.filter((item) => item.match).length;
+  const unknownFields = Object.values(comparisons).filter((item) => item.status === "UNKNOWN").length;
   return {
-    matchedFields: comparable.filter((item) => item.match).length,
+    matchedFields,
     comparedFields: comparable.length,
+    unknownFields,
     matchRate: comparable.length ? comparable.reduce((sum, item) => sum + item.score, 0) / comparable.length : null,
     comparisons,
   };
@@ -133,8 +136,21 @@ export function calculateVerificationConfidence({ ocrResult, providerInfo, dataK
     { key: "datakart", label: "DataKart confidence", score: dataKartConfidence, weight: 0.25 },
   ].filter((component) => Number.isFinite(component.score));
   const weightTotal = components.reduce((sum, component) => sum + component.weight, 0);
-  const overall = weightTotal ? components.reduce((sum, component) => sum + component.score * component.weight, 0) / weightTotal : 0;
-  return { overall, percentage: Math.round(overall * 100), label: overall >= 0.85 ? "HIGH" : overall >= 0.65 ? "MEDIUM" : "LOW", components, providerCount: Number(providerInfo?.semantic?.providerCount || providerInfo?.semantic?.providers?.length || 0), disclaimer: "Evidence-confidence score only; it is not a statistical probability of legal compliance." };
+  const weightedOverall = weightTotal ? components.reduce((sum, component) => sum + component.score * component.weight, 0) / weightTotal : 0;
+  const matchedFields = Number(dataKartComparison?.matchedFields || 0);
+  const comparisonAvailable = Boolean(dataKartComparison && Number(dataKartComparison.comparedFields) > 0);
+  const agreementBonus = comparisonAvailable ? Math.min(0.10, matchedFields * 0.02) : 0;
+  const overall = Math.min(1, weightedOverall + agreementBonus);
+  return {
+    overall,
+    percentage: Math.round(overall * 100),
+    label: overall >= 0.85 ? "HIGH" : overall >= 0.65 ? "MEDIUM" : "LOW",
+    components,
+    agreementBonus,
+    matchedFields,
+    providerCount: Number(providerInfo?.semantic?.providerCount || providerInfo?.semantic?.providers?.length || 0),
+    disclaimer: "Evidence-confidence score only; it is not a statistical probability of legal compliance."
+  };
 }
 
 function enhanceComparisonUi() {
