@@ -68,7 +68,7 @@ function extractGtinFromRapidEvidence(evidence) {
     const matches = text.match(/(?:\d{14}|\d{13}|\d{12}|\d{8})/g) || [];
     for (const value of matches) candidates.push(value);
   }
-  const exactLengths = [13, 14, 12, 8];
+  const exactLengths = [14, 13, 12, 8];
   return exactLengths.map((length) => candidates.find((value) => value.length === length)).find(Boolean) || null;
 }
 
@@ -119,18 +119,16 @@ function findRapidConfidence(fieldKey, field, evidence) {
 
 async function fetchDataKartByGtin(gtin) {
   const normalizedGtin = String(gtin ?? "").replace(/\D/g, "");
-  const baseUrl = String(process.env.DATAKART_SUPABASE_URL || "https://iaghrncbfpxpwcdgyuen.supabase.co").replace(/\/$/, "");
-  const apiKey = String(process.env.DATAKART_SUPABASE_KEY || "").trim();
-  if (!normalizedGtin || !apiKey) return null;
+  const baseUrl = String(process.env.DATAKART_API_URL || "http://localhost:4000").replace(/\/$/, "");
+  if (!normalizedGtin) return null;
 
-  const query = new URLSearchParams({ select: "*", gtin: `eq.${normalizedGtin}`, active: "eq.true", limit: "1" });
-  const response = await fetch(`${baseUrl}/rest/v1/products?${query.toString()}`, {
-    headers: { apikey: apiKey, Authorization: `Bearer ${apiKey}` },
+  const response = await fetch(`${baseUrl}/api/products/gtin/${encodeURIComponent(normalizedGtin)}`, {
     signal: AbortSignal.timeout(Number(process.env.DATAKART_TIMEOUT_MS || 4000)),
   });
-  if (!response.ok) return null;
-  const data = await response.json().catch(() => []);
-  return Array.isArray(data) && data.length ? data[0] : null;
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`DataKart API returned HTTP ${response.status}.`);
+  const payload = await response.json().catch(() => ({}));
+  return payload?.found && payload?.product ? payload.product : null;
 }
 
 function buildRuleEngineInput(result) {
@@ -164,11 +162,11 @@ export async function applyEvidenceConfidence(result, options = {}) {
       raw: next.barcode?.raw || rapidBarcode,
       evidence: next.barcode?.evidence || rapidBarcode,
       status: "found",
-      source: "RAPIDOCR_EVIDENCE"
+      source: "RAPIDOCR_EVIDENCE",
     };
   }
 
-  // Capture the consensus/majority-vote package fields before DataKart evidence is attached.
+  // Snapshot package evidence before attaching DataKart reference information.
   next.ruleEngineInput = buildRuleEngineInput(result);
   next.majorityVote = next.ruleEngineInput;
 
@@ -252,8 +250,6 @@ export async function applyEvidenceConfidence(result, options = {}) {
     details[fieldKey] = next[fieldKey].confidenceSources;
   }
 
-  // Keep the user-visible extracted value intact when DataKart is found. When it is not found,
-  // add the indicative web price range to the displayed MRP field without changing rule input.
   if (next.mrp && webMrpRange?.min != null && webMrpRange?.max != null && next.mrp.value != null) {
     next.mrp = {
       ...next.mrp,
@@ -264,7 +260,7 @@ export async function applyEvidenceConfidence(result, options = {}) {
 
   next.evidenceConfidence = {
     weights: { ...WEIGHTS },
-    method: "50% DataKart + 30% Gemini + 20% RapidOCR; unavailable sources are removed and remaining weights are renormalized.",
+    method: "Evidence confidence only: 50% DataKart reference match + 30% Gemini + 20% RapidOCR; unavailable sources are removed and remaining weights are renormalized. DataKart never determines compliance.",
     dataKartAvailable: Boolean(dataKart),
     dataKartError,
     webMrpRange,
@@ -296,13 +292,13 @@ export async function applyEvidenceConfidence(result, options = {}) {
     gtin,
   };
 
-  next.dataKartVerificationField = {
-    value: gtin ? `${dataKartMessage} · GTIN ${gtin}` : dataKartMessage,
-    raw: dataKartMessage,
-    confidence: dataKart ? 1 : 0,
-    status: "found",
-    source: "DATAKART_MOCK_REGISTRY",
-  };
+  next.dataKartReference = dataKart
+    ? {
+        gtin,
+        product: dataKart,
+        note: "Reference verification only. DataKart does not determine compliance.",
+      }
+    : null;
 
-  return { dataKartVerificationField: next.dataKartVerificationField, ...next };
+  return next;
 }
