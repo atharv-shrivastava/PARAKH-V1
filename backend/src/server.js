@@ -12,7 +12,6 @@ import analyticsRouter from "./routes/analytics.js";
 import fastOcrRouter from "./ocr/fastRoutes.js";
 import ocrRouter from "./ocr/routes.js";
 import ecommerceOcrRouter from "./routes/ecommerceOcr.js";
-import { applyEvidenceConfidence } from "./ocr/evidenceConfidence.js";
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -30,26 +29,9 @@ app.use("/api/analytics", analyticsRouter);
 app.use("/api/translate", translateRouter);
 app.use("/api/products/ecommerce-ocr", ecommerceOcrRouter);
 
-// Fuse RapidOCR + Gemini + DataKart after the OCR route has produced
-// a structured result. DataKart is the strongest verification signal.
-app.use("/api/ocr", (req, res, next) => {
-  const originalJson = res.json.bind(res);
-  res.json = (payload) => {
-    if (req.path === "/analyze" && payload?.result) {
-      void applyEvidenceConfidence(payload.result)
-        .then((result) => originalJson({ ...payload, result }))
-        .catch((error) => {
-          console.error("[evidence-confidence]", error);
-          originalJson(payload);
-        });
-      return res;
-    }
-    return originalJson(payload);
-  };
-  next();
-});
-
-// Production OCR uses RapidOCR + semantic verification.
+// Production OCR uses RapidOCR + semantic verification + DataKart.
+// The OCR route applies evidence confidence exactly once, preserving the
+// scanner-provided barcode instead of reprocessing it through OCR evidence.
 app.use("/api/ocr", fastOcrRouter);
 // Structured compliance evaluation is kept separate from OCR extraction.
 app.use("/api/ocr", ocrRouter);
