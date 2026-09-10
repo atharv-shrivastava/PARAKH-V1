@@ -59,43 +59,101 @@ function fieldScore(aiField, referenceValue, key) {
   return left === right ? 1 : left.includes(right) || right.includes(left) ? 0.85 : 0;
 }
 
-export async function scanBarcodeImage(file, timeoutMs = 3500) {
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not read barcode image.")); };
+    image.src = url;
+  });
+}
+
+function canvasVariant(image, { rotate = 0, scale = 1, grayscale = false, threshold = false, crop = 1 }) {
+  const radians = (rotate * Math.PI) / 180;
+  const sin = Math.abs(Math.sin(radians)), cos = Math.abs(Math.cos(radians));
+  const baseWidth = Math.max(1, Math.round(image.naturalWidth * crop));
+  const baseHeight = Math.max(1, Math.round(image.naturalHeight * crop));
+  const sourceX = Math.max(0, Math.round((image.naturalWidth - baseWidth) / 2));
+  const sourceY = Math.max(0, Math.round((image.naturalHeight - baseHeight) / 2));
+  const width = Math.max(1, Math.round((baseWidth * cos + baseHeight * sin) * scale));
+  const height = Math.max(1, Math.round((baseWidth * sin + baseHeight * cos) * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("Could not prepare barcode image.");
+  ctx.translate(width / 2, height / 2);
+  ctx.rotate(radians);
+  ctx.drawImage(image, sourceX, sourceY, baseWidth, baseHeight, -baseWidth * scale / 2, -baseHeight * scale / 2, baseWidth * scale, baseHeight * scale);
+  if (grayscale || threshold) {
+    const data = ctx.getImageData(0, 0, width, height);
+    for (let i = 0; i < data.data.length; i += 4) {
+      const luminance = Math.round(0.299 * data.data[i] + 0.587 * data.data[i + 1] + 0.114 * data.data[i + 2]);
+      const value = threshold ? (luminance > 150 ? 255 : 0) : luminance;
+      data.data[i] = value; data.data[i + 1] = value; data.data[i + 2] = value;
+    }
+    ctx.putImageData(data, 0, 0);
+  }
+  return canvas.toDataURL("image/png");
+}
+
+async function decodeUrl(reader, url, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let controls = null;
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      controls?.stop?.();
+      callback();
+    };
+    const timer = window.setTimeout(() => finish(() => reject(new Error("Barcode decode timeout."))), timeoutMs);
+    try {
+      controls = reader.decodeFromImageUrl(url, (decoded, error, scanControls) => {
+        controls = scanControls || controls;
+        if (decoded) finish(() => resolve(decoded));
+        else if (error && !["NotFoundException", "ChecksumException", "FormatException"].includes(String(error.name || ""))) finish(() => reject(error));
+      });
+    } catch (error) {
+      finish(() => reject(error));
+    }
+  });
+}
+
+export async function scanBarcodeImage(file, timeoutMs = 7000) {
   if (!file) return { attempted: false, found: false, value: null, format: null, confidence: 0, error: null };
-  let url = null;
-  let controls = null;
   try {
     const reader = new BrowserMultiFormatReader();
-    url = URL.createObjectURL(file);
-    const result = await new Promise((resolve, reject) => {
-      let settled = false;
-      const finish = (callback) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timer);
-        controls?.stop?.();
-        callback();
-      };
-      const timer = window.setTimeout(() => finish(() => reject(new Error("Barcode decode timeout."))), timeoutMs);
+    const image = await loadImage(file);
+    const variants = [
+      { rotate: 0, scale: 1.5, crop: 1 },
+      { rotate: 0, scale: 2, crop: 1 },
+      { rotate: 90, scale: 1.5, crop: 1 },
+      { rotate: 270, scale: 1.5, crop: 1 },
+      { rotate: 0, scale: 2, crop: 0.9, grayscale: true },
+      { rotate: 0, scale: 2, crop: 0.9, threshold: true },
+    ];
+    const perVariant = Math.max(700, Math.floor(timeoutMs / variants.length));
+    let lastError = null;
+    for (const variant of variants) {
       try {
-        controls = reader.decodeFromImageUrl(url, (decoded, error, scanControls) => {
-          controls = scanControls || controls;
-          if (decoded) finish(() => resolve(decoded));
-          else if (error && !["NotFoundException", "ChecksumException", "FormatException"].includes(String(error.name || ""))) finish(() => reject(error));
-        });
+        const url = canvasVariant(image, variant);
+        const result = await decodeUrl(reader, url, perVariant);
+        const value = String(result?.getText?.() || "").replace(/\s+/g, "").trim();
+        const format = result?.getBarcodeFormat?.() || null;
+        const isNumericGtin = /^\d{8,14}$/.test(value);
+        const found = isNumericGtin && gtinChecksum(value);
+        if (found) return { attempted: true, found: true, value, format: format ? String(format) : null, confidence: 0.99, error: null };
+        lastError = isNumericGtin ? "A barcode was detected, but its GTIN check digit is invalid." : "A barcode was detected, but it did not contain a valid numeric GTIN.";
       } catch (error) {
-        finish(() => reject(error));
+        lastError = error;
       }
-    });
-    const value = String(result?.getText?.() || "").replace(/\s+/g, "").trim();
-    const format = result?.getBarcodeFormat?.() || null;
-    const isNumericGtin = /^\d{8,14}$/.test(value);
-    const found = isNumericGtin && gtinChecksum(value);
-    return { attempted: true, found, value: found ? value : null, format: format ? String(format) : null, confidence: found ? 0.99 : 0, error: found ? null : isNumericGtin ? "A barcode was detected, but its GTIN check digit is invalid." : "A barcode was detected, but it did not contain a valid numeric GTIN." };
+    }
+    return { attempted: true, found: false, value: null, format: null, confidence: 0, error: lastError?.message === "Barcode decode timeout." ? "Barcode was not decoded from this image after multiple scan passes." : lastError?.message || "Barcode decoding failed." };
   } catch (error) {
-    return { attempted: true, found: false, value: null, format: null, confidence: 0, error: error?.message === "Barcode decode timeout." ? "Barcode was not decoded from this image." : error?.message || "Barcode decoding failed." };
-  } finally {
-    controls?.stop?.();
-    if (url) URL.revokeObjectURL(url);
+    return { attempted: true, found: false, value: null, format: null, confidence: 0, error: error?.message || "Barcode decoding failed." };
   }
 }
 
@@ -134,13 +192,7 @@ export function compareWithDataKart(ocrResult, dataKart) {
   const comparable = Object.values(comparisons).filter((item) => Number.isFinite(item.score));
   const matchedFields = comparable.filter((item) => item.match).length;
   const unknownFields = Object.values(comparisons).filter((item) => item.status === "UNKNOWN").length;
-  return {
-    matchedFields,
-    comparedFields: comparable.length,
-    unknownFields,
-    matchRate: comparable.length ? comparable.reduce((sum, item) => sum + item.score, 0) / comparable.length : null,
-    comparisons,
-  };
+  return { matchedFields, comparedFields: comparable.length, unknownFields, matchRate: comparable.length ? comparable.reduce((sum, item) => sum + item.score, 0) / comparable.length : null, comparisons };
 }
 
 function average(values) {
@@ -164,14 +216,5 @@ export function calculateVerificationConfidence({ ocrResult, providerInfo, dataK
   const comparisonAvailable = Boolean(dataKartComparison && Number(dataKartComparison.comparedFields) > 0);
   const agreementBonus = comparisonAvailable ? Math.min(0.10, matchedFields * 0.02) : 0;
   const overall = Math.min(1, weightedOverall + agreementBonus);
-  return {
-    overall,
-    percentage: Math.round(overall * 100),
-    label: overall >= 0.85 ? "HIGH" : overall >= 0.65 ? "MEDIUM" : "LOW",
-    components,
-    agreementBonus,
-    matchedFields,
-    providerCount: Number(providerInfo?.semantic?.providerCount || providerInfo?.semantic?.providers?.length || 0),
-    disclaimer: "Evidence-confidence score only; it is not a statistical probability of legal compliance."
-  };
+  return { overall, percentage: Math.round(overall * 100), label: overall >= 0.85 ? "HIGH" : overall >= 0.65 ? "MEDIUM" : "LOW", components, agreementBonus, matchedFields, providerCount: Number(providerInfo?.semantic?.providerCount || providerInfo?.semantic?.providers?.length || 0), disclaimer: "Evidence-confidence score only; it is not a statistical probability of legal compliance." };
 }
