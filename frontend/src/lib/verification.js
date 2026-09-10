@@ -103,11 +103,9 @@ export function compareWithDataKart(ocrResult, dataKart) {
     const hasReferenceValue = referenceValue != null && String(referenceValue).trim() !== "";
     if (hasAiValue && hasReferenceValue) {
       const status = score >= 0.85 ? "MATCH" : "MISMATCH";
-      comparisons[key] = { aiValue: `${STATUS_MARKERS[status]}${aiField.value}`, referenceValue, score, match: status === "MATCH", status };
+      comparisons[key] = { aiValue: `${STATUS_MARKERS[status]}${aiField.value}`, rawAiValue: aiField.value, referenceValue, score, match: status === "MATCH", status };
     } else if (hasAiValue && !hasReferenceValue) {
-      comparisons[key] = { aiValue: `${STATUS_MARKERS.UNKNOWN}${aiField.value}`, referenceValue: null, score: null, match: null, status: "UNKNOWN" };
-    } else if (!hasAiValue && hasReferenceValue) {
-      comparisons[key] = { aiValue: `${STATUS_MARKERS.UNKNOWN}`, referenceValue, score: null, match: null, status: "UNKNOWN" };
+      comparisons[key] = { aiValue: `${STATUS_MARKERS.UNKNOWN}${aiField.value}`, rawAiValue: aiField.value, referenceValue: null, score: null, match: null, status: "UNKNOWN" };
     }
   }
   const comparable = Object.values(comparisons).filter((item) => Number.isFinite(item.score));
@@ -140,8 +138,7 @@ export function calculateVerificationConfidence({ ocrResult, providerInfo, dataK
 }
 
 function enhanceComparisonUi() {
-  const panels = document.querySelectorAll(".barcode-data-comparison");
-  panels.forEach((panel) => {
+  document.querySelectorAll(".barcode-data-comparison").forEach((panel) => {
     panel.querySelectorAll(".ocr-edit-field").forEach((field) => {
       const input = field.querySelector("input");
       const small = field.querySelector("small");
@@ -150,38 +147,21 @@ function enhanceComparisonUi() {
       const status = raw.startsWith(STATUS_MARKERS.MATCH) ? "MATCH" : raw.startsWith(STATUS_MARKERS.MISMATCH) ? "MISMATCH" : raw.startsWith(STATUS_MARKERS.UNKNOWN) ? "UNKNOWN" : null;
       if (!status) return;
       const cleanValue = raw.replace(/^[\u2060\u2061\u2062]/, "");
-      if (input.value !== cleanValue) input.value = cleanValue;
-      const percentMatch = String(small.textContent || "").match(/(\d+(?:\.\d+)?)%/);
-      if (status === "UNKNOWN") {
-        small.textContent = "? Not scored";
-      } else {
-        small.textContent = `${status === "MATCH" ? "✓ MATCH" : "✕ MISMATCH"}${percentMatch ? ` · ${percentMatch[1]}%` : ""}`;
-      }
+      input.value = cleanValue;
+      small.textContent = status === "UNKNOWN" ? "? Not scored" : `${status === "MATCH" ? "✓ MATCH" : "✕ MISMATCH"}${small.textContent.match(/(\d+(?:\.\d+)?)%/) ? ` · ${small.textContent.match(/(\d+(?:\.\d+)?)%/)[1]}%` : ""}`;
     });
-    const scores = [...panel.querySelectorAll("small")]
-      .map((node) => Number(String(node.textContent).match(/(\d+(?:\.\d+)?)%/)?.[1]))
-      .filter(Number.isFinite);
+    const scores = [...panel.querySelectorAll("small")].map((node) => Number(String(node.textContent).match(/(\d+(?:\.\d+)?)%/)?.[1])).filter(Number.isFinite);
     if (scores.length) {
       const confidence = Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
-      const statusGrid = panel.closest(".barcode-result-panel")?.querySelector(".ocr-status-grid");
-      const dataKartSpan = statusGrid?.children?.[2]?.querySelector("span");
-      if (dataKartSpan && /Reference found/.test(dataKartSpan.textContent || "")) dataKartSpan.textContent = `Reference found · ${confidence}% confidence`;
+      const dataKartSpan = panel.closest(".barcode-result-panel")?.querySelector(".ocr-status-grid")?.children?.[2]?.querySelector("span");
+      if (dataKartSpan) dataKartSpan.textContent = `Reference found · ${confidence}% confidence`;
     }
-  });
-
-  document.querySelectorAll(".barcode-result-panel").forEach((panel) => {
-    const comparison = [...panel.querySelectorAll(".barcode-data-comparison")].find((node) => node.querySelector("h3")?.textContent?.includes("Barcode vs extracted data"));
-    const matchSpan = [...(comparison?.querySelectorAll(".ocr-status-grid div span") || [])].find((span) => span.parentElement?.querySelector("strong")?.textContent === "Match");
-    if (!matchSpan) return;
-    if (/MATCH/.test(matchSpan.textContent || "") && !/MISMATCH/.test(matchSpan.textContent || "")) matchSpan.textContent = "✓ MATCH · additional evidence";
-    else if (/MISMATCH/.test(matchSpan.textContent || "")) matchSpan.textContent = "✕ MISMATCH";
-    else matchSpan.textContent = "? No comparable OCR barcode";
   });
 }
 
 if (typeof window !== "undefined" && !window.__PARAKH_COMPARISON_UI__) {
   window.__PARAKH_COMPARISON_UI__ = true;
   const observer = new MutationObserver(enhanceComparisonUi);
-  window.setTimeout(() => observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true }), 0);
+  window.setTimeout(() => observer.observe(document.documentElement, { childList: true, subtree: true }), 0);
   window.setTimeout(enhanceComparisonUi, 50);
 }
