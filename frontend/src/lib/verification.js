@@ -38,18 +38,18 @@ function normalize(value) {
     .trim();
 }
 
-const GENERIC_PRODUCT_DESCRIPTORS = new Set([
-  "toothpaste", "tooth paste", "shampoo", "soap", "face wash", "facewash", "biscuit",
-  "biscuits", "juice", "flour", "detergent", "oil", "cream", "lotion", "cleaner",
-  "conditioner", "gel", "powder", "tea", "coffee", "milk", "drink", "water", "snack",
-]);
+const GENERIC_PRODUCT_DESCRIPTORS = [
+  "tooth paste", "toothpaste", "shampoo", "soap", "face wash", "facewash", "biscuit", "biscuits",
+  "juice", "flour", "detergent", "oil", "cream", "lotion", "cleaner", "conditioner", "gel", "powder",
+  "tea", "coffee", "milk", "drink", "water", "snack", "tooth gel", "mouthwash",
+];
 
 function productIdentity(value) {
-  return normalize(value)
-    .split(" ")
-    .filter(Boolean)
-    .filter((token) => !GENERIC_PRODUCT_DESCRIPTORS.has(token))
-    .join(" ");
+  let text = normalize(value);
+  for (const descriptor of GENERIC_PRODUCT_DESCRIPTORS) {
+    text = text.replace(new RegExp(`\\b${descriptor.replace(/\s+/g, "\\\\s+")}\\b`, "gi"), " ");
+  }
+  return text.replace(/\s+/g, " ").trim();
 }
 
 function numeric(value) {
@@ -83,11 +83,10 @@ function fieldScore(aiField, referenceValue, key) {
     const right = productIdentity(referenceValue);
     if (!left || !right) return 0;
     if (left === right) return 1;
+    if (left.includes(right) || right.includes(left)) return 0.98;
     const leftNorm = normalize(aiField.value);
     const rightNorm = normalize(referenceValue);
-    if (leftNorm === rightNorm) return 1;
-    if (left.includes(right) || right.includes(left)) return 0.98;
-    return 0;
+    return leftNorm === rightNorm ? 1 : 0;
   }
   const left = normalize(aiField.value);
   const right = normalize(referenceValue);
@@ -103,8 +102,8 @@ export async function scanBarcodeImage(file) {
     const result = await reader.decodeFromImageUrl(url);
     const value = String(result?.getText?.() || "").replace(/\s+/g, "").trim();
     const format = result?.getBarcodeFormat?.() || null;
-    const numeric = /^\d{8,14}$/.test(value);
-    const checksumValid = numeric && gtinChecksum(value);
+    const isNumericGtin = /^\d{8,14}$/.test(value);
+    const checksumValid = isNumericGtin && gtinChecksum(value);
     const found = checksumValid;
     return {
       attempted: true,
@@ -114,7 +113,7 @@ export async function scanBarcodeImage(file) {
       confidence: found ? 0.99 : 0,
       error: found
         ? null
-        : numeric
+        : isNumericGtin
           ? "A barcode was detected, but its GTIN check digit is invalid."
           : "A barcode was detected, but it did not contain a valid numeric GTIN.",
     };
@@ -158,17 +157,15 @@ function average(values) {
   return usable.length ? usable.reduce((sum, value) => sum + value, 0) / usable.length : null;
 }
 
-export function calculateVerificationConfidence({ ocrResult, providerInfo, barcodeResult, dataKartComparison }) {
+export function calculateVerificationConfidence({ ocrResult, providerInfo, dataKartComparison }) {
   const ocrConfidence = average((ocrResult?.rawOcrEvidence || []).map((item) => Number(item.confidence)).filter(Number.isFinite));
   const semanticFields = Object.values(ocrResult || {}).filter((field) => field && typeof field === "object" && "confidence" in field);
   const semanticConfidence = average(semanticFields.map((field) => Number(field.confidence)).filter(Number.isFinite));
-  const barcodeConfidence = barcodeResult?.found ? Number(barcodeResult.confidence || 0.99) : null;
   const dataKartConfidence = Number.isFinite(Number(dataKartComparison?.matchRate)) ? Number(dataKartComparison.matchRate) : null;
   const components = [
-    { key: "barcode", label: "Barcode", score: barcodeConfidence, weight: 0.25 },
-    { key: "ocr", label: "OCR", score: ocrConfidence, weight: 0.25 },
-    { key: "gemini", label: "Gemini semantic", score: semanticConfidence, weight: 0.30 },
-    { key: "datakart", label: "DataKart field match", score: dataKartConfidence, weight: 0.20 },
+    { key: "ocr", label: "OCR", score: ocrConfidence, weight: 0.35 },
+    { key: "gemini", label: "Gemini semantic", score: semanticConfidence, weight: 0.40 },
+    { key: "datakart", label: "DataKart field match", score: dataKartConfidence, weight: 0.25 },
   ].filter((component) => Number.isFinite(component.score));
   const weightTotal = components.reduce((sum, component) => sum + component.weight, 0);
   const overall = weightTotal ? components.reduce((sum, component) => sum + component.score * component.weight, 0) / weightTotal : 0;
