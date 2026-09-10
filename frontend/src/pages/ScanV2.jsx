@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../lib/auth";
+import { scanBarcodeImage, lookupDataKart, compareWithDataKart, calculateVerificationConfidence } from "../lib/verification";
 import ScanVisualCheck from "../components/ScanVisualCheck";
 import ImageEditor from "../components/ImageEditor";
 import "../styles/scan.css";
@@ -8,6 +9,8 @@ import "../styles/ai-category.css";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 const OCR_URL = API_URL.replace(/\/api\/?$/, "");
 const MAX_IMAGES = 4;
+const BARCODE_MAX_SIZE = 8 * 1024 * 1024;
+const BARCODE_TIMEOUT_MS = 4000;
 const OCR_FIELDS = ["productName", "brandName", "manufacturer", "manufacturerAddress", "marketer", "packer", "packerAddress", "importer", "importerAddress", "netQuantity", "unit", "mrp", "currency", "dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate", "batchNumber", "consumerCarePhone", "consumerCareEmail", "countryOfOrigin", "fssaiLicenseNumber", "barcode"];
 const EMPTY_FORM = { brandName: "", productName: "", description: "", netQuantity: "", unit: "", mrp: "", barcode: "", shopName: "", shopAddress: "", shopCity: "", shopState: "", notes: "" };
 
@@ -130,20 +133,19 @@ async function runOcr(files, signal, categoryOptions = []) {
   };
 }
 
+async function resolveGtin(barcodeFile, manualValue) {
+  const manual = String(manualValue || "").replace(/\s+/g, "").trim();
+  if (!barcodeFile) return { attempted: Boolean(manual), found: Boolean(manual), value: manual || null, gtin: manual || null, format: manual ? "MANUAL_GTIN" : null, confidence: manual ? 0.90 : 0, source: manual ? "MANUAL_GTIN" : "NONE", error: null };
+  const timeout = new Promise((resolve) => window.setTimeout(() => resolve({ attempted: true, found: false, value: null, gtin: manual || null, format: null, confidence: 0, source: manual ? "MANUAL_GTIN_FALLBACK" : "BARCODE_TIMEOUT", error: "Barcode decoding timed out." }), BARCODE_TIMEOUT_MS));
+  const decode = scanBarcodeImage(barcodeFile).then((decoded) => ({ ...decoded, gtin: decoded.found ? decoded.value : manual || null, source: decoded.found ? "BARCODE_SCAN" : manual ? "MANUAL_GTIN_FALLBACK" : "NONE" }));
+  return Promise.race([decode, timeout]);
+}
+
 function formatElapsed(ms) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function dataKartFieldLabel(key) {
-  return key.replace(/([A-Z])/g, " $1").replace(/^./, (value) => value.toUpperCase());
-}
-
-function formatReferenceValue(value) {
-  if (value == null || value === "") return "Not registered";
-  return String(value);
 }
 
 export default function ScanV2() {
@@ -172,6 +174,12 @@ export default function ScanV2() {
   const [useExtractedData, setUseExtractedData] = useState(false);
   const [editingImageIndex, setEditingImageIndex] = useState(null);
   const [message, setMessage] = useState("");
+  const [barcodeFile, setBarcodeFile] = useState(null);
+  const [barcodePreviewUrl, setBarcodePreviewUrl] = useState("");
+  const [manualGtin, setManualGtin] = useState("");
+  const [barcodeResult, setBarcodeResult] = useState(null);
+  const [datakartVerification, setDatakartVerification] = useState(null);
+  const [verificationConfidence, setVerificationConfidence] = useState(null);
 
   useEffect(() => {
     apiFetch(`${API_URL}/categories/tree/all?sourceType=OFFLINE`)
@@ -200,13 +208,6 @@ export default function ScanV2() {
   const violations = compliance?.findings?.filter((finding) => finding.status === "VIOLATION") || [];
   const accepted = compliance?.findings?.filter((finding) => acceptedFindingIds.includes(finding.findingId)) || [];
   const selectedViolations = [...accepted, ...manualViolations];
-  const dataKartVerification = ocr?.dataKartVerification || null;
-  const dataKartProduct = ocr?.dataKartReference?.product || null;
-  const dataKartStatusClass = dataKartVerification?.status === "REGISTERED"
-    ? "match"
-    : dataKartVerification?.status === "NOT_FOUND"
-      ? "mismatch"
-      : "unverified";
 
   function update(key, value) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -267,6 +268,19 @@ export default function ScanV2() {
     setMessage("Edited image applied. Analyze again to use the corrected orientation/crop.");
   }
 
+  function addBarcodeFile(input) {
+    const file = input?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return setMessage("Barcode upload must be an image.");
+    if (file.size > BARCODE_MAX_SIZE) return setMessage("Barcode image is too large. Use an image smaller than 8 MB.");
+    setBarcodeFile(file);
+    setBarcodePreviewUrl(URL.createObjectURL(file));
+    setBarcodeResult(null);
+    setDatakartVerification(null);
+    setVerificationConfidence(null);
+    setMessage("Barcode image ready. It will be decoded with OCR when Analyze Images is clicked.");
+  }
+
   async function openCamera() {
     setCameraError("");
     if (!navigator.mediaDevices?.getUserMedia) return setCameraError("Camera access is unavailable. Use Upload Images instead.");
@@ -318,73 +332,55 @@ export default function ScanV2() {
     if (!images.length) return setMessage("Add at least one package image first.");
     setAnalyzing(true);
     setAnalysisDurationMs(null);
-    setMessage("Running RapidOCR + AI semantic verification...");
+    setMessage(barcodeFile || manualGtin.trim() ? "Running barcode, RapidOCR and Gemini in parallel..." : "Running RapidOCR + AI semantic verification...");
     const controller = new AbortController();
     controllerRef.current?.abort();
     controllerRef.current = controller;
     try {
-      const categoryOptions = finalCategories.map((category) => ({
-        id: category.id,
-        name: category.name,
-        path: category.path.map((item) => item.name).join(" → "),
-      }));
-      const info = await runOcr(images.map((item) => item.file), controller.signal, categoryOptions);
+      const categoryOptions = finalCategories.map((category) => ({ id: category.id, name: category.name, path: category.path.map((item) => item.name).join(" → ") }));
+      const [ocrOutcome, barcodeOutcome] = await Promise.allSettled([
+        runOcr(images.map((item) => item.file), controller.signal, categoryOptions),
+        resolveGtin(barcodeFile, manualGtin),
+      ]);
+      if (ocrOutcome.status !== "fulfilled") throw ocrOutcome.reason;
+      const info = ocrOutcome.value;
+      const identifier = barcodeOutcome.status === "fulfilled" ? barcodeOutcome.value : { attempted: Boolean(barcodeFile || manualGtin.trim()), found: false, value: null, gtin: manualGtin.trim() || null, confidence: 0, source: "NONE", error: barcodeOutcome.reason?.message || "Barcode verification failed." };
       const extracted = info.result;
+      const gtin = identifier.gtin || manualGtin.trim();
       window.sessionStorage.setItem("parakhDeclarationEvidence", JSON.stringify(extracted.declarationEvidence || []));
       window.dispatchEvent(new CustomEvent("parakh:declaration-evidence", { detail: extracted.declarationEvidence || [] }));
-      const visualInspection = readVisualInspection();
-      setProviderInfo(info);
-      setAiSuggestedCategory(info.aiSuggestedCategory || null);
-      const providerMessage = info.aiSemanticEnabled
-        ? "RapidOCR + AI semantic verification completed. Running Rules Engine..."
-        : "RapidOCR + deterministic mapping completed. Running Rules Engine...";
-      setMessage(providerMessage);
-      const response = await apiFetch(`${OCR_URL}/api/ocr/evaluate-structured`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ocr: extracted,
-          visualFlags: visualInspection ? {
-            readability: visualInspection.readability,
-            readable: visualInspection.readable,
-            textDetected: visualInspection.textDetected,
-            placementReview: visualInspection.placementReview,
-            fontSizeCalibrated: visualInspection.fontSizeCalibrated,
-            estimatedTextHeightMm: visualInspection.estimatedTextHeightMm,
-            declarationCoverageScreened: visualInspection.declarationCoverageScreened,
-          } : {},
-          inspectionId: crypto.randomUUID(),
-          productId: crypto.randomUUID(),
-          inspectionDate: new Date().toISOString().slice(0, 10),
-          context: "physical_package",
-          commodityCategory: "packaged commodity",
-          consumerType: "general",
-          isImported: false,
-          packageType: "retail",
-        }),
-        signal: controller.signal,
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || "Rules Engine evaluation failed");
       setOcr(extracted);
-      setCompliance(data.compliance || null);
-      setComplianceError(data.complianceError || null);
-      setAcceptedFindingIds((data.compliance?.findings || []).filter((finding) => finding.status === "VIOLATION").map((finding) => finding.findingId));
-      setManualViolations([]);
-      setManualViolationReason("");
-      setManualRuleNumber("");
-      setForm(EMPTY_FORM);
-      setSelectedCategoryId("");
-      setShowRegistration(false);
-      setUseExtractedData(false);
+      setForm(formFromOcr(extracted));
+      setUseExtractedData(true);
+      setShowRegistration(true);
+      setAiSuggestedCategory(info.aiSuggestedCategory || null);
+      setBarcodeResult(identifier);
+      setProviderInfo({ ...info, barcodeResult: identifier });
+      setMessage("OCR + Gemini completed. Rules Engine and DataKart verification are running in parallel...");
+
+      const visualInspection = readVisualInspection();
+      const rulesPromise = apiFetch(OCR_URL + "/api/ocr/evaluate-structured", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ocr: extracted, visualFlags: visualInspection || {}, inspectionId: crypto.randomUUID(), productId: crypto.randomUUID(), inspectionDate: new Date().toISOString().slice(0, 10), context: "physical_package", commodityCategory: "packaged commodity", consumerType: "general", isImported: false, packageType: "retail", datakartVerification: null }), signal: controller.signal });
+      const dataKartPromise = gtin ? lookupDataKart(gtin, controller.signal).then((dk) => dk ? { ...dk, comparison: compareWithDataKart(extracted, dk) } : null) : Promise.resolve(null);
+      const [rulesOutcome, dataKartOutcome] = await Promise.allSettled([rulesPromise, dataKartPromise]);
+
+      if (rulesOutcome.status === "fulfilled") {
+        const response = rulesOutcome.value;
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) { setCompliance(null); setComplianceError({ message: data.error || "Rules Engine evaluation failed" }); }
+        else { setCompliance(data.compliance || null); setComplianceError(data.complianceError || null); setAcceptedFindingIds((data.compliance?.findings || []).filter((finding) => finding.status === "VIOLATION").map((finding) => finding.findingId)); }
+      } else if (rulesOutcome.reason?.name !== "AbortError") {
+        setCompliance(null);
+        setComplianceError({ message: rulesOutcome.reason?.message || "Rules Engine evaluation failed" });
+      }
+
+      const dk = dataKartOutcome.status === "fulfilled" ? dataKartOutcome.value : null;
+      const dkComparison = dk?.comparison || { matchedFields: 0, comparedFields: 0, matchRate: null, comparisons: {} };
+      const confidenceResult = calculateVerificationConfidence({ ocrResult: extracted, providerInfo: info, barcodeResult: identifier, dataKartComparison: dkComparison });
+      setDatakartVerification(dk);
+      setVerificationConfidence(confidenceResult);
+      setProviderInfo({ ...info, barcodeResult: identifier, datakartVerification: dk ? { ...dk, comparison: dkComparison } : null, verificationConfidence: confidenceResult });
       if (Number.isFinite(info.timing?.totalMs)) setAnalysisDurationMs(Number(info.timing.totalMs));
-      setMessage(info.aiSuggestedCategory?.categoryName
-        ? `${providerMessage.replace("Running Rules Engine...", "Rules Engine completed.")} Analysis time: ${formatElapsed(Number(info.timing?.totalMs || 0))}. AI suggests: ${info.aiSuggestedCategory.categoryPath || info.aiSuggestedCategory.categoryName}.`
-        : info.aiSemanticError
-          ? `${providerMessage.replace("Running Rules Engine...", "Rules Engine completed.")} Analysis time: ${formatElapsed(Number(info.timing?.totalMs || 0))}. AI suggestion unavailable: ${info.aiSemanticError}`
-          : info.fallbackReason
-            ? `${providerMessage.replace("Running Rules Engine...", "Rules Engine completed.")} Analysis time: ${formatElapsed(Number(info.timing?.totalMs || 0))}. ${info.fallbackReason}`
-            : `OCR and Rules Engine evaluation complete in ${formatElapsed(Number(info.timing?.totalMs || 0))}. Review the extracted fields, then choose how to register the product.`);
+      setMessage("Analysis complete. Review the extracted fields and verification results.");
     } catch (error) {
       if (error?.name === "AbortError") return;
       setMessage(error.message || "OCR analysis failed.");
@@ -500,7 +496,6 @@ export default function ScanV2() {
 
   const editingImage = editingImageIndex == null ? null : images[editingImageIndex];
   const displayedAnalysisTime = analysisDurationMs != null ? formatElapsed(analysisDurationMs) : formatElapsed(analysisElapsedMs);
-  const majorDataKartKeys = ["productName", "brandName", "manufacturer", "manufacturerAddress", "marketer", "marketerAddress", "netQuantity", "unit", "mrp", "currency", "batchNumber", "consumerCarePhone", "consumerCareEmail", "countryOfOrigin", "fssaiLicenseNumber"];
 
   return <div className="scan-page">
     <div className="page-header">
@@ -519,6 +514,18 @@ export default function ScanV2() {
         <button type="button" className="secondary-button" onClick={resetScan}>Stop & Reset Scan</button>
       </div>
       <p className="scan-limit">{images.length}/{MAX_IMAGES} images selected</p>
+      <div data-parallel-barcode-ui="true" className="barcode-upload-section">
+        <div className="scan-upload-actions">
+          <label className="secondary-button scan-file-button">Upload Barcode<input type="file" accept="image/*" onChange={(event) => { addBarcodeFile(event.target.files); event.target.value = ""; }} hidden /></label>
+          <input aria-label="Enter GTIN manually" placeholder="Enter GTIN manually" inputMode="numeric" value={manualGtin} onChange={(event) => { setManualGtin(event.target.value.replace(/\D/g, "").slice(0, 18)); setBarcodeResult(null); }} />
+        </div>
+        {barcodePreviewUrl && <div className="barcode-preview-card">
+          <div className="barcode-preview-heading"><strong>Uploaded barcode</strong><span>{barcodeFile?.name}</span></div>
+          <img className="barcode-preview-image" src={barcodePreviewUrl} alt="Uploaded barcode for scanning" />
+          <div className="barcode-preview-meta">{barcodeResult?.found ? "Decoded GTIN: " + barcodeResult.gtin : "Will be decoded when Analyze Images is clicked."}</div>
+        </div>}
+        {!barcodePreviewUrl && manualGtin && <div className="status-message">Manual GTIN entered: {manualGtin}</div>}
+      </div>
       {cameraError && <div className="status-message">{cameraError}</div>}
     </section>
 
@@ -539,28 +546,7 @@ export default function ScanV2() {
 
     {ocr && <section className="scan-review">
       <div className="section-heading"><div><h2>OCR extraction and rule review</h2><p>Extracted MRP, quantity, dates and other declarations are data. A violation appears only when a legal rule fails or an inspector explicitly records one.</p></div></div>
-
-      {dataKartVerification && <div className="datakart-verification-panel">
-        <div className="datakart-verification-header"><div><div className="datakart-eyebrow">REFERENCE VERIFICATION</div><h3>DataKart Verification</h3><p>Checks whether the decoded GTIN is registered and compares package-extracted fields with the registered reference. This does not determine compliance.</p></div><span className={`datakart-status-badge ${dataKartStatusClass}`}>{dataKartVerification.status === "REGISTERED" ? "✓ Registered" : dataKartVerification.status === "NOT_FOUND" ? "✕ Not registered" : dataKartVerification.status === "UNAVAILABLE" ? "? Unavailable" : dataKartVerification.status === "NO_GTIN" ? "? No GTIN" : "? Verify"}</span></div>
-        <div className="datakart-meta-row"><span><strong>GTIN</strong>{dataKartVerification.gtin || "Not detected"}</span><span><strong>Source</strong>Mock DataKart registry</span></div>
-        {dataKartProduct && <>
-          <div className="datakart-weights"><strong>Evidence confidence weights</strong><span>DataKart <b>50%</b> · Gemini <b>30%</b> · RapidOCR <b>20%</b></span></div>
-          <div className="datakart-mrp-compare">
-            <div><small>MRP on package</small><strong>{formatReferenceValue(ocr.mrp?.value)}</strong></div>
-            <div className={`datakart-mrp-icon ${ocr.mrp?.dataKart?.state === "MATCH" ? "match" : ocr.mrp?.dataKart?.state === "MISMATCH" ? "mismatch" : "unverified"}`}>{ocr.mrp?.dataKart?.state === "MATCH" ? "✓" : ocr.mrp?.dataKart?.state === "MISMATCH" ? "✕" : "?"}</div>
-            <div><small>MRP in DataKart</small><strong>{dataKartProduct.mrp == null ? "Not registered" : `₹${dataKartProduct.mrp}`}</strong></div>
-            <div className="datakart-mrp-weight"><small>Field confidence</small><strong>{Math.round(Number(ocr.mrp?.evidenceConfidence || ocr.mrp?.confidence || 0) * 100)}%</strong></div>
-          </div>
-          <div className="datakart-reference-grid">{majorDataKartKeys.filter((key) => key !== "mrp" && ocr?.[key] && typeof ocr[key] === "object" && ["found", "absent", "unreadable", "ambiguous"].includes(ocr[key].status)).map((key) => {
-            const field = ocr[key];
-            const verification = field.dataKart?.state;
-            const icon = verification === "MATCH" ? "✓" : verification === "MISMATCH" ? "✕" : "?";
-            return <div className="datakart-reference-row" key={key}><span className="datakart-reference-icon">{icon}</span><div><strong>{dataKartFieldLabel(key)}</strong><small>Package: {formatReferenceValue(field.value)} · DataKart: {formatReferenceValue(field.dataKart?.registeredValue)}</small></div><b>{Math.round(Number(field.evidenceConfidence || field.confidence || 0) * 100)}%</b></div>;
-          })}</div>
-        </>}
-      </div>}
-
-      <div className="ocr-fields-grid">{Object.entries(ocr).filter(([key, value]) => !["rawText", "semantic", "aiSemantic", "aiSuggestedCategory", "dataKartVerification", "dataKartVerificationField", "dataKartReference", "ruleEngineInput", "majorityVote", "evidenceConfidence", "presentationChecks", "suggestedCategory", "candidateEvidence", "semanticReconciliation", "warnings", "unreadableFields"].includes(key) && value && typeof value === "object" && ["found", "absent", "unreadable", "ambiguous"].includes(value.status)).map(([key, value]) => <label key={key} className="ocr-edit-field"><span className="ocr-field-title"><strong>{dataKartFieldLabel(key)}</strong>{value.dataKart?.state && <span className={`ocr-match-icon ${value.dataKart.state === "MATCH" ? "match" : value.dataKart.state === "MISMATCH" ? "mismatch" : "unverified"}`}>{value.dataKart.state === "MATCH" ? "✓" : value.dataKart.state === "MISMATCH" ? "✕" : "?"}</span>}</span><input value={value.value ?? ""} placeholder={value.status === "found" ? "Review value" : value.status} onChange={(event) => updateOcrField(key, event.target.value)} /><small>{value.status === "found" ? `${Math.round(Number(value.confidence || 0) * 100)}% evidence confidence` : value.status}{value.dataKart?.registeredValue != null ? ` · DataKart: ${value.dataKart.registeredValue}` : ""}</small></label>)}</div>
+      <div className="ocr-fields-grid">{Object.entries(ocr).filter(([key, value]) => key !== "rawText" && key !== "semantic" && key !== "aiSemantic" && key !== "aiSuggestedCategory" && value && typeof value === "object" && ["found", "absent", "unreadable", "ambiguous"].includes(value.status)).map(([key, value]) => <label key={key} className="ocr-edit-field"><strong>{key.replace(/([A-Z])/g, " $1")}</strong><input value={value.value ?? ""} placeholder={value.status === "found" ? "Review value" : value.status} onChange={(event) => updateOcrField(key, event.target.value)} /><small data-field-confidence>{value.status === "found" ? `${Math.round(Number(value.confidence || 0) * 100)}% confidence` : value.status === "ambiguous" ? "Needs verification" : value.status}</small></label>)}</div>
       {complianceError && <div className="status-message">Rules Engine: {complianceError.message || complianceError}</div>}
       {compliance?.summary && <div className="ocr-summary">Rules: {compliance.summary.totalRulesEvaluated} · Passed: {compliance.summary.passed} · Violations: {compliance.summary.violations} · Unable to verify: {compliance.summary.unableToVerify}</div>}
       {violations.length > 0 && <div className="rule-review-panel"><div className="section-heading"><div><h3>Engine violations</h3><p>Every detected violation is shown as a dropdown. The header gives the engine code/category; open it to see the rule statement and exactly what failed.</p></div></div>{violations.map((finding) => { const details = ruleDetails(finding); return <details className="rule-review-dropdown" key={finding.findingId}><summary><input type="checkbox" checked={acceptedFindingIds.includes(finding.findingId)} onChange={(event) => { event.preventDefault(); toggle(finding.findingId); }} onClick={(event) => event.stopPropagation()} /><span><strong>{details.code}</strong><small>Rule {details.number} · {details.title} · {finding.severity || "REVIEW"}</small></span></summary><div className="rule-review-dropdown-body"><p><strong>Rule statement</strong>{details.statement}</p><p><strong>Detected issue</strong>{details.issue}</p><p><strong>Engine category</strong>{details.code} · {details.number}</p></div></details>; })}<div className="ocr-summary">Selected engine violations: <strong>{accepted.length}</strong> of {violations.length}</div></div>}
@@ -582,3 +568,29 @@ export default function ScanV2() {
     {message && <div className="status-message">{message}</div>}
   </div>;
 }
+
+/* PARAKH_SCAN_V2_INTEGRATION */
+
+/* PARAKH_SCAN_V2_INTEGRATION */
+
+/* PARAKH_SCAN_V2_INTEGRATION */
+
+/* PARAKH_SCAN_V2_INTEGRATION */
+
+/* PARAKH_SCAN_V2_INTEGRATION */
+
+/* PARAKH_SCAN_V2_INTEGRATION */
+
+/* PARAKH_SCAN_V2_INTEGRATION */
+
+/* PARAKH_SCAN_V2_INTEGRATION */
+
+/* PARAKH_SCAN_V2_INTEGRATION */
+
+/* PARAKH_SCAN_V2_INTEGRATION */
+
+/* PARAKH_SCAN_V2_INTEGRATION */
+
+/* PARAKH_SCAN_V2_INTEGRATION */
+
+/* PARAKH_SCAN_V2_INTEGRATION */
