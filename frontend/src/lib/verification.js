@@ -59,21 +59,44 @@ function fieldScore(aiField, referenceValue, key) {
   return left === right ? 1 : left.includes(right) || right.includes(left) ? 0.85 : 0;
 }
 
-export async function scanBarcodeImage(file) {
+export async function scanBarcodeImage(file, timeoutMs = 3500) {
   if (!file) return { attempted: false, found: false, value: null, format: null, confidence: 0, error: null };
   let url = null;
+  let controls = null;
   try {
     const reader = new BrowserMultiFormatReader();
     url = URL.createObjectURL(file);
-    const result = await reader.decodeFromImageUrl(url);
+    const result = await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (callback) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        controls?.stop?.();
+        callback();
+      };
+      const timer = window.setTimeout(() => finish(() => reject(new Error("Barcode decode timeout."))), timeoutMs);
+      try {
+        controls = reader.decodeFromImageUrl(url, (decoded, error, scanControls) => {
+          controls = scanControls || controls;
+          if (decoded) finish(() => resolve(decoded));
+          else if (error && !["NotFoundException", "ChecksumException", "FormatException"].includes(String(error.name || ""))) finish(() => reject(error));
+        });
+      } catch (error) {
+        finish(() => reject(error));
+      }
+    });
     const value = String(result?.getText?.() || "").replace(/\s+/g, "").trim();
     const format = result?.getBarcodeFormat?.() || null;
     const isNumericGtin = /^\d{8,14}$/.test(value);
     const found = isNumericGtin && gtinChecksum(value);
     return { attempted: true, found, value: found ? value : null, format: format ? String(format) : null, confidence: found ? 0.99 : 0, error: found ? null : isNumericGtin ? "A barcode was detected, but its GTIN check digit is invalid." : "A barcode was detected, but it did not contain a valid numeric GTIN." };
   } catch (error) {
-    return { attempted: true, found: false, value: null, format: null, confidence: 0, error: error?.message || "Barcode decoding failed." };
-  } finally { if (url) URL.revokeObjectURL(url); }
+    return { attempted: true, found: false, value: null, format: null, confidence: 0, error: error?.message === "Barcode decode timeout." ? "Barcode was not decoded from this image." : error?.message || "Barcode decoding failed." };
+  } finally {
+    controls?.stop?.();
+    if (url) URL.revokeObjectURL(url);
+  }
 }
 
 export async function lookupDataKart(gtin, signal) {
@@ -151,33 +174,4 @@ export function calculateVerificationConfidence({ ocrResult, providerInfo, dataK
     providerCount: Number(providerInfo?.semantic?.providerCount || providerInfo?.semantic?.providers?.length || 0),
     disclaimer: "Evidence-confidence score only; it is not a statistical probability of legal compliance."
   };
-}
-
-function enhanceComparisonUi() {
-  document.querySelectorAll(".barcode-data-comparison").forEach((panel) => {
-    panel.querySelectorAll(".ocr-edit-field").forEach((field) => {
-      const input = field.querySelector("input");
-      const small = field.querySelector("small");
-      if (!input || !small) return;
-      const raw = String(input.value || "");
-      const status = raw.startsWith(STATUS_MARKERS.MATCH) ? "MATCH" : raw.startsWith(STATUS_MARKERS.MISMATCH) ? "MISMATCH" : raw.startsWith(STATUS_MARKERS.UNKNOWN) ? "UNKNOWN" : null;
-      if (!status) return;
-      const cleanValue = raw.replace(/^[\u2060\u2061\u2062]/, "");
-      input.value = cleanValue;
-      small.textContent = status === "UNKNOWN" ? "? Not scored" : `${status === "MATCH" ? "✓ MATCH" : "✕ MISMATCH"}${small.textContent.match(/(\d+(?:\.\d+)?)%/) ? ` · ${small.textContent.match(/(\d+(?:\.\d+)?)%/)[1]}%` : ""}`;
-    });
-    const scores = [...panel.querySelectorAll("small")].map((node) => Number(String(node.textContent).match(/(\d+(?:\.\d+)?)%/)?.[1])).filter(Number.isFinite);
-    if (scores.length) {
-      const confidence = Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
-      const dataKartSpan = panel.closest(".barcode-result-panel")?.querySelector(".ocr-status-grid")?.children?.[2]?.querySelector("span");
-      if (dataKartSpan) dataKartSpan.textContent = `Reference found · ${confidence}% confidence`;
-    }
-  });
-}
-
-if (typeof window !== "undefined" && !window.__PARAKH_COMPARISON_UI__) {
-  window.__PARAKH_COMPARISON_UI__ = true;
-  const observer = new MutationObserver(enhanceComparisonUi);
-  window.setTimeout(() => observer.observe(document.documentElement, { childList: true, subtree: true }), 0);
-  window.setTimeout(enhanceComparisonUi, 50);
 }
