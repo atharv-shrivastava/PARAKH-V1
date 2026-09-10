@@ -38,10 +38,35 @@ if (!source.includes("const BARCODE_TIMEOUT_MS")) {
     "const MAX_IMAGES = 4;\nconst BARCODE_MAX_SIZE = 8 * 1024 * 1024;\nconst BARCODE_TIMEOUT_MS = 4000;"
   );
 }
-if (!source.includes("const [barcodeFile, setBarcodeFile]")) {
-  const anchor = /  const \[message, setMessage\] = useState\(\"\"\);/;
-  if (!anchor.test(source)) throw new Error("Could not locate ScanV2 React state block.");
-  source = source.replace(anchor, (m) => m + '\n  const [barcodeFile, setBarcodeFile] = useState(null);\n  const [barcodePreviewUrl, setBarcodePreviewUrl] = useState("");\n  const [manualGtin, setManualGtin] = useState("");\n  const [barcodeResult, setBarcodeResult] = useState(null);\n  const [datakartVerification, setDatakartVerification] = useState(null);\n  const [verificationConfidence, setVerificationConfidence] = useState(null);');
+
+const verificationStateChecks = [
+  "const [barcodeFile, setBarcodeFile]",
+  "const [barcodePreviewUrl, setBarcodePreviewUrl]",
+  "const [manualGtin, setManualGtin]",
+  "const [barcodeResult, setBarcodeResult]",
+  "const [datakartVerification, setDatakartVerification]",
+  "const [verificationConfidence, setVerificationConfidence]",
+];
+
+if (!verificationStateChecks.every((token) => source.includes(token))) {
+  const stateInsertion = `\n  const [barcodeFile, setBarcodeFile] = useState(null);\n  const [barcodePreviewUrl, setBarcodePreviewUrl] = useState("");\n  const [manualGtin, setManualGtin] = useState("");\n  const [barcodeResult, setBarcodeResult] = useState(null);\n  const [datakartVerification, setDatakartVerification] = useState(null);\n  const [verificationConfidence, setVerificationConfidence] = useState(null);`;
+
+  const messageToken = 'const [message, setMessage] = useState("");';
+  const messageIndex = source.indexOf(messageToken);
+  if (messageIndex >= 0) {
+    source = source.slice(0, messageIndex + messageToken.length) + stateInsertion + source.slice(messageIndex + messageToken.length);
+  } else {
+    const componentBodyAnchor = source.indexOf("export default function ScanV2() {");
+    if (componentBodyAnchor < 0) {
+      throw new Error("Could not locate ScanV2 React component.");
+    }
+    const firstStateAnchor = source.indexOf("useState(", componentBodyAnchor);
+    if (firstStateAnchor < 0) {
+      throw new Error("Could not locate ScanV2 React state block.");
+    }
+    const lineStart = source.lastIndexOf("\n", firstStateAnchor) + 1;
+    source = source.slice(0, lineStart) + stateInsertion.slice(1) + "\n" + source.slice(lineStart);
+  }
 }
 
 if (!source.includes("async function resolveGtin(")) {
@@ -68,12 +93,13 @@ if (!source.includes("function addBarcodeFile(input)")) {
     if (!file) return;
     if (!file.type.startsWith("image/")) return setMessage("Barcode upload must be an image.");
     if (file.size > BARCODE_MAX_SIZE) return setMessage("Barcode image is too large. Use an image smaller than 8 MB.");
+    if (barcodePreviewUrl) URL.revokeObjectURL(barcodePreviewUrl);
     setBarcodeFile(file);
     setBarcodePreviewUrl(URL.createObjectURL(file));
     setBarcodeResult(null);
     setDatakartVerification(null);
     setVerificationConfidence(null);
-    setMessage("Barcode image ready. It will be decoded with OCR when Analyze Images is clicked.");
+    setMessage("Barcode image ready. It will be decoded with the barcode scanner when Analyze Images is clicked.");
   }
 `;
   if (!anchor.test(source)) throw new Error("Could not locate openCamera() safely.");
@@ -91,6 +117,7 @@ if (!source.includes(BARCODE_MARKER)) {
           <div className="barcode-preview-heading"><strong>Uploaded barcode</strong><span>{barcodeFile?.name}</span></div>
           <img className="barcode-preview-image" src={barcodePreviewUrl} alt="Uploaded barcode for scanning" />
           <div className="barcode-preview-meta">{barcodeResult?.found ? "Decoded GTIN: " + barcodeResult.gtin : "Will be decoded when Analyze Images is clicked."}</div>
+          <button type="button" className="secondary-button" onClick={removeBarcodeFile}>Remove</button>
         </div>}
         {!barcodePreviewUrl && manualGtin && <div className="status-message">Manual GTIN entered: {manualGtin}</div>}
       </div>`;
@@ -134,7 +161,7 @@ if (!source.includes("const [ocrOutcome, barcodeOutcome] = await Promise.allSett
     if (!images.length) return setMessage("Add at least one package image first.");
     setAnalyzing(true);
     setAnalysisDurationMs(null);
-    setMessage(barcodeFile || manualGtin.trim() ? "Running barcode, RapidOCR and Gemini in parallel..." : "Running RapidOCR + AI semantic verification...");
+    setMessage(barcodeFile || manualGtin.trim() ? "Running barcode scanner, RapidOCR and Gemini in parallel..." : "Running RapidOCR + AI semantic verification...");
     const controller = new AbortController();
     controllerRef.current?.abort();
     controllerRef.current = controller;
@@ -212,6 +239,6 @@ if (!source.includes(CONFIDENCE_MARKER)) {
 }
 
 source = source.replace(/\n$/, "");
-source += `\n\n${MARKER}\n`;
+if (!source.includes(MARKER)) source += `\n\n${MARKER}\n`;
 await fs.writeFile(scanPath, source, "utf8");
 console.log("PARAKH Scan V2 integration ready: barcode + OCR/Gemini parallel, Rules Engine + DataKart parallel, extracted fields prefilled, per-field confidence shown.");
