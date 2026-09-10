@@ -2,7 +2,7 @@ import { BrowserMultiFormatReader } from "@zxing/browser";
 import { apiFetch } from "./auth";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
-const STATUS_MARKERS = { MATCH: "\u2060", MISMATCH: "\u2061", UNKNOWN: "\u2062" };
+const NON_COMPLIANCE_FIELDS = new Set(["barcode", "gtin", "barcodeConfidence", "gtinConfidence"]);
 
 const FIELD_MAP = {
   productName: "product_name", brandName: "brand_name", manufacturer: "manufacturer", manufacturerAddress: "manufacturer_address",
@@ -17,42 +17,27 @@ function normalize(value) {
   return String(value ?? "").toLowerCase().replace(/[₹$€£,]/g, "").replace(/[^\p{L}\p{N}.]+/gu, " ").replace(/\s+/g, " ").trim();
 }
 
-const GENERIC_PRODUCT_DESCRIPTORS = [
-  "tooth paste", "toothpaste", "shampoo", "soap", "face wash", "facewash", "biscuit", "biscuits", "juice", "flour", "detergent", "oil",
-  "cream", "lotion", "cleaner", "conditioner", "gel", "powder", "tea", "coffee", "milk", "drink", "water", "snack", "tooth gel", "mouthwash",
-];
-
-function productIdentity(value) {
-  let text = normalize(value);
-  for (const descriptor of GENERIC_PRODUCT_DESCRIPTORS) text = text.replace(new RegExp(`\\b${descriptor.replace(/\s+/g, "\\s+")}\\b`, "gi"), " ");
-  return text.replace(/\s+/g, " ").trim();
+function normalizeGtin(value) {
+  return String(value ?? "").replace(/\D/g, "").trim();
 }
 
-function numeric(value) {
-  const match = String(value ?? "").replace(/,/g, "").match(/\d+(?:\.\d+)?/);
-  return match ? Number(match[0]) : null;
-}
-
-function gtinChecksum(value) {
-  const digits = String(value ?? "").replace(/\D/g, "");
+function isValidGtin(value) {
+  const digits = normalizeGtin(value);
   if (![8, 12, 13, 14].includes(digits.length)) return false;
   let sum = 0;
-  for (let index = digits.length - 2, position = 0; index >= 0; index -= 1, position += 1) sum += Number(digits[index]) * (position % 2 === 0 ? 3 : 1);
+  for (let index = digits.length - 2, position = 0; index >= 0; index -= 1, position += 1) {
+    sum += Number(digits[index]) * (position % 2 === 0 ? 3 : 1);
+  }
   return (10 - (sum % 10)) % 10 === Number(digits[digits.length - 1]);
 }
 
 function parseBarcodeResult(result) {
-  const value = String(result?.getText?.() || "").replace(/\s+/g, "").trim();
-  const format = result?.getBarcodeFormat?.() || null;
-  const isNumericGtin = /^\d{8,14}$/.test(value);
-  const found = isNumericGtin && gtinChecksum(value);
-  return {
-    value: found ? value : null,
-    found,
-    format: format ? String(format) : null,
-    confidence: found ? 0.99 : 0,
-    error: found ? null : isNumericGtin ? "A barcode was detected, but its GTIN check digit is invalid." : "A barcode was detected, but it did not contain a valid numeric GTIN."
-  };
+  const value = normalizeGtin(result?.getText?.());
+  const format = result?.getBarcodeFormat?.() ? String(result.getBarcodeFormat()) : null;
+  if (!isValidGtin(value)) {
+    return { value: null, found: false, format, confidence: 0, error: value ? "Barcode detected, but the decoded value is not a valid GTIN." : "Barcode detected without a numeric GTIN." };
+  }
+  return { value, found: true, format, confidence: 0.99, error: null };
 }
 
 async function loadImageCanvas(file, scale = 1, rotation = 0) {
@@ -77,50 +62,37 @@ async function loadImageCanvas(file, scale = 1, rotation = 0) {
   return canvas;
 }
 
-async function decodeCanvas(reader, canvas) {
-  try {
-    return reader.decodeFromCanvas(canvas);
-  } catch {
-    return null;
-  }
-}
-
 export async function scanBarcodeImage(file, timeoutMs = 5000) {
   if (!file) return { attempted: false, found: false, value: null, format: null, confidence: 0, error: null };
-  const started = Date.now();
   const reader = new BrowserMultiFormatReader();
   let objectUrl = null;
+  const started = Date.now();
   try {
     objectUrl = URL.createObjectURL(file);
     try {
       const result = await Promise.race([
         reader.decodeFromImageUrl(objectUrl),
-        new Promise((_, reject) => window.setTimeout(() => reject(new Error("Barcode decode timeout.")), timeoutMs))
+        new Promise((_, reject) => window.setTimeout(() => reject(new Error("Barcode decode timeout.")), timeoutMs)),
       ]);
       const parsed = parseBarcodeResult(result);
       if (parsed.found) return { attempted: true, ...parsed };
     } catch {}
 
-    const remaining = Math.max(500, timeoutMs - (Date.now() - started));
-    const passes = [
-      { scale: 1.5, rotation: 0 },
-      { scale: 2, rotation: 0 },
-      { scale: 1.5, rotation: 90 },
-      { scale: 1.5, rotation: 270 },
-    ];
-    const deadline = Date.now() + remaining;
-    for (const pass of passes) {
+    const deadline = Date.now() + Math.max(500, timeoutMs - (Date.now() - started));
+    for (const pass of [
+      { scale: 1.5, rotation: 0 }, { scale: 2, rotation: 0 },
+      { scale: 1.5, rotation: 90 }, { scale: 1.5, rotation: 270 },
+    ]) {
       if (Date.now() >= deadline) break;
       try {
         const canvas = await loadImageCanvas(file, pass.scale, pass.rotation);
-        const result = await decodeCanvas(reader, canvas);
+        const result = await reader.decodeFromCanvas(canvas);
         if (result) {
           const parsed = parseBarcodeResult(result);
           if (parsed.found) return { attempted: true, ...parsed };
         }
       } catch {}
     }
-
     return { attempted: true, found: false, value: null, format: null, confidence: 0, error: "Barcode was not decoded from this image." };
   } catch (error) {
     return { attempted: true, found: false, value: null, format: null, confidence: 0, error: error?.message || "Barcode decoding failed." };
@@ -131,26 +103,38 @@ export async function scanBarcodeImage(file, timeoutMs = 5000) {
 }
 
 export async function lookupDataKart(gtin, signal) {
-  const normalizedGtin = String(gtin || "").replace(/\s+/g, "").trim();
-  if (!normalizedGtin) return { attempted: false, found: false, gtin: null, product: null, error: null, source: null };
+  const normalizedGtin = normalizeGtin(gtin);
+  if (!isValidGtin(normalizedGtin)) {
+    return { attempted: false, found: false, gtin: normalizedGtin || null, product: null, error: normalizedGtin ? "DataKart lookup requires a valid GTIN." : null, status: "NOT_ATTEMPTED", source: null };
+  }
+
   try {
     const response = await apiFetch(`${API_URL}/datakart/gtin/${encodeURIComponent(normalizedGtin)}`, { signal });
     const data = await response.json().catch(() => ({}));
-    if (response.status === 404) return { attempted: true, found: false, gtin: normalizedGtin, product: null, error: null, source: data?.source || "datakart-supabase" };
-    if (!response.ok) throw new Error(data?.error || `DataKart lookup failed (${response.status}).`);
-    return { attempted: true, found: Boolean(data?.found && data?.product), gtin: normalizedGtin, product: data?.product || null, error: null, source: data?.source || "datakart-supabase" };
+    if (response.status === 404) return { attempted: true, found: false, gtin: normalizedGtin, product: null, error: null, status: "NOT_FOUND", source: data?.source || "datakart-supabase" };
+    if (!response.ok) return { attempted: true, found: false, gtin: normalizedGtin, product: null, error: data?.error || `DataKart lookup failed (${response.status}).`, status: "ERROR", source: data?.source || "datakart-supabase" };
+    const found = Boolean(data?.found && data?.product);
+    return { attempted: true, found, gtin: normalizedGtin, product: found ? data.product : null, error: found ? null : "DataKart returned no product for this GTIN.", status: found ? "FOUND" : "NOT_FOUND", source: data?.source || "datakart-supabase" };
   } catch (error) {
-    if (error?.name === "AbortError") throw error;
-    return { attempted: true, found: false, gtin: normalizedGtin, product: null, error: error?.message || "DataKart lookup failed.", source: "datakart-supabase" };
+    if (error?.name === "AbortError") return { attempted: true, found: false, gtin: normalizedGtin, product: null, error: "DataKart lookup was cancelled.", status: "ABORTED", source: "datakart-supabase" };
+    return { attempted: true, found: false, gtin: normalizedGtin, product: null, error: error?.message || "DataKart lookup failed.", status: "ERROR", source: "datakart-supabase" };
   }
 }
 
-function fieldScore(aiField, referenceValue, key) {
+function numeric(value) {
+  const match = String(value ?? "").replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : null;
+}
+
+function productIdentity(value) {
+  return normalize(value).replace(/\b(?:tooth ?paste|shampoo|soap|biscuit(?:s)?|juice|flour|detergent|oil|cream|lotion|cleaner|conditioner|gel|powder|tea|coffee|milk|drink|water|snack|mouthwash)\b/gi, "").replace(/\s+/g, " ").trim();
+}
+
+function fieldMatchScore(aiField, referenceValue, key) {
   if (!aiField || aiField.status !== "found" || aiField.value == null || referenceValue == null || String(referenceValue).trim() === "") return null;
   if (key === "mrp" || key === "netQuantity") {
     const left = numeric(aiField.value), right = numeric(referenceValue);
-    if (left == null || right == null) return 0;
-    return left === right ? 1 : 0;
+    return left != null && right != null && left === right ? 1 : 0;
   }
   if (key === "unit") return normalize(aiField.value) === normalize(referenceValue) ? 1 : 0;
   if (key === "productName") {
@@ -158,133 +142,91 @@ function fieldScore(aiField, referenceValue, key) {
     if (!left || !right) return 0;
     if (left === right) return 1;
     if (left.includes(right) || right.includes(left)) return 0.98;
-    return normalize(aiField.value) === normalize(referenceValue) ? 1 : 0;
   }
   const left = normalize(aiField.value), right = normalize(referenceValue);
-  return left === right ? 1 : left.includes(right) || right.includes(left) ? 0.85 : 0;
+  if (left === right) return 1;
+  if (left.includes(right) || right.includes(left)) return 0.85;
+  return 0;
 }
 
-function rapidEvidenceForField(rapidEvidence, aiField) {
-  if (!Array.isArray(rapidEvidence)) return null;
-  const evidenceIndex = Number.isInteger(aiField?.evidenceIndex) ? aiField.evidenceIndex : -1;
-  if (evidenceIndex >= 0 && Number.isFinite(Number(rapidEvidence[evidenceIndex]?.confidence))) return Number(rapidEvidence[evidenceIndex].confidence);
-  const key = aiField?.fieldName;
-  const candidate = rapidEvidence.find((item) => item?.field === key || item?.key === key || item?.name === key);
+function rapidConfidence(evidence, field) {
+  if (!Array.isArray(evidence) || !field) return null;
+  if (Number.isInteger(field.evidenceIndex) && Number.isFinite(Number(evidence[field.evidenceIndex]?.confidence))) return Number(evidence[field.evidenceIndex].confidence);
+  const candidate = evidence.find((item) => item?.field === field.fieldName || item?.key === field.fieldName || item?.name === field.fieldName);
   return Number.isFinite(Number(candidate?.confidence)) ? Number(candidate.confidence) : null;
 }
 
-function combinedFieldConfidence(aiField, rapidEvidence, referenceScore) {
-  const gemini = Number(aiField?.geminiConfidence ?? aiField?.confidence);
-  const rapid = rapidEvidenceForField(rapidEvidence, aiField);
-  const values = [
-    Number.isFinite(rapid) ? { value: rapid, weight: 0.30 } : null,
-    Number.isFinite(gemini) ? { value: gemini, weight: 0.30 } : null,
-    Number.isFinite(Number(referenceScore)) ? { value: Number(referenceScore), weight: 0.40 } : null,
-  ].filter(Boolean);
-  const weightTotal = values.reduce((sum, item) => sum + item.weight, 0);
-  return weightTotal ? values.reduce((sum, item) => sum + item.value * item.weight, 0) / weightTotal : null;
-}
-
-function emptyDataKartComparison() {
-  return { matchedFields: 0, comparedFields: 0, unknownFields: 0, matchRate: null, comparisons: {} };
+function weightedAverage(parts) {
+  const usable = parts.filter((part) => Number.isFinite(part.score));
+  if (!usable.length) return null;
+  const totalWeight = usable.reduce((sum, part) => sum + part.weight, 0);
+  return usable.reduce((sum, part) => sum + part.score * part.weight, 0) / totalWeight;
 }
 
 export function compareWithDataKart(ocrResult, dataKart) {
-  try {
-    const comparisons = {};
-    if (!dataKart?.found || !dataKart.product) return emptyDataKartComparison();
-    const rapidEvidence = Array.isArray(ocrResult?.rawOcrEvidence) ? ocrResult.rawOcrEvidence : [];
+  const empty = { matchedFields: 0, comparedFields: 0, unknownFields: 0, matchRate: null, comparisons: {} };
+  if (!dataKart?.found || !dataKart.product) return empty;
 
-    for (const [key, column] of Object.entries(FIELD_MAP)) {
-      const sourceField = ocrResult?.[key];
-      if (!sourceField || typeof sourceField !== "object") continue;
-      const aiField = { ...sourceField, fieldName: key };
-      const referenceValue = dataKart.product[column];
-      const score = fieldScore(aiField, referenceValue, key);
-      const hasAiValue = aiField.status === "found" && aiField.value != null && String(aiField.value).trim() !== "";
-      const hasReferenceValue = referenceValue != null && String(referenceValue).trim() !== "";
+  const comparisons = {};
+  const rapidEvidence = Array.isArray(ocrResult?.rawOcrEvidence) ? ocrResult.rawOcrEvidence : [];
+  for (const [key, column] of Object.entries(FIELD_MAP)) {
+    const sourceField = ocrResult?.[key];
+    if (!sourceField || typeof sourceField !== "object") continue;
+    const field = { ...sourceField, fieldName: key };
+    const referenceValue = dataKart.product[column];
+    const matchScore = fieldMatchScore(field, referenceValue, key);
+    const hasAi = field.status === "found" && field.value != null && String(field.value).trim() !== "";
+    const hasReference = referenceValue != null && String(referenceValue).trim() !== "";
 
-      if (hasAiValue && hasReferenceValue) {
-        const status = score >= 0.85 ? "MATCH" : "MISMATCH";
-        const geminiConfidence = Number(aiField.geminiConfidence ?? aiField.confidence);
-        aiField.geminiConfidence = Number.isFinite(geminiConfidence) ? geminiConfidence : null;
-        const verificationConfidence = combinedFieldConfidence(aiField, rapidEvidence, score);
-        aiField.verification = { status, confidence: verificationConfidence, referenceValue };
-        comparisons[key] = {
-          aiValue: `${STATUS_MARKERS[status]}${aiField.value}`,
-          rawAiValue: aiField.value,
-          referenceValue,
-          score: verificationConfidence,
-          matchScore: score,
-          verificationConfidence,
-          match: status === "MATCH",
-          status,
-        };
-      } else if (hasAiValue && !hasReferenceValue) {
-        comparisons[key] = {
-          aiValue: `${STATUS_MARKERS.UNKNOWN}${aiField.value}`,
-          rawAiValue: aiField.value,
-          referenceValue: null,
-          score: null,
-          matchScore: null,
-          verificationConfidence: null,
-          match: null,
-          status: "UNKNOWN",
-        };
-      }
+    if (hasAi && hasReference) {
+      const match = matchScore >= 0.85;
+      const gemini = Number(field.geminiConfidence ?? field.confidence);
+      const rapid = rapidConfidence(rapidEvidence, field);
+      const verificationConfidence = weightedAverage([
+        { score: rapid, weight: 0.30 },
+        { score: Number.isFinite(gemini) ? gemini : null, weight: 0.30 },
+        { score: matchScore, weight: 0.40 },
+      ]);
+      comparisons[key] = { aiValue: field.value, rawAiValue: field.value, referenceValue, matchScore, verificationConfidence, score: verificationConfidence, match, status: match ? "MATCH" : "MISMATCH" };
+    } else if (hasAi && !hasReference) {
+      comparisons[key] = { aiValue: field.value, rawAiValue: field.value, referenceValue: null, matchScore: null, verificationConfidence: null, score: null, match: null, status: "UNKNOWN" };
     }
-
-    const comparable = Object.values(comparisons).filter((item) => Number.isFinite(item.matchScore));
-    const matchedFields = comparable.filter((item) => item.match).length;
-    const unknownFields = Object.values(comparisons).filter((item) => item.status === "UNKNOWN").length;
-    return {
-      matchedFields,
-      comparedFields: comparable.length,
-      unknownFields,
-      matchRate: comparable.length ? comparable.reduce((sum, item) => sum + item.matchScore, 0) / comparable.length : null,
-      comparisons,
-    };
-  } catch (error) {
-    console.error("[datakart:comparison]", error);
-    return emptyDataKartComparison();
   }
+
+  const comparable = Object.values(comparisons).filter((item) => Number.isFinite(item.matchScore));
+  return {
+    matchedFields: comparable.filter((item) => item.match).length,
+    comparedFields: comparable.length,
+    unknownFields: Object.values(comparisons).filter((item) => item.status === "UNKNOWN").length,
+    matchRate: comparable.length ? comparable.reduce((sum, item) => sum + item.matchScore, 0) / comparable.length : null,
+    comparisons,
+  };
 }
 
 function average(values) {
-  const usable = values.filter((value) => Number.isFinite(value));
+  const usable = values.filter(Number.isFinite);
   return usable.length ? usable.reduce((sum, value) => sum + value, 0) / usable.length : null;
 }
 
-export function calculateVerificationConfidence({ ocrResult, providerInfo, dataKartComparison }) {
+export function calculateVerificationConfidence({ ocrResult, dataKartComparison }) {
   const ocrConfidence = average((ocrResult?.rawOcrEvidence || [])
-    .filter((item) => !["barcode", "gtin"].includes(String(item?.field || "").toLowerCase()))
-    .map((item) => Number(item.confidence))
-    .filter(Number.isFinite));
-  const semanticFields = Object.entries(ocrResult || {})
-    .filter(([key, field]) => !["barcode", "gtin"].includes(String(key).toLowerCase()) && field && typeof field === "object" && field.status === "found")
-    .map(([, field]) => Number(field.geminiConfidence ?? field.confidence))
-    .filter(Number.isFinite);
-  const semanticConfidence = average(semanticFields);
+    .filter((item) => !NON_COMPLIANCE_FIELDS.has(String(item?.field || "")))
+    .map((item) => Number(item.confidence)));
+  const semanticConfidence = average(Object.entries(ocrResult || {})
+    .filter(([key, field]) => !NON_COMPLIANCE_FIELDS.has(key) && field && typeof field === "object" && field.status === "found")
+    .map(([, field]) => Number(field.geminiConfidence ?? field.confidence)));
   const dataKartConfidence = Number.isFinite(Number(dataKartComparison?.matchRate)) ? Number(dataKartComparison.matchRate) : null;
-  const components = [
-    { key: "ocr", label: "OCR", score: ocrConfidence, weight: 0.35 },
-    { key: "gemini", label: "Gemini semantic", score: semanticConfidence, weight: 0.40 },
-    { key: "datakart", label: "DataKart confidence", score: dataKartConfidence, weight: 0.25 },
-  ].filter((component) => Number.isFinite(component.score));
-  const weightTotal = components.reduce((sum, component) => sum + component.weight, 0);
-  const weightedOverall = weightTotal ? components.reduce((sum, component) => sum + component.score * component.weight, 0) / weightTotal : 0;
-  const matchedFields = Number(dataKartComparison?.matchedFields || 0);
-  const comparisonAvailable = Boolean(dataKartComparison && Number(dataKartComparison.comparedFields) > 0);
-  const agreementBonus = comparisonAvailable ? Math.min(0.10, matchedFields * 0.02) : 0;
-  const overall = Math.min(1, weightedOverall + agreementBonus);
+  const overall = weightedAverage([
+    { score: ocrConfidence, weight: 0.30 },
+    { score: semanticConfidence, weight: 0.30 },
+    { score: dataKartConfidence, weight: 0.40 },
+  ]) ?? average([ocrConfidence, semanticConfidence]);
+
   return {
-    overall,
-    percentage: Math.round(overall * 100),
-    label: overall >= 0.85 ? "HIGH" : overall >= 0.65 ? "MEDIUM" : "LOW",
-    components,
-    agreementBonus,
-    matchedFields,
-    providerCount: Number(providerInfo?.semantic?.providerCount || providerInfo?.semantic?.providers?.length || 0),
-    disclaimer: "Evidence-confidence score only; it is not a statistical probability of legal compliance."
+    overall: overall ?? 0,
+    components: { ocr: ocrConfidence, gemini: semanticConfidence, datakart: dataKartConfidence },
+    weights: { ocr: 0.30, gemini: 0.30, datakart: 0.40 },
+    barcodeExcludedFromCompliance: true,
+    dataKartComparedFields: Number(dataKartComparison?.comparedFields || 0),
   };
 }
