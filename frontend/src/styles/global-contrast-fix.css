@@ -1,4 +1,20 @@
 /* Shared contrast fix for controls rendered inside the themed sidebar. */
+.sidebar-user {
+  background: var(--theme-sidebar, #111827) !important;
+  color: var(--theme-sidebar-text, #f8fafc) !important;
+  border-top: 1px solid rgba(255,255,255,.10) !important;
+  border-radius: 12px !important;
+  padding: 15px 10px 10px !important;
+}
+
+.sidebar-user strong {
+  color: var(--theme-sidebar-text, #f8fafc) !important;
+}
+
+.sidebar-user > span {
+  color: rgba(255,255,255,.62) !important;
+}
+
 .sidebar-user button {
   width: 100% !important;
   min-height: 42px !important;
@@ -9,9 +25,9 @@
   margin-top: 8px !important;
   padding: 10px 12px !important;
   box-sizing: border-box !important;
-  border: 1px solid rgba(255,255,255,.34) !important;
+  border: 1px solid rgba(255,255,255,.24) !important;
   border-radius: 9px !important;
-  background: rgba(255,255,255,.10) !important;
+  background: rgba(255,255,255,.08) !important;
   color: #ffffff !important;
   font-weight: 700 !important;
   line-height: 1.2 !important;
@@ -20,8 +36,8 @@
 }
 
 .sidebar-user button:hover {
-  background: rgba(255,255,255,.18) !important;
-  border-color: rgba(255,255,255,.52) !important;
+  background: rgba(255,255,255,.16) !important;
+  border-color: rgba(255,255,255,.42) !important;
   color: #ffffff !important;
   transform: translateY(-1px);
   box-shadow: 0 5px 14px rgba(0,0,0,.16);
