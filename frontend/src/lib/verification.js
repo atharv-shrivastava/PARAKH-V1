@@ -57,6 +57,18 @@ function numeric(value) {
   return match ? Number(match[0]) : null;
 }
 
+function gtinChecksum(value) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (![8, 12, 13, 14].includes(digits.length)) return false;
+  let sum = 0;
+  for (let index = digits.length - 2, position = 0; index >= 0; index -= 1, position += 1) {
+    const digit = Number(digits[index]);
+    sum += digit * (position % 2 === 0 ? 3 : 1);
+  }
+  const check = (10 - (sum % 10)) % 10;
+  return check === Number(digits[digits.length - 1]);
+}
+
 function fieldScore(aiField, referenceValue, key) {
   if (!aiField || aiField.status !== "found" || aiField.value == null || referenceValue == null || referenceValue === "") return null;
   if (key === "mrp" || key === "netQuantity") {
@@ -89,16 +101,22 @@ export async function scanBarcodeImage(file) {
     const reader = new BrowserMultiFormatReader();
     url = URL.createObjectURL(file);
     const result = await reader.decodeFromImageUrl(url);
-    const value = String(result?.getText?.() || "").trim();
+    const value = String(result?.getText?.() || "").replace(/\s+/g, "").trim();
     const format = result?.getBarcodeFormat?.() || null;
-    const found = /^\d{8,18}$/.test(value);
+    const numeric = /^\d{8,14}$/.test(value);
+    const checksumValid = numeric && gtinChecksum(value);
+    const found = checksumValid;
     return {
       attempted: true,
       found,
       value: found ? value : null,
       format: format ? String(format) : null,
-      confidence: found ? 0.98 : 0,
-      error: found ? null : "A barcode was detected, but it did not contain a valid numeric GTIN-like value.",
+      confidence: found ? 0.99 : 0,
+      error: found
+        ? null
+        : numeric
+          ? "A barcode was detected, but its GTIN check digit is invalid."
+          : "A barcode was detected, but it did not contain a valid numeric GTIN.",
     };
   } catch (error) {
     return { attempted: true, found: false, value: null, format: null, confidence: 0, error: error?.message || "Barcode decoding failed." };
@@ -126,6 +144,7 @@ export function compareWithDataKart(ocrResult, dataKart) {
   const comparisons = {};
   if (!dataKart?.found || !dataKart.product) return { matchedFields: 0, comparedFields: 0, matchRate: null, comparisons };
   for (const [key, column] of Object.entries(FIELD_MAP)) {
+    if (key === "barcode") continue;
     const score = fieldScore(ocrResult?.[key], dataKart.product[column], key);
     if (score == null) continue;
     comparisons[key] = { aiValue: ocrResult[key].value, referenceValue: dataKart.product[column], score, match: score >= 0.85 };
@@ -143,7 +162,7 @@ export function calculateVerificationConfidence({ ocrResult, providerInfo, barco
   const ocrConfidence = average((ocrResult?.rawOcrEvidence || []).map((item) => Number(item.confidence)).filter(Number.isFinite));
   const semanticFields = Object.values(ocrResult || {}).filter((field) => field && typeof field === "object" && "confidence" in field);
   const semanticConfidence = average(semanticFields.map((field) => Number(field.confidence)).filter(Number.isFinite));
-  const barcodeConfidence = barcodeResult?.found ? Number(barcodeResult.confidence || 0.98) : null;
+  const barcodeConfidence = barcodeResult?.found ? Number(barcodeResult.confidence || 0.99) : null;
   const dataKartConfidence = Number.isFinite(Number(dataKartComparison?.matchRate)) ? Number(dataKartComparison.matchRate) : null;
   const components = [
     { key: "barcode", label: "Barcode", score: barcodeConfidence, weight: 0.25 },
