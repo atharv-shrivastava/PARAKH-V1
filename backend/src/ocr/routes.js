@@ -34,7 +34,7 @@ function addEvidence(evidence, field, item, sourceType = "OCR", explicitField = 
   });
 }
 
-function makeRulesEvidence(ocr, datakartVerification = null) {
+function makeRulesEvidence(ocr) {
   const declarations = Array.isArray(ocr?.declarationEvidence) ? ocr.declarationEvidence : [];
   const evidence = [];
 
@@ -83,53 +83,28 @@ function makeRulesEvidence(ocr, datakartVerification = null) {
     });
   }
 
-  if (datakartVerification?.found && datakartVerification.comparison) {
-    for (const [field, comparison] of Object.entries(datakartVerification.comparison.comparisons || {})) {
-      evidence.push({
-        evidenceId: `datakart-${field}-${crypto.randomUUID()}`,
-        field: `reference.${field}`,
-        rawValue: comparison.referenceValue,
-        normalizedValue: comparison.referenceValue,
-        confidence: Number(comparison.score || 0),
-        source: "DATAKART_REFERENCE",
-        referenceGtin: datakartVerification.gtin,
-        match: Boolean(comparison.match),
-        timestamp: new Date().toISOString(),
-        reliability: "REFERENCE",
-      });
-    }
-  }
-
   return evidence;
 }
 
 async function evaluateRules(req, ocr) {
   const rulesEngineUrl = process.env.RULES_ENGINE_URL || "http://localhost:8090";
-  const datakartVerification = req.body?.datakartVerification || null;
+  const ruleOcr = ocr?.ruleEngineInput && typeof ocr.ruleEngineInput === "object" ? ocr.ruleEngineInput : ocr;
   const body = {
     inspectionId: req.body?.inspectionId || crypto.randomUUID(),
     productId: req.body?.productId || crypto.randomUUID(),
     inspectionDate: req.body?.inspectionDate || new Date().toISOString().slice(0, 10),
     context: req.body?.context || "physical_package",
     productMetadata: {
-      brandName: ocr?.brandName?.value || undefined,
+      brandName: ruleOcr?.brandName?.value || undefined,
       commodityCategory: req.body?.commodityCategory || "packaged commodity",
       consumerType: req.body?.consumerType || "general",
       isImported: Boolean(req.body?.isImported),
-      countryOfOrigin: ocr?.countryOfOrigin?.value || undefined,
+      countryOfOrigin: ruleOcr?.countryOfOrigin?.value || undefined,
       packageType: req.body?.packageType || "retail",
     },
-    evidence: makeRulesEvidence(ocr, datakartVerification),
+    evidence: makeRulesEvidence(ruleOcr),
     visualFlags: req.body?.visualFlags || {},
-    referenceVerification: datakartVerification ? {
-      source: "DataKart",
-      gtin: datakartVerification.gtin || null,
-      found: Boolean(datakartVerification.found),
-      matchedFields: datakartVerification.comparison?.matchedFields || 0,
-      comparedFields: datakartVerification.comparison?.comparedFields || 0,
-      matchRate: datakartVerification.comparison?.matchRate ?? null,
-      confidence: req.body?.verificationConfidence || null,
-    } : null,
+    referenceVerification: null,
   };
 
   const response = await fetch(`${rulesEngineUrl}/api/rules-engine/evaluate`, {
