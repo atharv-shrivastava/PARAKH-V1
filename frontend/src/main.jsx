@@ -21,6 +21,7 @@ import "./styles/layout-mobile-polish.css";
 import "./styles/product-experience.css";
 import "./styles/scan-theme.css";
 import "./styles/obsidian-contrast-fix.css";
+import "./lib/localBarcodeDetector";
 import { applyTheme, getTheme } from "./lib/theme";
 import { LanguageProvider } from "./components/LanguageProvider";
 
