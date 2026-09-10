@@ -125,6 +125,26 @@ function sanitizeRulesEngineBody(body) {
   }
 }
 
+async function sanitizeOcrResponse(response) {
+  if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) return response;
+  try {
+    const payload = await response.clone().json();
+    if (payload?.result && typeof payload.result === "object") {
+      delete payload.result.barcode;
+      delete payload.result.gtin;
+      delete payload.result.barcodeConfidence;
+      delete payload.result.gtinConfidence;
+    }
+    return new Response(JSON.stringify(payload), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch {
+    return response;
+  }
+}
+
 export async function apiFetch(url, options = {}) {
   const rawUrl = String(url);
   let resolvedUrl = rawUrl;
@@ -140,11 +160,12 @@ export async function apiFetch(url, options = {}) {
     if (cached) return cachedResponse(cached);
   }
   const isRulesEngine = resolvedUrl.includes("/api/ocr/evaluate-structured");
-  let body = resolvedUrl.includes("/api/ocr/analyze") ? await optimizeOcrBody(options.body) : options.body;
+  const isOcrAnalyze = resolvedUrl.includes("/api/ocr/analyze");
+  let body = isOcrAnalyze ? await optimizeOcrBody(options.body) : options.body;
   if (isRulesEngine) body = sanitizeRulesEngineBody(body);
   const response = await fetch(resolvedUrl, { ...options, body, headers: { ...authHeaders(Boolean(body && typeof body === "string")), ...(options.headers || {}) } });
   if (response.status === 401) clearSession();
   if (response.ok && !isRead && !isTransientPost(resolvedUrl)) invalidateApiCache();
   if (response.ok && isRead) await cacheResponse(resolvedUrl, response);
-  return response;
+  return isOcrAnalyze ? sanitizeOcrResponse(response) : response;
 }
