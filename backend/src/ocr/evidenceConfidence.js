@@ -296,5 +296,13 @@ export async function applyEvidenceConfidence(result, options = {}) {
     gtin,
   };
 
+  next.dataKartVerificationField = {
+    value: gtin ? `${dataKartMessage} · GTIN ${gtin}` : dataKartMessage,
+    raw: dataKartMessage,
+    confidence: dataKart ? 1 : 0,
+    status: "found",
+    source: "DATAKART_MOCK_REGISTRY",
+  };
+
   return next;
 }
