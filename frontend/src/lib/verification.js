@@ -205,9 +205,6 @@ export function compareWithDataKart(ocrResult, dataKart) {
       aiField.geminiConfidence = Number.isFinite(geminiConfidence) ? geminiConfidence : null;
       const verificationConfidence = combinedFieldConfidence(aiField, rapidEvidence, score);
       aiField.verification = { status, confidence: verificationConfidence, referenceValue };
-      // The existing V1 OCR UI reads field.confidence. Keep that UI truthful by
-      // displaying the final evidence confidence, while geminiConfidence preserves
-      // the underlying Gemini score for later calculations.
       if (Number.isFinite(verificationConfidence)) aiField.confidence = verificationConfidence;
       comparisons[key] = {
         aiValue: `${STATUS_MARKERS[status]}${aiField.value}`,
@@ -252,9 +249,12 @@ function average(values) {
 }
 
 export function calculateVerificationConfidence({ ocrResult, providerInfo, dataKartComparison }) {
-  const ocrConfidence = average((ocrResult?.rawOcrEvidence || []).map((item) => Number(item.confidence)).filter(Number.isFinite));
+  const ocrConfidence = average((ocrResult?.rawOcrEvidence || [])
+    .filter((item) => !["barcode", "gtin"].includes(String(item?.field || "").toLowerCase()))
+    .map((item) => Number(item.confidence))
+    .filter(Number.isFinite));
   const semanticFields = Object.entries(ocrResult || {})
-    .filter(([, field]) => field && typeof field === "object" && field.status === "found")
+    .filter(([key, field]) => !["barcode", "gtin"].includes(String(key).toLowerCase()) && field && typeof field === "object" && field.status === "found")
     .map(([, field]) => Number(field.geminiConfidence ?? field.confidence))
     .filter(Number.isFinite);
   const semanticConfidence = average(semanticFields);
