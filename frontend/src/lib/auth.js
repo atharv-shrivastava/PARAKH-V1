@@ -72,6 +72,10 @@ function isTransientPost(url) {
   return /\/api\/(ocr\/|translate(?:\/|$)|products\/ecommerce\/(?:analyze-url|evaluate))/.test(url);
 }
 
+function isDataKartLookup(url) {
+  return /\/api\/datakart\/gtin\//.test(url);
+}
+
 async function optimizeOcrBody(body) {
   if (!(body instanceof FormData)) return body;
   const entries = [...body.entries()];
@@ -155,7 +159,8 @@ export async function apiFetch(url, options = {}) {
   }
   const method = String(options.method || "GET").toUpperCase();
   const isRead = ["GET", "HEAD"].includes(method);
-  if (isRead && typeof window !== "undefined") {
+  const dataKartLookup = isDataKartLookup(resolvedUrl);
+  if (isRead && !dataKartLookup && typeof window !== "undefined") {
     const cached = readCached(resolvedUrl);
     if (cached) return cachedResponse(cached);
   }
@@ -163,9 +168,14 @@ export async function apiFetch(url, options = {}) {
   const isOcrAnalyze = resolvedUrl.includes("/api/ocr/analyze");
   let body = isOcrAnalyze ? await optimizeOcrBody(options.body) : options.body;
   if (isRulesEngine) body = sanitizeRulesEngineBody(body);
-  const response = await fetch(resolvedUrl, { ...options, body, headers: { ...authHeaders(Boolean(body && typeof body === "string")), ...(options.headers || {}) } });
+  const response = await fetch(resolvedUrl, {
+    ...options,
+    cache: dataKartLookup ? "no-store" : options.cache,
+    body,
+    headers: { ...authHeaders(Boolean(body && typeof body === "string")), ...(options.headers || {}) },
+  });
   if (response.status === 401) clearSession();
   if (response.ok && !isRead && !isTransientPost(resolvedUrl)) invalidateApiCache();
-  if (response.ok && isRead) await cacheResponse(resolvedUrl, response);
+  if (response.ok && isRead && !dataKartLookup) await cacheResponse(resolvedUrl, response);
   return isOcrAnalyze ? sanitizeOcrResponse(response) : response;
 }
