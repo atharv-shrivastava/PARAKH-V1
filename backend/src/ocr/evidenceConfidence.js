@@ -1,3 +1,5 @@
+import { searchMrpRange } from "./marketPriceSearch.js";
+
 const FIELD_MAP = {
   productName: "product_name",
   brandName: "brand_name",
@@ -24,6 +26,13 @@ const FIELD_MAP = {
   fssaiLicenseNumber: "fssai_license_number",
   barcode: "barcode",
 };
+
+const RULE_ENGINE_FIELDS = [
+  "productName", "brandName", "manufacturer", "manufacturerAddress", "packer", "packerAddress",
+  "marketer", "marketerAddress", "importer", "importerAddress", "netQuantity", "unit", "mrp",
+  "currency", "dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate", "batchNumber",
+  "consumerCarePhone", "consumerCareEmail", "countryOfOrigin", "fssaiLicenseNumber",
+];
 
 const WEIGHTS = {
   datakart: 0.50,
@@ -124,6 +133,22 @@ async function fetchDataKartByGtin(gtin) {
   return Array.isArray(data) && data.length ? data[0] : null;
 }
 
+function buildRuleEngineInput(result) {
+  return Object.fromEntries(RULE_ENGINE_FIELDS.map((key) => {
+    const field = result?.[key];
+    if (!field || typeof field !== "object") return [key, field];
+    return [key, {
+      value: field.value ?? null,
+      raw: field.raw ?? null,
+      evidence: field.evidence ?? null,
+      confidence: field.confidence ?? 0,
+      status: field.status || "absent",
+      ...(field.imageIndex != null ? { imageIndex: field.imageIndex } : {}),
+      ...(field.evidenceIndex != null ? { evidenceIndex: field.evidenceIndex } : {}),
+    }];
+  }));
+}
+
 export async function applyEvidenceConfidence(result, options = {}) {
   const barcodeImageProvided = Boolean(options?.barcodeImageProvided);
   const next = { ...result };
@@ -131,6 +156,7 @@ export async function applyEvidenceConfidence(result, options = {}) {
   const explicitBarcode = String(next.barcode?.value ?? "").replace(/\D/g, "");
   const rapidBarcode = barcodeImageProvided ? null : extractGtinFromRapidEvidence(evidence);
   const barcode = explicitBarcode || rapidBarcode || null;
+
   if (!explicitBarcode && rapidBarcode) {
     next.barcode = {
       ...(next.barcode || { raw: null, confidence: 0, evidence: null, status: "absent" }),
@@ -141,8 +167,14 @@ export async function applyEvidenceConfidence(result, options = {}) {
       source: "RAPIDOCR_EVIDENCE"
     };
   }
+
+  // Capture the consensus/majority-vote package fields before DataKart evidence is attached.
+  next.ruleEngineInput = buildRuleEngineInput(result);
+  next.majorityVote = next.ruleEngineInput;
+
   let dataKart = null;
   let dataKartError = null;
+  let webMrpRange = null;
   const geminiAvailable = Boolean(result?.aiSemantic?.providerCount);
 
   if (barcode) {
@@ -150,6 +182,20 @@ export async function applyEvidenceConfidence(result, options = {}) {
       dataKart = await fetchDataKartByGtin(barcode);
     } catch (error) {
       dataKartError = error?.message || "DataKart lookup failed.";
+    }
+  }
+
+  // Web fallback is deliberately limited to MRP and only used when DataKart has no match.
+  if (!dataKart && !dataKartError) {
+    try {
+      webMrpRange = await searchMrpRange({
+        productName: result?.productName?.value,
+        brandName: result?.brandName?.value,
+        netQuantity: result?.netQuantity?.value,
+        unit: result?.unit?.value,
+      });
+    } catch (error) {
+      webMrpRange = { status: "UNAVAILABLE", error: error?.message || "Web MRP search failed." };
     }
   }
 
@@ -206,17 +252,43 @@ export async function applyEvidenceConfidence(result, options = {}) {
     details[fieldKey] = next[fieldKey].confidenceSources;
   }
 
+  // Keep the user-visible extracted value intact when DataKart is found. When it is not found,
+  // add the indicative web price range to the displayed MRP field without changing rule input.
+  if (next.mrp && webMrpRange?.min != null && webMrpRange?.max != null && next.mrp.value != null) {
+    next.mrp = {
+      ...next.mrp,
+      webMarketRange: webMrpRange,
+      value: `${next.mrp.value} · web MRP range ₹${webMrpRange.min}–₹${webMrpRange.max}`,
+    };
+  }
+
   next.evidenceConfidence = {
     weights: { ...WEIGHTS },
     method: "50% DataKart + 30% Gemini + 20% RapidOCR; unavailable sources are removed and remaining weights are renormalized.",
     dataKartAvailable: Boolean(dataKart),
     dataKartError,
+    webMrpRange,
     fields: details,
   };
 
   const gtin = barcode ? String(barcode).replace(/\D/g, "") : null;
-  const dataKartStatus = dataKart ? "REGISTERED" : dataKartError ? "UNAVAILABLE" : barcode ? "NOT_FOUND" : "NO_GTIN";
-  const dataKartMessage = dataKart ? "✓ Product found in DataKart" : dataKartError ? "? DataKart could not be reached" : barcode ? "✕ Product not found in DataKart" : "? Product could not be checked: no GTIN detected";
+  const dataKartStatus = dataKart
+    ? "REGISTERED"
+    : dataKartError
+      ? "UNAVAILABLE"
+      : barcodeImageProvided && !barcode
+        ? "BARCODE_UNREADABLE"
+        : barcode
+          ? "NOT_FOUND"
+          : "NO_GTIN";
+  const dataKartMessage = dataKart
+    ? "✓ Product found in DataKart"
+    : dataKartError
+      ? "? DataKart could not be reached"
+      : dataKartStatus === "BARCODE_UNREADABLE"
+        ? "? Barcode could not be decoded"
+        : "✕ Product not found in DataKart";
+
   next.dataKartVerification = {
     status: dataKartStatus,
     code: dataKartStatus,
