@@ -304,5 +304,5 @@ export async function applyEvidenceConfidence(result, options = {}) {
     source: "DATAKART_MOCK_REGISTRY",
   };
 
-  return next;
+  return { dataKartVerificationField: next.dataKartVerificationField, ...next };
 }
