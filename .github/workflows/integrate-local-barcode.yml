@@ -1,0 +1,27 @@
+name: Integrate local barcode reader
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply integration
+        run: node scripts/integrate_local_barcode.mjs
+      - name: Finalize
+        run: |
+          rm -f scripts/integrate_local_barcode.mjs .github/workflows/integrate-local-barcode.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/package.json backend/package-lock.json backend/src/ocr/barcodeDecoder.js backend/src/ocr/marketPriceSearch.js backend/src/ocr/fastRoutes.js backend/src/ocr/evidenceConfidence.js frontend/src/pages/Scan.jsx scripts/integrate_local_barcode.mjs .github/workflows/integrate-local-barcode.yml
+          git rm -f scripts/integrate_local_barcode.mjs .github/workflows/integrate-local-barcode.yml 2>/dev/null || true
+          git commit -m "feat: local barcode GTIN lookup with DataKart and MRP fallback"
+          git push origin HEAD:main
