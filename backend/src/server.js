@@ -9,6 +9,7 @@ import adminRouter from "./routes/admin.js";
 import rulesRouter from "./routes/rules.js";
 import translateRouter from "./routes/translate.js";
 import analyticsRouter from "./routes/analytics.js";
+import datakartRouter from "./routes/datakart.js";
 import fastOcrRouter from "./ocr/fastRoutes.js";
 import ocrRouter from "./ocr/routes.js";
 import ecommerceOcrRouter from "./routes/ecommerceOcr.js";
@@ -27,11 +28,10 @@ app.use("/api/rules", rulesRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/analytics", analyticsRouter);
 app.use("/api/translate", translateRouter);
+app.use("/api/datakart", datakartRouter);
 app.use("/api/products/ecommerce-ocr", ecommerceOcrRouter);
 
-// Production OCR uses RapidOCR + semantic verification + DataKart.
-// The OCR route applies evidence confidence exactly once, preserving the
-// scanner-provided barcode instead of reprocessing it through OCR evidence.
+// Production OCR uses RapidOCR + semantic verification.
 app.use("/api/ocr", fastOcrRouter);
 // Structured compliance evaluation is kept separate from OCR extraction.
 app.use("/api/ocr", ocrRouter);
