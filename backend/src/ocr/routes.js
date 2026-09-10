@@ -5,6 +5,8 @@ import { authenticate } from "../middleware/auth.js";
 
 const router = express.Router();
 
+const NON_LEGAL_IDENTIFIER_FIELDS = new Set(["barcode", "gtin"]);
+
 function fieldSource(fieldName) {
   const map = {
     productName: "PRODUCT_NAME", brandName: "BRAND", manufacturer: "MANUFACTURER", manufacturerAddress: "ADDRESS",
@@ -13,12 +15,12 @@ function fieldSource(fieldName) {
     dateOfManufacture: "DATE_OF_MANUFACTURE", dateOfPacking: "DATE_OF_PACKING", bestBefore: "BEST_BEFORE",
     expiryDate: "EXPIRY_DATE", batchNumber: "BATCH_NUMBER", consumerCarePhone: "CONSUMER_CARE",
     consumerCareEmail: "CONSUMER_CARE", countryOfOrigin: "COUNTRY_OF_ORIGIN", fssaiLicenseNumber: "FSSAI_LICENSE",
-    barcode: "BARCODE",
   };
   return map[fieldName] || fieldName.toUpperCase();
 }
 
 function addEvidence(evidence, field, item, sourceType = "OCR", explicitField = field) {
+  if (NON_LEGAL_IDENTIFIER_FIELDS.has(field)) return;
   if (!item || typeof item !== "object" || item.status !== "found" || item.value == null || String(item.value).trim() === "") return;
   evidence.push({
     evidenceId: `ocr-${field}-${crypto.randomUUID()}`,
@@ -39,6 +41,7 @@ function makeRulesEvidence(ocr) {
   const evidence = [];
 
   for (const [field, item] of Object.entries(ocr || {})) {
+    if (NON_LEGAL_IDENTIFIER_FIELDS.has(field)) continue;
     if (!item || typeof item !== "object" || item.status !== "found" || item.value == null || field === "semantic") continue;
     const type = fieldSource(field);
     const declaration = declarations.find((entry) => entry.type === type);
