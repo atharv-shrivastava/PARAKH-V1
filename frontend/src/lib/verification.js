@@ -164,17 +164,18 @@ function fieldScore(aiField, referenceValue, key) {
   return left === right ? 1 : left.includes(right) || right.includes(left) ? 0.85 : 0;
 }
 
-function rapidEvidenceForField(rapidEvidence, aiField, key) {
+function rapidEvidenceForField(rapidEvidence, aiField) {
   if (!Array.isArray(rapidEvidence)) return null;
   const evidenceIndex = Number.isInteger(aiField?.evidenceIndex) ? aiField.evidenceIndex : -1;
   if (evidenceIndex >= 0 && Number.isFinite(Number(rapidEvidence[evidenceIndex]?.confidence))) return Number(rapidEvidence[evidenceIndex].confidence);
+  const key = aiField?.fieldName;
   const candidate = rapidEvidence.find((item) => item?.field === key || item?.key === key || item?.name === key);
   return Number.isFinite(Number(candidate?.confidence)) ? Number(candidate.confidence) : null;
 }
 
 function combinedFieldConfidence(aiField, rapidEvidence, referenceScore) {
-  const gemini = Number(aiField?.confidence);
-  const rapid = rapidEvidenceForField(rapidEvidence, aiField, aiField?.fieldName);
+  const gemini = Number(aiField?.geminiConfidence ?? aiField?.confidence);
+  const rapid = rapidEvidenceForField(rapidEvidence, aiField);
   const values = [
     Number.isFinite(rapid) ? { value: rapid, weight: 0.30 } : null,
     Number.isFinite(gemini) ? { value: gemini, weight: 0.30 } : null,
@@ -200,13 +201,19 @@ export function compareWithDataKart(ocrResult, dataKart) {
 
     if (hasAiValue && hasReferenceValue) {
       const status = score >= 0.85 ? "MATCH" : "MISMATCH";
+      const geminiConfidence = Number(aiField.geminiConfidence ?? aiField.confidence);
+      aiField.geminiConfidence = Number.isFinite(geminiConfidence) ? geminiConfidence : null;
       const verificationConfidence = combinedFieldConfidence(aiField, rapidEvidence, score);
       aiField.verification = { status, confidence: verificationConfidence, referenceValue };
+      // The existing V1 OCR UI reads field.confidence. Keep that UI truthful by
+      // displaying the final evidence confidence, while geminiConfidence preserves
+      // the underlying Gemini score for later calculations.
+      if (Number.isFinite(verificationConfidence)) aiField.confidence = verificationConfidence;
       comparisons[key] = {
         aiValue: `${STATUS_MARKERS[status]}${aiField.value}`,
         rawAiValue: aiField.value,
         referenceValue,
-        score: score,
+        score: verificationConfidence,
         matchScore: score,
         verificationConfidence,
         match: status === "MATCH",
@@ -247,8 +254,8 @@ function average(values) {
 export function calculateVerificationConfidence({ ocrResult, providerInfo, dataKartComparison }) {
   const ocrConfidence = average((ocrResult?.rawOcrEvidence || []).map((item) => Number(item.confidence)).filter(Number.isFinite));
   const semanticFields = Object.entries(ocrResult || {})
-    .filter(([, field]) => field && typeof field === "object" && field.status === "found" && !field.verification)
-    .map(([, field]) => Number(field.confidence))
+    .filter(([, field]) => field && typeof field === "object" && field.status === "found")
+    .map(([, field]) => Number(field.geminiConfidence ?? field.confidence))
     .filter(Number.isFinite);
   const semanticConfidence = average(semanticFields);
   const dataKartConfidence = Number.isFinite(Number(dataKartComparison?.matchRate)) ? Number(dataKartComparison.matchRate) : null;
