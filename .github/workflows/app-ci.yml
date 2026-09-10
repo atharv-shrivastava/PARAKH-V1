@@ -43,7 +43,6 @@ jobs:
       - run: npx prisma generate
 
   integrate-local-barcode:
-    if: ${{ hashFiles('scripts/integrate_local_barcode.py') != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -54,5 +53,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Run integration
-        run: python3 scripts/integrate_local_barcode.py
+      - name: Run integration only when script exists
+        run: |
+          if [ -f scripts/integrate_local_barcode.py ]; then
+            python3 scripts/integrate_local_barcode.py
+          else
+            echo "No one-shot integration script present; nothing to do."
+          fi
