@@ -1,6 +1,7 @@
 import { BrowserMultiFormatReader } from "@zxing/browser";
+import { apiFetch } from "./auth";
 
-const DATAKART_API_URL = import.meta.env.VITE_DATAKART_API_URL || "http://localhost:4000";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 const STATUS_MARKERS = { MATCH: "\u2060", MISMATCH: "\u2061", UNKNOWN: "\u2062" };
 
 const FIELD_MAP = {
@@ -9,7 +10,7 @@ const FIELD_MAP = {
   importer: "importer", importerAddress: "importer_address", netQuantity: "net_quantity", unit: "unit", mrp: "mrp", currency: "currency",
   dateOfManufacture: "date_of_manufacture", dateOfPacking: "date_of_packing", bestBefore: "best_before", expiryDate: "expiry_date",
   batchNumber: "batch_number", consumerCarePhone: "consumer_care_phone", consumerCareEmail: "consumer_care_email", countryOfOrigin: "country_of_origin",
-  fssaiLicenseNumber: "fssai_license_number", barcode: "barcode",
+  fssaiLicenseNumber: "fssai_license_number",
 };
 
 function normalize(value) {
@@ -23,7 +24,7 @@ const GENERIC_PRODUCT_DESCRIPTORS = [
 
 function productIdentity(value) {
   let text = normalize(value);
-  for (const descriptor of GENERIC_PRODUCT_DESCRIPTORS) text = text.replace(new RegExp(`\\b${descriptor.replace(/\s+/g, "\\\\s+")}\\b`, "gi"), " ");
+  for (const descriptor of GENERIC_PRODUCT_DESCRIPTORS) text = text.replace(new RegExp(`\\b${descriptor.replace(/\s+/g, "\\s+")}\\b`, "gi"), " ");
   return text.replace(/\s+/g, " ").trim();
 }
 
@@ -98,9 +99,7 @@ export async function scanBarcodeImage(file, timeoutMs = 5000) {
       ]);
       const parsed = parseBarcodeResult(result);
       if (parsed.found) return { attempted: true, ...parsed };
-    } catch {
-      // Continue with local image preprocessing passes below.
-    }
+    } catch {}
 
     const remaining = Math.max(500, timeoutMs - (Date.now() - started));
     const passes = [
@@ -119,9 +118,7 @@ export async function scanBarcodeImage(file, timeoutMs = 5000) {
           const parsed = parseBarcodeResult(result);
           if (parsed.found) return { attempted: true, ...parsed };
         }
-      } catch {
-        // Try the next preprocessing pass.
-      }
+      } catch {}
     }
 
     return { attempted: true, found: false, value: null, format: null, confidence: 0, error: "Barcode was not decoded from this image." };
@@ -135,21 +132,21 @@ export async function scanBarcodeImage(file, timeoutMs = 5000) {
 
 export async function lookupDataKart(gtin, signal) {
   const normalizedGtin = String(gtin || "").replace(/\s+/g, "").trim();
-  if (!normalizedGtin) return { attempted: false, found: false, gtin: null, product: null, error: null };
+  if (!normalizedGtin) return { attempted: false, found: false, gtin: null, product: null, error: null, source: null };
   try {
-    const response = await fetch(`${DATAKART_API_URL}/api/products/gtin/${encodeURIComponent(normalizedGtin)}`, { signal, headers: { Accept: "application/json" } });
+    const response = await apiFetch(`${API_URL}/datakart/gtin/${encodeURIComponent(normalizedGtin)}`, { signal });
     const data = await response.json().catch(() => ({}));
-    if (response.status === 404) return { attempted: true, found: false, gtin: normalizedGtin, product: null, error: null };
+    if (response.status === 404) return { attempted: true, found: false, gtin: normalizedGtin, product: null, error: null, source: data?.source || "datakart-supabase" };
     if (!response.ok) throw new Error(data?.error || `DataKart lookup failed (${response.status}).`);
-    return { attempted: true, found: Boolean(data?.found && data?.product), gtin: normalizedGtin, product: data?.product || null, error: null };
+    return { attempted: true, found: Boolean(data?.found && data?.product), gtin: normalizedGtin, product: data?.product || null, error: null, source: data?.source || "datakart-supabase" };
   } catch (error) {
     if (error?.name === "AbortError") throw error;
-    return { attempted: true, found: false, gtin: normalizedGtin, product: null, error: error?.message || "DataKart lookup failed." };
+    return { attempted: true, found: false, gtin: normalizedGtin, product: null, error: error?.message || "DataKart lookup failed.", source: "datakart-supabase" };
   }
 }
 
 function fieldScore(aiField, referenceValue, key) {
-  if (!aiField || aiField.status !== "found" || aiField.value == null || referenceValue == null || referenceValue === "") return null;
+  if (!aiField || aiField.status !== "found" || aiField.value == null || referenceValue == null || String(referenceValue).trim() === "") return null;
   if (key === "mrp" || key === "netQuantity") {
     const left = numeric(aiField.value), right = numeric(referenceValue);
     if (left == null || right == null) return 0;
@@ -167,10 +164,17 @@ function fieldScore(aiField, referenceValue, key) {
   return left === right ? 1 : left.includes(right) || right.includes(left) ? 0.85 : 0;
 }
 
+function rapidEvidenceForField(rapidEvidence, aiField, key) {
+  if (!Array.isArray(rapidEvidence)) return null;
+  const evidenceIndex = Number.isInteger(aiField?.evidenceIndex) ? aiField.evidenceIndex : -1;
+  if (evidenceIndex >= 0 && Number.isFinite(Number(rapidEvidence[evidenceIndex]?.confidence))) return Number(rapidEvidence[evidenceIndex].confidence);
+  const candidate = rapidEvidence.find((item) => item?.field === key || item?.key === key || item?.name === key);
+  return Number.isFinite(Number(candidate?.confidence)) ? Number(candidate.confidence) : null;
+}
+
 function combinedFieldConfidence(aiField, rapidEvidence, referenceScore) {
   const gemini = Number(aiField?.confidence);
-  const evidenceIndex = Number.isInteger(aiField?.evidenceIndex) ? aiField.evidenceIndex : -1;
-  const rapid = evidenceIndex >= 0 ? Number(rapidEvidence?.[evidenceIndex]?.confidence) : NaN;
+  const rapid = rapidEvidenceForField(rapidEvidence, aiField, aiField?.fieldName);
   const values = [
     Number.isFinite(rapid) ? { value: rapid, weight: 0.30 } : null,
     Number.isFinite(gemini) ? { value: gemini, weight: 0.30 } : null,
@@ -184,30 +188,32 @@ export function compareWithDataKart(ocrResult, dataKart) {
   const comparisons = {};
   if (!dataKart?.found || !dataKart.product) return { matchedFields: 0, comparedFields: 0, unknownFields: 0, matchRate: null, comparisons };
   const rapidEvidence = Array.isArray(ocrResult?.rawOcrEvidence) ? ocrResult.rawOcrEvidence : [];
+
   for (const [key, column] of Object.entries(FIELD_MAP)) {
-    if (key === "barcode") continue;
     const aiField = ocrResult?.[key];
+    if (!aiField || typeof aiField !== "object") continue;
+    aiField.fieldName = key;
     const referenceValue = dataKart.product[column];
     const score = fieldScore(aiField, referenceValue, key);
-    const hasAiValue = Boolean(aiField && aiField.status === "found" && aiField.value != null && String(aiField.value).trim());
+    const hasAiValue = aiField.status === "found" && aiField.value != null && String(aiField.value).trim() !== "";
     const hasReferenceValue = referenceValue != null && String(referenceValue).trim() !== "";
+
     if (hasAiValue && hasReferenceValue) {
       const status = score >= 0.85 ? "MATCH" : "MISMATCH";
       const verificationConfidence = combinedFieldConfidence(aiField, rapidEvidence, score);
-      aiField.verification = { status, confidence: verificationConfidence };
-      if (Number.isFinite(verificationConfidence)) aiField.confidence = verificationConfidence;
+      aiField.verification = { status, confidence: verificationConfidence, referenceValue };
       comparisons[key] = {
         aiValue: `${STATUS_MARKERS[status]}${aiField.value}`,
         rawAiValue: aiField.value,
         referenceValue,
-        score: null,
+        score: score,
         matchScore: score,
         verificationConfidence,
         match: status === "MATCH",
         status,
       };
     } else if (hasAiValue && !hasReferenceValue) {
-      aiField.verification = { status: "UNVERIFIED", confidence: null };
+      aiField.verification = { status: "UNVERIFIED", confidence: null, referenceValue: null };
       comparisons[key] = {
         aiValue: `${STATUS_MARKERS.UNKNOWN}${aiField.value}`,
         rawAiValue: aiField.value,
@@ -220,6 +226,7 @@ export function compareWithDataKart(ocrResult, dataKart) {
       };
     }
   }
+
   const comparable = Object.values(comparisons).filter((item) => Number.isFinite(item.matchScore));
   const matchedFields = comparable.filter((item) => item.match).length;
   const unknownFields = Object.values(comparisons).filter((item) => item.status === "UNKNOWN").length;
@@ -239,8 +246,11 @@ function average(values) {
 
 export function calculateVerificationConfidence({ ocrResult, providerInfo, dataKartComparison }) {
   const ocrConfidence = average((ocrResult?.rawOcrEvidence || []).map((item) => Number(item.confidence)).filter(Number.isFinite));
-  const semanticFields = Object.values(ocrResult || {}).filter((field) => field && typeof field === "object" && "confidence" in field);
-  const semanticConfidence = average(semanticFields.map((field) => Number(field.confidence)).filter(Number.isFinite));
+  const semanticFields = Object.entries(ocrResult || {})
+    .filter(([, field]) => field && typeof field === "object" && field.status === "found" && !field.verification)
+    .map(([, field]) => Number(field.confidence))
+    .filter(Number.isFinite);
+  const semanticConfidence = average(semanticFields);
   const dataKartConfidence = Number.isFinite(Number(dataKartComparison?.matchRate)) ? Number(dataKartComparison.matchRate) : null;
   const components = [
     { key: "ocr", label: "OCR", score: ocrConfidence, weight: 0.35 },
