@@ -51,10 +51,7 @@ async function loadImageCanvas(file, scale = 1, rotation = 0) {
   canvas.width = Math.max(1, Math.round(width * cos + height * sin));
   canvas.height = Math.max(1, Math.round(width * sin + height * cos));
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) {
-    bitmap.close();
-    throw new Error("Could not prepare barcode image.");
-  }
+  if (!ctx) { bitmap.close(); throw new Error("Could not prepare barcode image."); }
   ctx.translate(canvas.width / 2, canvas.height / 2);
   ctx.rotate(radians);
   ctx.drawImage(bitmap, -width / 2, -height / 2, width, height);
@@ -107,9 +104,8 @@ export async function lookupDataKart(gtin, signal) {
   if (!isValidGtin(normalizedGtin)) {
     return { attempted: false, found: false, gtin: normalizedGtin || null, product: null, error: normalizedGtin ? "DataKart lookup requires a valid GTIN." : null, status: "NOT_ATTEMPTED", source: null };
   }
-
   try {
-    const response = await apiFetch(`${API_URL}/datakart/gtin/${encodeURIComponent(normalizedGtin)}`, { signal });
+    const response = await apiFetch(`${API_URL}/datakart/gtin/${encodeURIComponent(normalizedGtin)}`, { signal, cache: "no-store" });
     const data = await response.json().catch(() => ({}));
     if (response.status === 404) return { attempted: true, found: false, gtin: normalizedGtin, product: null, error: null, status: "NOT_FOUND", source: data?.source || "datakart-supabase" };
     if (!response.ok) return { attempted: true, found: false, gtin: normalizedGtin, product: null, error: data?.error || `DataKart lookup failed (${response.status}).`, status: "ERROR", source: data?.source || "datakart-supabase" };
@@ -157,19 +153,20 @@ function rapidConfidence(evidence, field) {
 }
 
 function weightedAverage(parts) {
-  const usable = parts.filter((part) => Number.isFinite(part.score));
+  const usable = parts.filter((part) => Number.isFinite(part.score) && part.weight > 0);
   if (!usable.length) return null;
   const totalWeight = usable.reduce((sum, part) => sum + part.weight, 0);
   return usable.reduce((sum, part) => sum + part.score * part.weight, 0) / totalWeight;
 }
 
 export function compareWithDataKart(ocrResult, dataKart) {
-  const empty = { matchedFields: 0, comparedFields: 0, unknownFields: 0, matchRate: null, comparisons: {} };
+  const empty = { matchedFields: 0, comparedFields: 0, unknownFields: 0, matchRate: null, comparisons: {}, gtin: dataKart?.gtin || null, status: dataKart?.status || "NOT_FOUND" };
   if (!dataKart?.found || !dataKart.product) return empty;
 
   const comparisons = {};
   const rapidEvidence = Array.isArray(ocrResult?.rawOcrEvidence) ? ocrResult.rawOcrEvidence : [];
   for (const [key, column] of Object.entries(FIELD_MAP)) {
+    if (NON_COMPLIANCE_FIELDS.has(key)) continue;
     const sourceField = ocrResult?.[key];
     if (!sourceField || typeof sourceField !== "object") continue;
     const field = { ...sourceField, fieldName: key };
@@ -177,20 +174,20 @@ export function compareWithDataKart(ocrResult, dataKart) {
     const matchScore = fieldMatchScore(field, referenceValue, key);
     const hasAi = field.status === "found" && field.value != null && String(field.value).trim() !== "";
     const hasReference = referenceValue != null && String(referenceValue).trim() !== "";
-
-    if (hasAi && hasReference) {
-      const match = matchScore >= 0.85;
-      const gemini = Number(field.geminiConfidence ?? field.confidence);
-      const rapid = rapidConfidence(rapidEvidence, field);
-      const verificationConfidence = weightedAverage([
-        { score: rapid, weight: 0.30 },
-        { score: Number.isFinite(gemini) ? gemini : null, weight: 0.30 },
-        { score: matchScore, weight: 0.40 },
-      ]);
-      comparisons[key] = { aiValue: field.value, rawAiValue: field.value, referenceValue, matchScore, verificationConfidence, score: verificationConfidence, match, status: match ? "MATCH" : "MISMATCH" };
-    } else if (hasAi && !hasReference) {
+    if (!hasAi) continue;
+    if (!hasReference) {
       comparisons[key] = { aiValue: field.value, rawAiValue: field.value, referenceValue: null, matchScore: null, verificationConfidence: null, score: null, match: null, status: "UNKNOWN" };
+      continue;
     }
+    const match = matchScore >= 0.85;
+    const gemini = Number(field.geminiConfidence ?? field.confidence);
+    const rapid = rapidConfidence(rapidEvidence, field);
+    const verificationConfidence = weightedAverage([
+      { score: Number.isFinite(rapid) ? rapid : null, weight: 0.30 },
+      { score: Number.isFinite(gemini) ? gemini : null, weight: 0.30 },
+      { score: matchScore, weight: 0.40 },
+    ]);
+    comparisons[key] = { aiValue: field.value, rawAiValue: field.value, referenceValue, matchScore, verificationConfidence, score: verificationConfidence, match, status: match ? "MATCH" : "MISMATCH" };
   }
 
   const comparable = Object.values(comparisons).filter((item) => Number.isFinite(item.matchScore));
@@ -200,6 +197,8 @@ export function compareWithDataKart(ocrResult, dataKart) {
     unknownFields: Object.values(comparisons).filter((item) => item.status === "UNKNOWN").length,
     matchRate: comparable.length ? comparable.reduce((sum, item) => sum + item.matchScore, 0) / comparable.length : null,
     comparisons,
+    gtin: dataKart.gtin,
+    status: "FOUND",
   };
 }
 
@@ -210,10 +209,10 @@ function average(values) {
 
 export function calculateVerificationConfidence({ ocrResult, dataKartComparison }) {
   const ocrConfidence = average((ocrResult?.rawOcrEvidence || [])
-    .filter((item) => !NON_COMPLIANCE_FIELDS.has(String(item?.field || "")))
+    .filter((item) => !NON_COMPLIANCE_FIELDS.has(String(item?.field || "").toLowerCase()))
     .map((item) => Number(item.confidence)));
   const semanticConfidence = average(Object.entries(ocrResult || {})
-    .filter(([key, field]) => !NON_COMPLIANCE_FIELDS.has(key) && field && typeof field === "object" && field.status === "found")
+    .filter(([key, field]) => !NON_COMPLIANCE_FIELDS.has(String(key).toLowerCase()) && field && typeof field === "object" && field.status === "found")
     .map(([, field]) => Number(field.geminiConfidence ?? field.confidence)));
   const dataKartConfidence = Number.isFinite(Number(dataKartComparison?.matchRate)) ? Number(dataKartComparison.matchRate) : null;
   const overall = weightedAverage([
@@ -221,12 +220,17 @@ export function calculateVerificationConfidence({ ocrResult, dataKartComparison 
     { score: semanticConfidence, weight: 0.30 },
     { score: dataKartConfidence, weight: 0.40 },
   ]) ?? average([ocrConfidence, semanticConfidence]);
-
+  const resolved = Number.isFinite(overall) ? Math.max(0, Math.min(1, overall)) : 0;
   return {
-    overall: overall ?? 0,
+    overall: resolved,
+    percentage: Math.round(resolved * 100),
+    label: resolved >= 0.85 ? "HIGH" : resolved >= 0.65 ? "MEDIUM" : "LOW",
     components: { ocr: ocrConfidence, gemini: semanticConfidence, datakart: dataKartConfidence },
     weights: { ocr: 0.30, gemini: 0.30, datakart: 0.40 },
     barcodeExcludedFromCompliance: true,
-    dataKartComparedFields: Number(dataKartComparison?.comparedFields || 0),
+    matchedFields: Number(dataKartComparison?.matchedFields || 0),
+    comparedFields: Number(dataKartComparison?.comparedFields || 0),
+    dataKartStatus: dataKartComparison?.status || "NOT_ATTEMPTED",
+    disclaimer: "Evidence-confidence score only; it is not a statistical probability of legal compliance.",
   };
 }
