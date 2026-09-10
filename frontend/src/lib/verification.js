@@ -185,62 +185,69 @@ function combinedFieldConfidence(aiField, rapidEvidence, referenceScore) {
   return weightTotal ? values.reduce((sum, item) => sum + item.value * item.weight, 0) / weightTotal : null;
 }
 
+function emptyDataKartComparison() {
+  return { matchedFields: 0, comparedFields: 0, unknownFields: 0, matchRate: null, comparisons: {} };
+}
+
 export function compareWithDataKart(ocrResult, dataKart) {
-  const comparisons = {};
-  if (!dataKart?.found || !dataKart.product) return { matchedFields: 0, comparedFields: 0, unknownFields: 0, matchRate: null, comparisons };
-  const rapidEvidence = Array.isArray(ocrResult?.rawOcrEvidence) ? ocrResult.rawOcrEvidence : [];
+  try {
+    const comparisons = {};
+    if (!dataKart?.found || !dataKart.product) return emptyDataKartComparison();
+    const rapidEvidence = Array.isArray(ocrResult?.rawOcrEvidence) ? ocrResult.rawOcrEvidence : [];
 
-  for (const [key, column] of Object.entries(FIELD_MAP)) {
-    const aiField = ocrResult?.[key];
-    if (!aiField || typeof aiField !== "object") continue;
-    aiField.fieldName = key;
-    const referenceValue = dataKart.product[column];
-    const score = fieldScore(aiField, referenceValue, key);
-    const hasAiValue = aiField.status === "found" && aiField.value != null && String(aiField.value).trim() !== "";
-    const hasReferenceValue = referenceValue != null && String(referenceValue).trim() !== "";
+    for (const [key, column] of Object.entries(FIELD_MAP)) {
+      const sourceField = ocrResult?.[key];
+      if (!sourceField || typeof sourceField !== "object") continue;
+      const aiField = { ...sourceField, fieldName: key };
+      const referenceValue = dataKart.product[column];
+      const score = fieldScore(aiField, referenceValue, key);
+      const hasAiValue = aiField.status === "found" && aiField.value != null && String(aiField.value).trim() !== "";
+      const hasReferenceValue = referenceValue != null && String(referenceValue).trim() !== "";
 
-    if (hasAiValue && hasReferenceValue) {
-      const status = score >= 0.85 ? "MATCH" : "MISMATCH";
-      const geminiConfidence = Number(aiField.geminiConfidence ?? aiField.confidence);
-      aiField.geminiConfidence = Number.isFinite(geminiConfidence) ? geminiConfidence : null;
-      const verificationConfidence = combinedFieldConfidence(aiField, rapidEvidence, score);
-      aiField.verification = { status, confidence: verificationConfidence, referenceValue };
-      if (Number.isFinite(verificationConfidence)) aiField.confidence = verificationConfidence;
-      comparisons[key] = {
-        aiValue: `${STATUS_MARKERS[status]}${aiField.value}`,
-        rawAiValue: aiField.value,
-        referenceValue,
-        score: verificationConfidence,
-        matchScore: score,
-        verificationConfidence,
-        match: status === "MATCH",
-        status,
-      };
-    } else if (hasAiValue && !hasReferenceValue) {
-      aiField.verification = { status: "UNVERIFIED", confidence: null, referenceValue: null };
-      comparisons[key] = {
-        aiValue: `${STATUS_MARKERS.UNKNOWN}${aiField.value}`,
-        rawAiValue: aiField.value,
-        referenceValue: null,
-        score: null,
-        matchScore: null,
-        verificationConfidence: null,
-        match: null,
-        status: "UNKNOWN",
-      };
+      if (hasAiValue && hasReferenceValue) {
+        const status = score >= 0.85 ? "MATCH" : "MISMATCH";
+        const geminiConfidence = Number(aiField.geminiConfidence ?? aiField.confidence);
+        aiField.geminiConfidence = Number.isFinite(geminiConfidence) ? geminiConfidence : null;
+        const verificationConfidence = combinedFieldConfidence(aiField, rapidEvidence, score);
+        aiField.verification = { status, confidence: verificationConfidence, referenceValue };
+        comparisons[key] = {
+          aiValue: `${STATUS_MARKERS[status]}${aiField.value}`,
+          rawAiValue: aiField.value,
+          referenceValue,
+          score: verificationConfidence,
+          matchScore: score,
+          verificationConfidence,
+          match: status === "MATCH",
+          status,
+        };
+      } else if (hasAiValue && !hasReferenceValue) {
+        comparisons[key] = {
+          aiValue: `${STATUS_MARKERS.UNKNOWN}${aiField.value}`,
+          rawAiValue: aiField.value,
+          referenceValue: null,
+          score: null,
+          matchScore: null,
+          verificationConfidence: null,
+          match: null,
+          status: "UNKNOWN",
+        };
+      }
     }
-  }
 
-  const comparable = Object.values(comparisons).filter((item) => Number.isFinite(item.matchScore));
-  const matchedFields = comparable.filter((item) => item.match).length;
-  const unknownFields = Object.values(comparisons).filter((item) => item.status === "UNKNOWN").length;
-  return {
-    matchedFields,
-    comparedFields: comparable.length,
-    unknownFields,
-    matchRate: comparable.length ? comparable.reduce((sum, item) => sum + item.matchScore, 0) / comparable.length : null,
-    comparisons,
-  };
+    const comparable = Object.values(comparisons).filter((item) => Number.isFinite(item.matchScore));
+    const matchedFields = comparable.filter((item) => item.match).length;
+    const unknownFields = Object.values(comparisons).filter((item) => item.status === "UNKNOWN").length;
+    return {
+      matchedFields,
+      comparedFields: comparable.length,
+      unknownFields,
+      matchRate: comparable.length ? comparable.reduce((sum, item) => sum + item.matchScore, 0) / comparable.length : null,
+      comparisons,
+    };
+  } catch (error) {
+    console.error("[datakart:comparison]", error);
+    return emptyDataKartComparison();
+  }
 }
 
 function average(values) {
