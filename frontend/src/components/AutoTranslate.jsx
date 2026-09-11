@@ -5,7 +5,7 @@ import { useLanguage } from "./LanguageProvider";
 const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT"]);
 const SKIP_SELECTOR = "[data-no-auto-translate=\"true\"], .language-picker";
 const TRANSLATABLE_ATTRIBUTES = ["placeholder", "aria-label", "title"];
-const CACHE_VERSION = "v2";
+const CACHE_VERSION = "v3";
 
 function shouldSkip(node) {
   const parent = node.parentElement;
@@ -30,6 +30,10 @@ function isDynamicIdentityElement(element) {
   return Boolean(element.closest('[data-no-auto-translate="true"], .product-identity, .category-identity'));
 }
 
+function isProbablyTechnicalText(text) {
+  return /^(?:[A-Z]{2,8}[-_\d]+|v?\d+(?:\.\d+){1,3}|\d{8,18})$/.test(text.trim());
+}
+
 export default function AutoTranslate() {
   const { language } = useLanguage();
   const originals = useRef(new WeakMap());
@@ -51,10 +55,34 @@ export default function AutoTranslate() {
 
     let cancelled = false;
 
+    function restoreTrackedEnglish() {
+      if (typeof document === "undefined") return;
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        const original = originals.current.get(node);
+        if (original != null && node.nodeValue !== original) node.nodeValue = original;
+      }
+
+      for (const element of document.body.querySelectorAll("[placeholder], [aria-label], [title]")) {
+        const originalsForElement = attributeOriginals.current.get(element);
+        if (!originalsForElement) continue;
+        for (const attribute of TRANSLATABLE_ATTRIBUTES) {
+          if (originalsForElement[attribute] != null && element.getAttribute(attribute) !== originalsForElement[attribute]) {
+            element.setAttribute(attribute, originalsForElement[attribute]);
+          }
+        }
+      }
+    }
+
     async function process() {
       if (cancelled || busy.current) return;
       const root = document.body;
       if (!root) return;
+
+      // Always restore the last known English source before scanning. This prevents
+      // translated React re-renders from becoming the new "original" text.
+      restoreTrackedEnglish();
 
       const nodes = [];
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -62,6 +90,9 @@ export default function AutoTranslate() {
       while ((node = walker.nextNode())) {
         if (shouldSkip(node)) continue;
         if (!originals.current.has(node)) originals.current.set(node, node.nodeValue || "");
+        const original = originals.current.get(node) || "";
+        const { core } = splitWhitespace(original);
+        if (!core || isProbablyTechnicalText(core)) continue;
         nodes.push(node);
       }
 
@@ -71,7 +102,7 @@ export default function AutoTranslate() {
         for (const attribute of TRANSLATABLE_ATTRIBUTES) {
           if (!element.hasAttribute(attribute)) continue;
           const value = element.getAttribute(attribute) || "";
-          if (value.trim().length < 2) continue;
+          if (value.trim().length < 2 || isProbablyTechnicalText(value)) continue;
           if (!attributeOriginals.current.has(element)) attributeOriginals.current.set(element, {});
           const originalsForElement = attributeOriginals.current.get(element);
           if (originalsForElement[attribute] == null) originalsForElement[attribute] = value;
@@ -79,20 +110,13 @@ export default function AutoTranslate() {
         }
       }
 
-      if (language === "en") {
-        for (const item of nodes) {
-          const original = originals.current.get(item);
-          if (original != null && item.nodeValue !== original) item.nodeValue = original;
-        }
-        for (const item of elements) item.element.setAttribute(item.attribute, item.original);
-        return;
-      }
+      if (language === "en") return;
 
       const missing = [];
       const missingSet = new Set();
       const addMissing = (value) => {
         const core = splitWhitespace(value).core;
-        if (!core || missingSet.has(core) || cache.current.has(core)) return;
+        if (!core || isProbablyTechnicalText(core) || missingSet.has(core) || cache.current.has(core)) return;
         missingSet.add(core);
         missing.push(core);
       };
@@ -100,26 +124,10 @@ export default function AutoTranslate() {
       for (const item of nodes) addMissing(originals.current.get(item) || "");
       for (const item of elements) addMissing(item.original);
 
-      if (!missing.length) {
-        for (const item of nodes) {
-          const original = originals.current.get(item);
-          if (!original) continue;
-          const { leading, core, trailing } = splitWhitespace(original);
-          const translated = cache.current.get(core);
-          if (translated) item.nodeValue = `${leading}${translated}${trailing}`;
-        }
-        for (const item of elements) {
-          const { leading, core, trailing } = splitWhitespace(item.original);
-          const translated = cache.current.get(core);
-          if (translated) item.element.setAttribute(item.attribute, `${leading}${translated}${trailing}`);
-        }
-        return;
-      }
-
       busy.current = true;
       try {
-        for (let offset = 0; offset < missing.length; offset += 50) {
-          const batch = missing.slice(offset, offset + 50);
+        for (let offset = 0; offset < missing.length; offset += 40) {
+          const batch = missing.slice(offset, offset + 40);
           const response = await apiFetch("http://localhost:5000/api/translate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -130,14 +138,14 @@ export default function AutoTranslate() {
           const failedTexts = new Set(Array.isArray(data?.failures) ? data.failures.map((item) => String(item?.text || "")) : []);
           for (const text of batch) {
             const translated = data?.translations?.[text];
-            if (!failedTexts.has(text) && typeof translated === "string" && translated.trim()) {
+            if (!failedTexts.has(text) && typeof translated === "string" && translated.trim() && translated !== text) {
               cache.current.set(text, translated);
             }
           }
           if (cancelled) return;
         }
 
-        const compact = Object.fromEntries([...cache.current.entries()].slice(-900));
+        const compact = Object.fromEntries([...cache.current.entries()].slice(-1200));
         localStorage.setItem(cacheKey, JSON.stringify(compact));
 
         for (const item of nodes) {
@@ -153,7 +161,7 @@ export default function AutoTranslate() {
           if (translated) item.element.setAttribute(item.attribute, `${leading}${translated}${trailing}`);
         }
       } catch {
-        // Keep original text when the translation service is unavailable.
+        // Keep English source text when translation is unavailable or malformed.
       } finally {
         busy.current = false;
       }
@@ -161,16 +169,22 @@ export default function AutoTranslate() {
 
     const schedule = () => {
       window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(process, 120);
+      timer.current = window.setTimeout(process, 180);
     };
+
     schedule();
-    observer.current = new MutationObserver(schedule);
-    observer.current.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: TRANSLATABLE_ATTRIBUTES });
+    observer.current = new MutationObserver((mutations) => {
+      // React route/page changes create or remove nodes. Ignore our own characterData
+      // and attribute mutations so translation cannot repeatedly retrigger itself.
+      if (mutations.some((mutation) => mutation.type === "childList" && mutation.addedNodes.length)) schedule();
+    });
+    observer.current.observe(document.body, { childList: true, subtree: true });
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer.current);
       observer.current?.disconnect();
+      restoreTrackedEnglish();
     };
   }, [language]);
 
