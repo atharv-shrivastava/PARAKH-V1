@@ -131,7 +131,11 @@ export async function applyEvidenceConfidence(result, options = {}) {
     }
   }
 
-  if (!dataKart && !dataKartError) {
+  // Web MRP lookup is an expensive fallback. Only run it when we actually
+  // had a GTIN and DataKart could not find that GTIN. A successful DataKart
+  // match never starts web search; no GTIN also skips web search entirely.
+  const shouldSearchWebMrp = Boolean(barcode) && !dataKart && !dataKartError;
+  if (shouldSearchWebMrp) {
     try {
       webMrpRange = await searchMrpRange({
         productName: result?.productName?.value,
@@ -170,8 +174,6 @@ export async function applyEvidenceConfidence(result, options = {}) {
     details[fieldKey] = nextField.confidenceSources;
   }
 
-  // Snapshot only the high-confidence extracted package data for the Rules Engine.
-  // DataKart values are intentionally excluded from this object.
   next.ruleEngineInput = buildRuleEngineInput(next);
   next.majorityVote = next.ruleEngineInput;
 
