@@ -24,6 +24,8 @@ import AdminGlobalCategoryType from "./pages/AdminGlobalCategoryType";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminRules from "./pages/AdminRules";
 import EcommerceInspection from "./pages/EcommerceInspection";
+import ComplianceIntelligence from "./pages/ComplianceIntelligence";
+import BatchAlerts from "./pages/BatchAlerts";
 import { getToken, getUser } from "./lib/auth";
 
 function Protected() { const location = useLocation(); return getToken() ? <Outlet /> : <Navigate to="/login" replace state={{ from: location.pathname }} />; }
@@ -40,6 +42,8 @@ function App() {
       <Route path="/ecommerce-products" element={<EcommerceProducts />} /><Route path="/ecommerce-products/category/:categoryId" element={<EcommerceCategoryPage />} />
       <Route path="/products/register" element={<FoodProductRegistration />} /><Route path="/products/manual-register" element={<ManualProductRegistration />} />
       <Route path="/history" element={<History />} /><Route path="/reports" element={<Reports />} /><Route path="/profile" element={<Profile />} />
+      <Route path="/intelligence" element={<ComplianceIntelligence />} />
+      <Route path="/batch-alerts" element={<BatchAlerts />} />
       <Route element={<AdminOnly />}>
         <Route path="/admin" element={<AdminDashboard />} />
         <Route path="/admin/categories" element={<AdminCategories />} />
