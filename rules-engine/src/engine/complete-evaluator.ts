@@ -26,22 +26,21 @@ function normalizeMissingEvidenceViolations(
 ): OverallInspectionResult['findings'] {
   return findings.map((finding) => {
     const evidenceUsed = Array.isArray(finding.evidenceUsed) ? finding.evidenceUsed : [];
-    const missingEvidence = Array.isArray(finding.missingEvidence) ? finding.missingEvidence : [];
     const message = String(finding.message ?? '').toLowerCase();
     const reason = String(finding.violationReason ?? '').toLowerCase();
 
-    // The generic evaluator historically represented missing/low-confidence
-    // declarations as VIOLATION findings even though it had no evidence for
-    // the finding. Treat those as UNABLE_TO_VERIFY. Real evidence-backed
-    // violations and explicit inspector findings remain VIOLATION.
+    // The generic evaluator can represent an unestablished declaration as a
+    // VIOLATION even when it has no supporting evidence. That is uncertainty,
+    // not proof of non-compliance. Keep evidence-backed and explicit inspector
+    // findings as genuine violations.
     const describesUnverifiedEvidence =
-      /not established|could not be verified|could not be established|was not supplied as evidence/.test(`${message} ${reason}`);
-    const hasNoSupportingEvidence = evidenceUsed.length === 0;
+      /not established|could not be verified|could not be established|was not supplied as evidence/.test(
+        `${message} ${reason}`,
+      );
     const isAutoMissingEvidenceFinding =
       finding.status === 'VIOLATION' &&
-      hasNoSupportingEvidence &&
-      describesUnverifiedEvidence &&
-      (missingEvidence.length === 0 || missingEvidence.length > 0);
+      evidenceUsed.length === 0 &&
+      describesUnverifiedEvidence;
 
     if (!isAutoMissingEvidenceFinding) return finding;
 
