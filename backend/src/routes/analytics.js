@@ -118,7 +118,7 @@ router.get("/intelligence", async (req, res) => {
     const verifiedOnly = String(req.query.verified || "false").toLowerCase() === "true";
 
     const where = {
-      ...(req.user.role === "ADMIN" ? {} : {}),
+      ...(verifiedOnly ? { isVerified: true } : {}),
       ...(product || manufacturer || gtin ? {
         product: {
           ...(product ? { productName: { contains: product, mode: "insensitive" } } : {}),
@@ -189,7 +189,8 @@ router.get("/intelligence", async (req, res) => {
       .map(([name, count]) => {
         const manufacturerInspections = inspections.filter((x) => (x.product?.manufacturerName || x.product?.brandName || "Unknown manufacturer") === name).length;
         const violationRate = manufacturerInspections ? Number(((count / manufacturerInspections) * 100).toFixed(1)) : 0;
-        return { manufacturer: name, violations: count, inspections: manufacturerInspections, violationRate };
+        const verified = recordedViolations.filter((x) => (x.product?.manufacturerName || x.product?.brandName || "Unknown manufacturer") === name && x.isVerified).length;
+        return { manufacturer: name, violations: count, verifiedViolations: verified, inspections: manufacturerInspections, violationRate };
       })
       .sort((a, b) => b.violations - a.violations || b.violationRate - a.violationRate)
       .slice(0, 15);
