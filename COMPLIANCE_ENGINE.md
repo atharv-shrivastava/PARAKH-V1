@@ -4,11 +4,11 @@
 
 The Compliance Engine is PARAKH's legal/business-rule layer. It evaluates structured inspection information against configured Legal Metrology requirements.
 
-It is intentionally separate from OCR, semantic AI, and DataKart verification.
+It is intentionally separate from OCR, semantic AI, reference verification, analytics, and the user interface.
 
 ## 2. Legal scope
 
-The implementation is intended around the Legal Metrology Act, 2009 and the Legal Metrology (Packaged Commodities) Rules, 2011, together with the official requirements and amendments adopted into PARAKH's configured rule set.
+The implementation is intended around the **Legal Metrology Act, 2009** and the **Legal Metrology (Packaged Commodities) Rules, 2011**, together with official requirements and amendments adopted into PARAKH's configured rule set.
 
 Every implemented legal requirement should retain an identifiable source/reference and version information.
 
@@ -23,42 +23,48 @@ Structured declarations
       ↑
 Gemini semantic interpretation
       ↓
-DataKart GTIN reference verification
+GTIN / DataKart reference verification
       ↓
 Evidence confidence
       ↓
 Applicable compliance rules
       ↓
-Rule evaluation
+Deterministic rule evaluation
       ↓
 Findings
       ↓
 Officer review
 ```
 
-The OCR/AI/registry layers provide evidence and interpretation. The compliance engine performs the legal-rule evaluation.
+The OCR, AI and registry layers provide evidence and interpretation. The compliance engine performs the legal-rule evaluation.
 
 ## 4. Rule representation
 
-The current database stores configurable rules as `ComplianceRule` records with fields including:
+The database stores configurable rules as `ComplianceRule` records with fields including:
 
-- ruleId
-- ruleCode
-- ruleNumber
-- subclause
-- title
-- description
-- category
-- defaultSeverity
-- enabled
-- isBuiltin
-- definition JSON
-- createdById
+- `ruleId`
+- `ruleCode`
+- `ruleNumber`
+- `subclause`
+- `title`
+- `description`
+- `category`
+- `defaultSeverity`
+- `enabled`
+- `isBuiltin`
+- `definition` JSON
+- `createdById`
 - timestamps
 
 The JSON definition carries machine-readable validation/configuration data where required.
 
-## 5. Rule separation
+## 5. Administration
+
+Authorized administrators can create and manage compliance rules from the admin interface. Built-in rules and administrator-created rules can coexist.
+
+Rule changes should be versioned or otherwise traceable so historical inspection decisions are not silently reinterpreted.
+
+## 6. Rule separation
 
 Legal decisions must not be hidden inside an LLM prompt or React component.
 
@@ -76,7 +82,7 @@ Finding + evidence
 Officer decision
 ```
 
-## 6. Result states
+## 7. Result states
 
 The application supports compliance outcomes such as:
 
@@ -86,13 +92,13 @@ The application supports compliance outcomes such as:
 - unable to determine
 - not applicable where supported by rule logic
 
-Exact stored status values remain implementation-defined by the running Rules Engine.
+The UI also exposes field-level verification states such as **Verified / Needs Verification / Missing**. These are evidence states and must not be confused with the legal result itself.
 
-## 7. Evidence confidence vs legal result
+## 8. Evidence confidence vs legal result
 
 The field-level **Evidence Confidence** score is calculated separately from legal compliance.
 
-Current weighting:
+Current weighting when the relevant sources are available:
 
 ```text
 50% DataKart agreement
@@ -100,19 +106,21 @@ Current weighting:
 20% RapidOCR confidence
 ```
 
+Unavailable sources are omitted and the remaining weights are renormalized.
+
 This score describes the strength of supporting extraction/reference evidence. It does not decide whether the package is legally compliant.
 
-For example, a field can have high Evidence Confidence while still causing a legal violation because the extracted value itself violates a configured rule.
+A field can have high evidence confidence and still produce a violation because the extracted value itself violates a configured rule.
 
-## 8. DataKart role
+## 9. DataKart role
 
-DataKart is a separate product-reference registry. A GTIN/barcode is used to retrieve registered product data, which is compared against extracted inspection fields.
+DataKart is a separate product-reference registry. A GTIN/barcode can be used to retrieve registered product data, which is compared against extracted inspection fields.
 
-A DataKart `MATCH` strengthens evidence for that field. A `MISMATCH` flags reference disagreement. An unavailable or unregistered field is shown as unverified and does not itself create a legal violation.
+A DataKart match strengthens evidence for a field. A mismatch identifies reference disagreement. An unavailable/unregistered reference does not itself create a legal violation.
 
 The Rules Engine remains the only layer responsible for configured Legal Metrology compliance evaluation.
 
-## 9. Deterministic checks
+## 10. Deterministic checks
 
 Use deterministic backend logic for checks such as:
 
@@ -121,19 +129,18 @@ Use deterministic backend logic for checks such as:
 - category applicability
 - configured field requirements
 - exact structural/legal conditions
-- rule-specific thresholds where formally configured
+- configured thresholds
+- rule-specific conditions represented in the rule definition
 
-Use semantic AI only when semantic interpretation is actually required.
+Use semantic AI when semantic interpretation is actually required, not as a replacement for deterministic legal validation.
 
-## 10. Uncertainty
+## 11. Uncertainty
 
-Some photographic evidence cannot establish compliance conclusively.
+Some photographic evidence cannot establish compliance conclusively. Examples include unclear placement, poor image quality, insufficient information for physical measurement, ambiguous text, missing declarations, and context-dependent legal conditions.
 
-Examples include unclear placement, poor image quality, insufficient scale for physical measurement, missing declarations, ambiguous text, and context-dependent legal conditions.
+These cases should result in a review state rather than fabricated certainty.
 
-These cases should lead to review rather than fabricated certainty.
-
-## 11. Evidence traceability
+## 12. Evidence traceability
 
 A finding should be traceable to:
 
@@ -142,26 +149,75 @@ A finding should be traceable to:
 3. extracted value or officer observation
 4. supporting package evidence where available
 5. explanation
-6. officer decision
+6. confidence/verification state
+7. officer decision
 
-## 12. Manual officer violations
+## 13. Manual officer violations
 
 The scan workflow supports manual violation entry in addition to automated rule findings.
 
 Manual entries remain distinguishable from automated detections and are stored with the inspection outcome.
 
-## 13. Versioning
+## 14. Human-in-the-loop
 
-When a legal requirement changes, create a new rule/version configuration rather than silently changing the interpretation of historical inspections.
+The intended flow is:
 
-## 14. Administration
+```text
+RapidOCR + Gemini
+      ↓
+Structured fields + evidence
+      ↓
+Reference verification where available
+      ↓
+Rules evaluation
+      ↓
+Inspector reviews uncertain/conflicting evidence
+      ↓
+Correct / accept / reject / add manual violation
+      ↓
+Complete inspection / report
+```
 
-Built-in rules and administrator-created rules can coexist. Rule creation/editing must require appropriate authorization.
+Human verification is also required for reported serious batch incidents before a `BatchAlert` becomes active across the platform.
 
-## 15. Testing
+## 15. Compliance Intelligence boundary
 
-Rules should be tested independently of the UI with valid, invalid, missing, ambiguous, and not-applicable cases where relevant.
+The Rules Engine produces inspection findings. Those findings are later aggregated by the analytics layer into Compliance Intelligence.
 
-## 16. Important limitation
+The intelligence layer can analyze:
 
-PARAKH is inspection decision support. OCR, AI, DataKart verification, and Rules Engine outputs are aids to the authorized officer and do not by themselves constitute a final legal determination.
+- violation types
+- violation severity
+- manufacturers
+- products
+- affected batches
+- geographic distribution
+- inspection trends
+
+Analytics do not change the underlying legal rule decision.
+
+## 16. Batch Safety boundary
+
+A batch incident is a separate operational workflow from ordinary rule violations.
+
+```text
+Batch incident reported
+        ↓
+Authorized review
+        ↓
+Verified batch alert
+        ↓
+Platform warning for exact product + batch
+```
+
+A batch alert is not a substitute for a Legal Metrology finding, and AI must not autonomously declare a batch defective.
+
+## 17. Testing
+
+Rules should be tested independently of the UI with valid, invalid, missing, ambiguous and not-applicable cases where relevant.
+
+Batch incident verification and analytics aggregation should also be tested against realistic inspection records.
+
+## 18. Important limitation
+
+PARAKH is inspection decision support. OCR, AI, reference verification, evidence confidence, analytics and Rules Engine outputs are aids to the authorized officer and do not by themselves constitute a final legal determination.
