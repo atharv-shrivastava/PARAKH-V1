@@ -23,8 +23,13 @@ export default function InspectionSubmissionGate() {
   useEffect(() => {
     if (!active) return undefined;
     const refresh = () => {
-      setStatus(readStatus());
+      const next = readStatus();
+      setStatus(next);
       setMessage("");
+      if (next.unableToVerify === 0 && next.totalViolations === 0) {
+        sessionStorage.removeItem(REVIEW_KEY);
+        setReviewed(false);
+      }
     };
     refresh();
     const observer = new MutationObserver(refresh);
