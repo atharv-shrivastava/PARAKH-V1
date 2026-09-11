@@ -5,7 +5,7 @@ import { authenticate } from "../middleware/auth.js";
 
 const router = express.Router();
 const NON_LEGAL_IDENTIFIER_FIELDS = new Set(["barcode", "gtin", "dataKart", "dataKartReference", "dataKartVerification", "majorityVote", "evidenceConfidence"]);
-const HIGH_CONFIDENCE_THRESHOLD = 0.70;
+const RULES_MIN_CONFIDENCE = 0.30;
 
 function fieldSource(fieldName) {
   const map = {
@@ -22,18 +22,19 @@ function fieldSource(fieldName) {
 function addEvidence(evidence, field, item, sourceType = "OCR", explicitField = field) {
   if (NON_LEGAL_IDENTIFIER_FIELDS.has(field)) return;
   if (!item || typeof item !== "object" || item.status !== "found" || item.value == null || String(item.value).trim() === "") return;
-  if (Number(item.confidence) < HIGH_CONFIDENCE_THRESHOLD) return;
+  const confidence = Number(item.confidence) || 0;
+  if (confidence < RULES_MIN_CONFIDENCE) return;
   evidence.push({
     evidenceId: `ocr-${field}-${crypto.randomUUID()}`,
     field: explicitField,
     rawValue: item.raw ?? item.evidence ?? item.value,
     normalizedValue: item.value,
     unit: field === "unit" ? String(item.value) : undefined,
-    confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0)),
+    confidence: Math.max(0, Math.min(1, confidence)),
     source: sourceType,
     sourceImageRef: item.imageIndex != null ? `image-${Number(item.imageIndex) + 1}` : undefined,
     timestamp: new Date().toISOString(),
-    reliability: "HIGH",
+    reliability: confidence >= 0.70 ? "HIGH" : "REVIEW",
   });
 }
 
@@ -43,7 +44,8 @@ function makeRulesEvidence(ocr) {
   for (const [field, item] of Object.entries(ocr || {})) {
     if (NON_LEGAL_IDENTIFIER_FIELDS.has(field)) continue;
     if (!item || typeof item !== "object" || item.status !== "found" || item.value == null || field === "semantic") continue;
-    if (Number(item.confidence) < HIGH_CONFIDENCE_THRESHOLD) continue;
+    const confidence = Number(item.confidence) || 0;
+    if (confidence < RULES_MIN_CONFIDENCE) continue;
     const type = fieldSource(field);
     const declaration = declarations.find((entry) => entry.type === type);
     evidence.push({
@@ -52,11 +54,11 @@ function makeRulesEvidence(ocr) {
       rawValue: item.raw ?? item.evidence ?? item.value,
       normalizedValue: item.value,
       unit: field === "unit" ? String(item.value) : undefined,
-      confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0)),
+      confidence: Math.max(0, Math.min(1, confidence)),
       source: "OCR",
       sourceImageRef: declaration ? `image-${Number(declaration.imageIndex) + 1}` : undefined,
       timestamp: new Date().toISOString(),
-      reliability: "HIGH",
+      reliability: confidence >= 0.70 ? "HIGH" : "REVIEW",
     });
   }
   addEvidence(evidence, "mrp", ocr.mrp, "OCR", "declarations.retailSalePrice");
@@ -76,7 +78,7 @@ function makeRulesEvidence(ocr) {
     const email = ocr.consumerCareEmail?.value || "";
     const phoneConfidence = Number(ocr.consumerCarePhone?.confidence || 0);
     const emailConfidence = Number(ocr.consumerCareEmail?.confidence || 0);
-    if (Math.max(phoneConfidence, emailConfidence) >= HIGH_CONFIDENCE_THRESHOLD) {
+    if (Math.max(phoneConfidence, emailConfidence) >= RULES_MIN_CONFIDENCE) {
       evidence.push({
         evidenceId: `ocr-consumer-contact-${crypto.randomUUID()}`,
         field: "declarations.consumerComplaintContact",
@@ -85,7 +87,7 @@ function makeRulesEvidence(ocr) {
         confidence: Math.max(phoneConfidence, emailConfidence),
         source: "OCR",
         timestamp: new Date().toISOString(),
-        reliability: "HIGH",
+        reliability: Math.max(phoneConfidence, emailConfidence) >= 0.70 ? "HIGH" : "REVIEW",
       });
     }
   }
@@ -99,7 +101,7 @@ function sanitizeRulesInput(source) {
     if (NON_LEGAL_IDENTIFIER_FIELDS.has(key)) continue;
     if (!item || typeof item !== "object") continue;
     const confidence = Number(item.confidence || 0);
-    if (item.status !== "found" || confidence < HIGH_CONFIDENCE_THRESHOLD) {
+    if (item.status !== "found" || confidence < RULES_MIN_CONFIDENCE) {
       clean[key] = { value: null, raw: null, evidence: null, confidence, status: "unverified" };
       continue;
     }
