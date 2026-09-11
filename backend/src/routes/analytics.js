@@ -40,7 +40,6 @@ function topList(map, labelKey, limit = 10) {
 router.get("/dashboard", async (req, res) => {
   try {
     const inspectionWhere = scopeForUser(req);
-
     const [inspectionCount, violationCount, reviewCount, recentInspections] = await Promise.all([
       prisma.inspection.count({ where: inspectionWhere }),
       prisma.inspection.count({ where: { ...inspectionWhere, status: "VIOLATION" } }),
@@ -66,12 +65,9 @@ router.get("/dashboard", async (req, res) => {
     for (const inspection of recentInspections) {
       const key = monthKey(inspection.inspectedAt);
       if (key) addCount(monthly, key);
-
       if (inspection.status !== "VIOLATION") continue;
-
       addCount(shopViolations, sourceLabel(inspection));
       addCount(brandViolations, inspection.product?.brandName || "Unknown brand");
-
       try {
         const stored = inspection.product?.ocrData ? JSON.parse(inspection.product.ocrData) : null;
         for (const finding of stored?.compliance?.findings || []) {
@@ -116,6 +112,7 @@ router.get("/intelligence", async (req, res) => {
     const from = normalize(req.query.from);
     const to = normalize(req.query.to);
     const verifiedOnly = String(req.query.verified || "false").toLowerCase() === "true";
+    const now = new Date();
 
     const where = {
       ...(verifiedOnly ? { isVerified: true } : {}),
