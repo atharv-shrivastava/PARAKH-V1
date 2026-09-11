@@ -6,13 +6,31 @@ PARAKH is an AI-assisted inspection and compliance platform for packaged commodi
 
 ## Vision
 
-Help inspectors examine packaged products faster, extract declaration information from package images, identify potential compliance issues, verify findings, register reusable product intelligence, and analyze inspection history.
+Help inspectors examine packaged products faster, extract declaration information from package images, identify potential compliance issues, verify findings, register reusable product intelligence, and turn inspection records into connected compliance intelligence.
 
-## Core workflow
+## Current V1 workflow
 
-**Capture → RapidOCR → Extract → Classify → Verify → Apply Rules → Review → Register → Analyze**
+```text
+Capture / Upload Package Images
+        ↓
+RapidOCR + Image Processing
+        ↓
+Multimodal AI Interpretation
+        ↓
+Multi-Source Verification
+        ↓
+Legal Metrology Rule Engine
+        ↓
+Compliance Assessment
+        ↓
+Human Verification
+        ↓
+Inspection + Batch Intelligence
+        ↓
+Final Compliance Report
+```
 
-AI output is advisory. The authorized inspector remains responsible for reviewing and confirming compliance findings.
+The system supports multi-image package inspection. OCR provides text and spatial evidence, Gemini performs semantic interpretation, GTIN/DataKart can provide registered-product reference evidence, and the deterministic Rules Engine evaluates configured Legal Metrology requirements. Human review remains part of the intended decision flow.
 
 ## Current platform
 
@@ -23,10 +41,12 @@ PARAKH is a responsive web application for mobile, tablet, laptop, and desktop.
 - React 19
 - Vite
 - React Router
-- Responsive CSS theme system
-- Light, dark, dark-gradient, gradient, and rainbow themes
-- Client-side GET caching with mutation invalidation
-- jsPDF where client-side report generation is used
+- Responsive CSS and centralized theme system
+- Light, dark, gradient, and palette variants
+- User/admin dashboards
+- Compliance Intelligence dashboard with dynamic SVG graphs
+- Batch Safety Network interface
+- Client-side report generation where used
 
 ### Backend
 
@@ -35,46 +55,47 @@ PARAKH is a responsive web application for mobile, tablet, laptop, and desktop.
 - REST APIs
 - Multer for image uploads
 - Sharp for image processing
-- Prisma 7 with the PostgreSQL driver adapter
+- Prisma 7
+- PostgreSQL
 - Role-aware authentication and authorization
 
-### Database
+### Data and reference services
 
 - PostgreSQL through Prisma for PARAKH application data
-- A separate Supabase-backed **DataKart** registry is used as an external product-reference source keyed primarily by GTIN/barcode
+- Supabase-backed **DataKart** product reference registry as an external GTIN/barcode verification source
+- RapidOCR as the primary OCR service
+- Gemini as the default multimodal semantic provider
 
-## Current OCR and AI architecture
+## Current OCR / AI / verification architecture
 
 ```text
 Package image(s)
       ↓
-RapidOCR service
+RapidOCR
       ↓
 OCR evidence
-(text + confidence + bounding box + image metadata)
+(text + confidence + bounding box where available)
       ↓
-Deterministic field reconciliation
+Field reconciliation
       ↓
 Gemini semantic interpretation
       ↓
-Semantic consensus / structured fields
+Structured compliance fields
       ↓
-DataKart GTIN verification
+GTIN / DataKart verification
       ↓
 Evidence confidence fusion
       ↓
-Rules Engine
+Legal Metrology Rules Engine
       ↓
-Officer review
+Human verification
 ```
 
-RapidOCR supplies the primary machine-readable text evidence. Gemini performs semantic interpretation such as mapping package text and spatial context to structured declarations. The legal Rules Engine remains deterministic and is not replaced by AI.
-
-Additional Cloudflare semantic providers can be enabled through configuration for broader semantic consensus, but Gemini is the default semantic provider in the current V1 path.
+Barcode/GTIN is optional. When a product reference is unavailable, the inspection can continue using the available package evidence and AI/OCR interpretation. External reference or web evidence must be treated as supporting evidence, not as a replacement for the legal rules layer.
 
 ## Evidence confidence
 
-PARAKH uses a weighted **Evidence Confidence** score for extracted fields:
+PARAKH uses an evidence-fusion score for extracted fields when the relevant sources are available:
 
 ```text
 50% DataKart agreement
@@ -82,57 +103,101 @@ PARAKH uses a weighted **Evidence Confidence** score for extracted fields:
 20% RapidOCR evidence confidence
 ```
 
-DataKart is intentionally the strongest signal because a matching registered product provides a direct reference check. When DataKart is unavailable or a field is not registered, its weight is excluded and the remaining available weights are renormalized instead of treating the missing registry as a failure.
+Unavailable sources are omitted and the remaining available weights are renormalized.
 
 The score is an evidence-fusion indicator, not a calibrated statistical probability and not legal certainty.
 
-Each field can also expose verification state:
+Verification state can be surfaced as:
 
-- `✓` — DataKart match
-- `✕` — DataKart mismatch
-- `?` — DataKart could not verify the field
+- `Verified`
+- `Needs Verification`
+- `Missing`
+
+## Core V1 features
+
+- Multi-image package capture/upload
+- RapidOCR text extraction and spatial evidence
+- Multimodal AI interpretation
+- GTIN/barcode reference verification
+- Deterministic Legal Metrology rule evaluation
+- Confidence-based verification states
+- Human-in-the-loop review and manual violations
+- Product registration and category hierarchy
+- Shop/source management and inspection history
+- E-commerce inspection
+- Compliance reports
+- Admin-managed compliance rules
+- Admin-managed global product categories
+
+## Compliance Intelligence
+
+Every stored inspection can contribute to the intelligence layer. The current intelligence view supports filters such as:
+
+```text
+Manufacturer | Product | GTIN | Batch | Violation
+City / District | State | Date range | Verified only
+```
+
+The dashboard provides dynamic visualizations for inspection trends, violation types, affected batches, severity, geography, and manufacturer violation rates, plus a manufacturer analytics table.
+
+The intended drill-down model is:
+
+```text
+State → District → Manufacturer → Product → Batch → Inspection
+```
+
+The current implementation uses shop city as the district-like geographic field where a dedicated district field is not present.
+
+## Batch Safety Network
+
+PARAKH supports batch-specific safety incidents rather than treating the entire product as unsafe.
+
+Workflow:
+
+```text
+Incident reported
+      ↓
+Administrative verification
+      ↓
+Verified batch alert
+      ↓
+Warning visible across PARAKH
+```
+
+Supported operational states include reported/reviewed incidents and active or resolved alerts. A verified alert is attached to a specific `productId + batchNumber` pair.
+
+AI must not autonomously declare a batch defective. Human authorization is required before an incident becomes a verified batch alert.
 
 ## Product hierarchy
 
-The catalogue is hierarchical and must remain intact:
+PARAKH uses a flexible category tree with a practical four-level user-facing hierarchy and a final-category option. This avoids forcing unnecessary levels for products that do not need them.
 
-**Category → Subcategory → Product Type → Brand → Product → Pack Size / Variant**
+Example:
 
-## Core modules
+```text
+Food → Ready-to-Eat → Biscuits [Final]
+Food → Ready-to-Eat → Biscuits → Oreo [Final]
+```
 
-- Dashboard and real inspection analytics
-- Multi-image package scanning
-- RapidOCR extraction and evidence localization
-- Gemini semantic field mapping
-- Evidence confidence and uncertainty handling
-- DataKart GTIN-based product verification
-- Visual inspection screening
-- Product/category classification
-- Configurable Legal Metrology rules
-- Officer review and manual violations
-- Product registration
-- Shop management and shop-wise history
-- Inspection history and filtering
-- Reports and PDF output
-- E-commerce inspection
-- Admin controls and platform analytics
-- Theme and responsive UI system
+Administrators can manage global category definitions separately from ordinary product registration.
+
+## Rule management
+
+Compliance rules are stored as configurable `ComplianceRule` records. Authorized administrators can create and manage rule definitions from the admin interface rather than hard-coding every rule into the UI.
+
+Legal requirements remain in the deterministic compliance layer rather than being hidden inside an LLM prompt.
 
 ## Compliance approach
 
-Legal requirements belong in the compliance engine, not in the UI and not inside an LLM.
-
-The system distinguishes between compliant results, violations, review states, and cases where the available evidence is insufficient. Findings should remain traceable to the rule, extracted value or observation, supporting evidence, and officer decision.
+The OCR, AI, registry and confidence layers provide evidence and interpretation. The Legal Metrology Rules Engine performs configured rule evaluation. The officer remains responsible for reviewing uncertain, conflicting, or insufficient evidence.
 
 AI confidence is not the same as legal certainty.
 
 ## DataKart boundary
 
-DataKart is a separate product-reference registry. PARAKH queries it using an extracted GTIN/barcode and compares returned registered values against the current inspection fields. DataKart does **not** determine Legal Metrology compliance.
+DataKart is a separate product-reference registry. PARAKH can query it using an extracted GTIN/barcode and compare registered product values with current inspection fields.
 
-## Evidence
-
-Where available, extracted fields retain source image information, OCR text, confidence, bounding-box geometry, semantic provenance, and DataKart verification metadata.
+DataKart does **not** determine Legal Metrology compliance. It is only a reference/evidence source.
 
 ## Security
 
@@ -140,12 +205,13 @@ Never commit API keys, database credentials, production secrets, private certifi
 
 ## Repository documentation
 
+- `README.md` — current product and architecture overview
 - `PROJECT_SPEC.md` — functional specification
 - `ARCHITECTURE.md` — current technical architecture
 - `DATABASE_SCHEMA.md` — logical data model
 - `AI_MODULES.md` — OCR, semantic interpretation, and evidence confidence
 - `COMPLIANCE_ENGINE.md` — Legal Metrology rule architecture
-- `API_SPEC.md` — API contract and current endpoint groups
+- `API_SPEC.md` — API contract and endpoint groups
 - `UI_UX_SPEC.md` — interface requirements
 - `DEVELOPMENT_RULES.md` — engineering rules
 - `ROADMAP.md` — planned work
