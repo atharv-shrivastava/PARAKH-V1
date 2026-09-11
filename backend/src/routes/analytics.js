@@ -37,6 +37,45 @@ function topList(map, labelKey, limit = 10) {
     .map(([label, count]) => ({ [labelKey]: label, count }));
 }
 
+function parseOcrData(raw) {
+  try { return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+
+function fieldValue(data, key) {
+  const candidates = [
+    data?.ocr?.[key],
+    data?.ocr?.ruleEngineInput?.[key],
+    data?.[key],
+  ];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === "object") {
+      const value = candidate.value ?? candidate.raw;
+      if (value != null && String(value).trim()) return String(value).trim();
+    }
+    if (candidate != null && typeof candidate !== "object" && String(candidate).trim()) return String(candidate).trim();
+  }
+  return "";
+}
+
+function enrichInspection(item) {
+  const ocrData = parseOcrData(item.product?.ocrData);
+  const ocrManufacturer = fieldValue(ocrData, "manufacturer");
+  const ocrBatch = fieldValue(ocrData, "batchNumber");
+  const ocrViolation = normalize(item.violationType) || (() => {
+    const manual = Array.isArray(ocrData?.manualViolations) ? ocrData.manualViolations.find(Boolean) : null;
+    const finding = ocrData?.compliance?.findings?.find((x) => String(x?.status || "").toUpperCase() === "VIOLATION");
+    return normalize(manual?.message || finding?.ruleCode || finding?.ruleNumber);
+  })();
+  const ocrSeverity = normalize(item.violationSeverity) || normalize(ocrData?.compliance?.summary?.highestSeverity) || normalize(ocrData?.manualViolations?.[0]?.severity);
+  return {
+    ...item,
+    manufacturerName: normalize(item.product?.manufacturerName) || ocrManufacturer || normalize(item.product?.brandName) || "Unknown manufacturer",
+    batchNumberResolved: normalize(item.batchNumber) || ocrBatch,
+    violationTypeResolved: ocrViolation,
+    violationSeverityResolved: ocrSeverity || "UNSPECIFIED",
+  };
+}
+
 router.get("/dashboard", async (req, res) => {
   try {
     const inspectionWhere = scopeForUser(req);
@@ -52,7 +91,7 @@ router.get("/dashboard", async (req, res) => {
           status: true,
           inspectedAt: true,
           shop: { select: { name: true } },
-          product: { select: { brandName: true, sourceType: true, sourceWebsiteName: true, sourceUrl: true, ocrData: true } },
+          product: { select: { brandName: true, manufacturerName: true, sourceType: true, sourceWebsiteName: true, sourceUrl: true, ocrData: true } },
         },
       }),
     ]);
@@ -62,14 +101,15 @@ router.get("/dashboard", async (req, res) => {
     const brandViolations = new Map();
     const ruleViolations = new Map();
 
-    for (const inspection of recentInspections) {
+    for (const rawInspection of recentInspections) {
+      const inspection = enrichInspection(rawInspection);
       const key = monthKey(inspection.inspectedAt);
       if (key) addCount(monthly, key);
       if (inspection.status !== "VIOLATION") continue;
       addCount(shopViolations, sourceLabel(inspection));
       addCount(brandViolations, inspection.product?.brandName || "Unknown brand");
       try {
-        const stored = inspection.product?.ocrData ? JSON.parse(inspection.product.ocrData) : null;
+        const stored = parseOcrData(inspection.product?.ocrData);
         for (const finding of stored?.compliance?.findings || []) {
           if (String(finding?.status || "").toUpperCase() !== "VIOLATION") continue;
           const rule = String(finding.ruleNumber || finding.ruleCode || finding.ruleId || "Unknown rule").trim();
@@ -102,11 +142,11 @@ router.get("/dashboard", async (req, res) => {
 
 router.get("/intelligence", async (req, res) => {
   try {
-    const manufacturer = normalize(req.query.manufacturer);
-    const product = normalize(req.query.product);
-    const gtin = normalize(req.query.gtin);
-    const batch = normalize(req.query.batch);
-    const violation = normalize(req.query.violation);
+    const manufacturer = normalize(req.query.manufacturer).toLowerCase();
+    const product = normalize(req.query.product).toLowerCase();
+    const gtin = normalize(req.query.gtin).toLowerCase();
+    const batch = normalize(req.query.batch).toLowerCase();
+    const violation = normalize(req.query.violation).toLowerCase();
     const district = normalize(req.query.district);
     const state = normalize(req.query.state);
     const from = normalize(req.query.from);
@@ -116,30 +156,17 @@ router.get("/intelligence", async (req, res) => {
 
     const where = {
       ...(verifiedOnly ? { isVerified: true } : {}),
-      ...(product || manufacturer || gtin ? {
-        product: {
-          ...(product ? { productName: { contains: product, mode: "insensitive" } } : {}),
-          ...(manufacturer ? { manufacturerName: { contains: manufacturer, mode: "insensitive" } } : {}),
-          ...(gtin ? { barcode: { contains: gtin, mode: "insensitive" } } : {}),
-        },
-      } : {}),
-      ...(batch ? { batchNumber: { contains: batch, mode: "insensitive" } } : {}),
-      ...(violation ? { violationType: { contains: violation, mode: "insensitive" } } : {}),
-      ...(district || state ? {
-        shop: {
-          ...(district ? { city: { contains: district, mode: "insensitive" } } : {}),
-          ...(state ? { state: { contains: state, mode: "insensitive" } } : {}),
-        },
-      } : {}),
-      ...(from || to ? {
-        inspectedAt: {
-          ...(from ? { gte: new Date(from) } : {}),
-          ...(to ? { lte: new Date(to.includes("T") ? to : `${to}T23:59:59.999Z`) } : {}),
-        },
-      } : {}),
+      ...(district || state ? { shop: {
+        ...(district ? { city: { contains: district, mode: "insensitive" } } : {}),
+        ...(state ? { state: { contains: state, mode: "insensitive" } } : {}),
+      } } : {}),
+      ...(from || to ? { inspectedAt: {
+        ...(from ? { gte: new Date(from) } : {}),
+        ...(to ? { lte: new Date(to.includes("T") ? to : `${to}T23:59:59.999Z`) } : {}),
+      } } : {}),
     };
 
-    const inspections = await prisma.inspection.findMany({
+    const rawInspections = await prisma.inspection.findMany({
       where,
       orderBy: { inspectedAt: "desc" },
       take: 10000,
@@ -152,13 +179,28 @@ router.get("/intelligence", async (req, res) => {
         inspectedAt: true,
         batchNumber: true,
         shop: { select: { name: true, city: true, state: true } },
-        product: { select: { id: true, productName: true, brandName: true, manufacturerName: true, barcode: true } },
+        product: { select: { id: true, productName: true, brandName: true, manufacturerName: true, barcode: true, ocrData: true } },
       },
+    });
+
+    const inspections = rawInspections.map(enrichInspection).filter((item) => {
+      const haystack = {
+        manufacturer: item.manufacturerName.toLowerCase(),
+        product: normalize(item.product?.productName).toLowerCase(),
+        gtin: normalize(item.product?.barcode).toLowerCase(),
+        batch: normalize(item.batchNumberResolved).toLowerCase(),
+        violation: normalize(item.violationTypeResolved).toLowerCase(),
+      };
+      return (!manufacturer || haystack.manufacturer.includes(manufacturer)) &&
+        (!product || haystack.product.includes(product)) &&
+        (!gtin || haystack.gtin.includes(gtin)) &&
+        (!batch || haystack.batch.includes(batch)) &&
+        (!violation || haystack.violation.includes(violation));
     });
 
     const recordedViolations = inspections.filter((x) => x.status === "VIOLATION");
     const verifiedViolations = recordedViolations.filter((x) => x.isVerified);
-    const batches = new Set(recordedViolations.filter((x) => x.batchNumber).map((x) => `${x.product?.id || ""}:${x.batchNumber}`));
+    const batches = new Set(recordedViolations.filter((x) => x.batchNumberResolved).map((x) => `${x.product?.id || ""}:${x.batchNumberResolved.toLowerCase()}`));
 
     const manufacturerStats = new Map();
     const districtStats = new Map();
@@ -173,20 +215,20 @@ router.get("/intelligence", async (req, res) => {
       const month = monthKey(item.inspectedAt);
       if (month) monthlyStats.set(month, (monthlyStats.get(month) || 0) + 1);
       if (item.status !== "VIOLATION") continue;
-      addCount(manufacturerStats, item.product?.manufacturerName || item.product?.brandName || "Unknown manufacturer");
+      addCount(manufacturerStats, item.manufacturerName);
       addCount(districtStats, item.shop?.city || "Unknown district");
       addCount(stateStats, item.shop?.state || "Unknown state");
-      addCount(violationStats, item.violationType || "Unclassified violation");
+      addCount(violationStats, item.violationTypeResolved || "Unclassified violation");
       addCount(productStats, item.product?.productName || "Unknown product");
-      addCount(severityStats, item.violationSeverity || "UNSPECIFIED");
-      if (item.batchNumber) addCount(affectedBatchStats, item.batchNumber);
+      addCount(severityStats, item.violationSeverityResolved);
+      if (item.batchNumberResolved) addCount(affectedBatchStats, item.batchNumberResolved);
     }
 
     const manufacturerLeaderboard = [...manufacturerStats.entries()]
       .map(([name, count]) => {
-        const manufacturerInspections = inspections.filter((x) => (x.product?.manufacturerName || x.product?.brandName || "Unknown manufacturer") === name).length;
+        const manufacturerInspections = inspections.filter((x) => x.manufacturerName === name).length;
         const violationRate = manufacturerInspections ? Number(((count / manufacturerInspections) * 100).toFixed(1)) : 0;
-        const verified = recordedViolations.filter((x) => (x.product?.manufacturerName || x.product?.brandName || "Unknown manufacturer") === name && x.isVerified).length;
+        const verified = recordedViolations.filter((x) => x.manufacturerName === name && x.isVerified).length;
         return { manufacturer: name, violations: count, verifiedViolations: verified, inspections: manufacturerInspections, violationRate };
       })
       .sort((a, b) => b.violations - a.violations || b.violationRate - a.violationRate)
@@ -216,7 +258,7 @@ router.get("/intelligence", async (req, res) => {
       severityBreakdown: topList(severityStats, "severity", 10),
       affectedBatches: topList(affectedBatchStats, "batch", 15),
       trend,
-      inspections: inspections.slice(0, 100),
+      inspections: req.user.role === "ADMIN" ? inspections.slice(0, 100) : [],
       verifiedInspectionIds: verifiedViolations.map((x) => x.id),
       scope: "STATEWIDE",
     });
