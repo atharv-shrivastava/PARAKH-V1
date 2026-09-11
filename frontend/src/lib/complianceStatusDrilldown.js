@@ -87,6 +87,9 @@ function updateCards() {
   const container = document.getElementById(CARD_ID);
   if (!container) return;
   const summary = counts();
+  const signature = `${activeStatus || ""}|${STATUS_META.map(({ key }) => summary[key]).join(",")}`;
+  if (container.dataset.signature === signature) return;
+  container.dataset.signature = signature;
   container.innerHTML = STATUS_META.map(({ key, label }) => `
     <button type="button" class="parakh-status-filter" data-status="${key}" data-active="${String(activeStatus === key)}">
       <strong>${label}</strong><span>${summary[key] || 0}</span>
@@ -113,6 +116,7 @@ function enhanceSummary() {
     cards = document.createElement("div");
     cards.id = CARD_ID;
     summary.insertAdjacentElement("afterend", cards);
+    cards.dataset.signature = "";
   }
   updateCards();
 
