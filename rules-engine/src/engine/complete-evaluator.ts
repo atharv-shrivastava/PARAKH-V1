@@ -21,6 +21,32 @@ function summarize(findings: OverallInspectionResult['findings']) {
   };
 }
 
+function normalizeMissingEvidenceViolations(
+  findings: OverallInspectionResult['findings'],
+): OverallInspectionResult['findings'] {
+  return findings.map((finding) => {
+    const missingEvidence = Array.isArray(finding.missingEvidence) ? finding.missingEvidence : [];
+    const evidenceUsed = Array.isArray(finding.evidenceUsed) ? finding.evidenceUsed : [];
+    const message = String(finding.message ?? '').toLowerCase();
+
+    // A generic EXISTS/VALID_* rule must not turn missing or low-confidence
+    // evidence into a legal violation. A violation requires actual evidence
+    // of non-compliance or an explicit inspector-recorded missing declaration.
+    const isAutoMissingEvidenceFinding = finding.status === 'VIOLATION'
+      && missingEvidence.length > 0
+      && evidenceUsed.length === 0
+      && /not established|could not be verified|could not be established/.test(message);
+
+    if (!isAutoMissingEvidenceFinding) return finding;
+
+    return {
+      ...finding,
+      status: 'UNABLE_TO_VERIFY',
+      message: 'The required declaration could not be established from the submitted evidence. This is not proof that the declaration is absent; inspector verification is required.',
+    };
+  });
+}
+
 export function evaluateInspectionCompleteWithCurrentRules(
   r: InspectionRequest,
   rules?: RuleDefinition[],
@@ -44,7 +70,8 @@ export function evaluateInspectionCompleteWithCurrentRules(
     findings.push(unitSalePrice);
   }
 
-  const summary = summarize(findings);
+  const normalizedFindings = normalizeMissingEvidenceViolations(findings);
+  const summary = summarize(normalizedFindings);
   const overallStatus: EvaluationStatus = summary.violations > 0
     ? 'VIOLATION'
     : summary.unableToVerify > 0
@@ -57,7 +84,7 @@ export function evaluateInspectionCompleteWithCurrentRules(
     ...specialized,
     overallStatus,
     summary,
-    findings,
+    findings: normalizedFindings,
     ruleSetVersion: configured ? `DB-${new Date().toISOString().slice(0, 10)}` : specialized.ruleSetVersion,
   };
 
