@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import categoriesRouter from "./routes/categories.js";
 import productsRouter from "./routes/products.js";
+import productLocationRouter from "./routes/productLocation.js";
 import authRouter from "./routes/auth.js";
 import shopsRouter from "./routes/shops.js";
 import adminRouter from "./routes/admin.js";
@@ -24,6 +25,7 @@ app.get("/health", (_req, res) => res.json({ status: "ok", service: "parakh-back
 app.use("/api/auth", authRouter);
 app.use("/api/categories", categoriesRouter);
 app.use("/api/products", productsRouter);
+app.use("/api/product-location", productLocationRouter);
 app.use("/api/shops", shopsRouter);
 app.use("/api/rules", rulesRouter);
 app.use("/api/admin", adminRouter);
