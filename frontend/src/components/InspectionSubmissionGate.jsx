@@ -33,7 +33,7 @@ export default function InspectionSubmissionGate() {
     };
     refresh();
     const observer = new MutationObserver(refresh);
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    observer.observe(document.body, { childList: true, subtree: true });
     const submitGuard = (event) => {
       const form = event.target;
       if (!(form instanceof HTMLFormElement) || !form.classList.contains("registration-form")) return;
