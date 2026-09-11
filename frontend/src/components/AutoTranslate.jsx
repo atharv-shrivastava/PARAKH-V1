@@ -134,8 +134,6 @@ export default function AutoTranslate() {
       const root = document.body;
       if (!root) return;
 
-      // Restore English source text before every scan so translated output never
-      // becomes the new input for another translation pass.
       restoreTrackedEnglish();
 
       const nodes = [];
@@ -168,8 +166,6 @@ export default function AutoTranslate() {
 
       const missing = [];
       const missingSet = new Set();
-      const restorationBySource = new Map();
-
       const addMissing = (value) => {
         const core = splitWhitespace(value).core;
         if (!core || isProbablyTechnicalText(core) || missingSet.has(core) || cache.current.has(core)) return;
@@ -177,7 +173,6 @@ export default function AutoTranslate() {
         const protectedText = protectTerms(core, protectedTerms);
         missingSet.add(core);
         missing.push({ original: core, source: protectedText.source, restore: protectedText.restore });
-        restorationBySource.set(protectedText.source, protectedText.restore);
       };
 
       for (const item of nodes) addMissing(originals.current.get(item) || "");
@@ -237,8 +232,6 @@ export default function AutoTranslate() {
 
     schedule();
     observer.current = new MutationObserver((mutations) => {
-      // React route/page changes create or remove nodes. Ignore our own characterData
-      // and attribute mutations so translation cannot repeatedly retrigger itself.
       if (mutations.some((mutation) => mutation.type === "childList" && mutation.addedNodes.length)) schedule();
     });
     observer.current.observe(document.body, { childList: true, subtree: true });
