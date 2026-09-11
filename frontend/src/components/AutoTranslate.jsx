@@ -1,11 +1,11 @@
 import { useEffect, useRef } from "react";
-import { apiFetch } from "../lib/auth";
+import { apiFetch, getUser } from "../lib/auth";
 import { useLanguage } from "./LanguageProvider";
 
 const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT"]);
 const SKIP_SELECTOR = "[data-no-auto-translate=\"true\"], .language-picker";
 const TRANSLATABLE_ATTRIBUTES = ["placeholder", "aria-label", "title"];
-const CACHE_VERSION = "v3";
+const CACHE_VERSION = "v4";
 
 function shouldSkip(node) {
   const parent = node.parentElement;
@@ -34,6 +34,58 @@ function isProbablyTechnicalText(text) {
   return /^(?:[A-Z]{2,8}[-_\d]+|v?\d+(?:\.\d+){1,3}|\d{8,18})$/.test(text.trim());
 }
 
+function collectProtectedTerms(user) {
+  const values = [
+    "PARAKH",
+    user?.name,
+    user?.fullName,
+    user?.displayName,
+    user?.email,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter((value) => value.length >= 2);
+
+  return [...new Set(values)].sort((a, b) => b.length - a.length);
+}
+
+function protectTerms(text, protectedTerms) {
+  if (!protectedTerms.length) return { source: text, restore: (translated) => translated };
+
+  let source = String(text);
+  const protectedValues = [];
+  let tokenIndex = 0;
+
+  for (const term of protectedTerms) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`, "gi");
+    source = source.replace(pattern, (match) => {
+      const token = `PARAKHKEEP${tokenIndex}TOKEN`;
+      protectedValues.push({ token, value: match });
+      tokenIndex += 1;
+      return token;
+    });
+  }
+
+  return {
+    source,
+    restore(translated) {
+      let restored = String(translated || "");
+      for (const { token, value } of protectedValues) {
+        restored = restored.split(token).join(value);
+      }
+      return restored;
+    },
+  };
+}
+
+function normalizeTranslationForDisplay(translated, original) {
+  const value = String(translated || "").trim();
+  const source = String(original || "").trim();
+  if (!value || !source) return "";
+  if (value.toLowerCase() === source.toLowerCase()) return "";
+  return value;
+}
+
 export default function AutoTranslate() {
   const { language } = useLanguage();
   const originals = useRef(new WeakMap());
@@ -46,6 +98,8 @@ export default function AutoTranslate() {
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
     const cacheKey = `parakh_translation_cache_${CACHE_VERSION}_${language}`;
+    const protectedTerms = collectProtectedTerms(getUser());
+
     try {
       const stored = JSON.parse(localStorage.getItem(cacheKey) || "{}");
       cache.current = new Map(Object.entries(stored));
@@ -80,8 +134,8 @@ export default function AutoTranslate() {
       const root = document.body;
       if (!root) return;
 
-      // Always restore the last known English source before scanning. This prevents
-      // translated React re-renders from becoming the new "original" text.
+      // Restore English source text before every scan so translated output never
+      // becomes the new input for another translation pass.
       restoreTrackedEnglish();
 
       const nodes = [];
@@ -114,11 +168,16 @@ export default function AutoTranslate() {
 
       const missing = [];
       const missingSet = new Set();
+      const restorationBySource = new Map();
+
       const addMissing = (value) => {
         const core = splitWhitespace(value).core;
         if (!core || isProbablyTechnicalText(core) || missingSet.has(core) || cache.current.has(core)) return;
+
+        const protectedText = protectTerms(core, protectedTerms);
         missingSet.add(core);
-        missing.push(core);
+        missing.push({ original: core, source: protectedText.source, restore: protectedText.restore });
+        restorationBySource.set(protectedText.source, protectedText.restore);
       };
 
       for (const item of nodes) addMissing(originals.current.get(item) || "");
@@ -127,7 +186,8 @@ export default function AutoTranslate() {
       busy.current = true;
       try {
         for (let offset = 0; offset < missing.length; offset += 40) {
-          const batch = missing.slice(offset, offset + 40);
+          const batchItems = missing.slice(offset, offset + 40);
+          const batch = batchItems.map((item) => item.source);
           const response = await apiFetch("http://localhost:5000/api/translate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -136,11 +196,14 @@ export default function AutoTranslate() {
           if (!response.ok) throw new Error(`Translation request failed (${response.status}).`);
           const data = await response.json().catch(() => null);
           const failedTexts = new Set(Array.isArray(data?.failures) ? data.failures.map((item) => String(item?.text || "")) : []);
-          for (const text of batch) {
-            const translated = data?.translations?.[text];
-            if (!failedTexts.has(text) && typeof translated === "string" && translated.trim() && translated !== text) {
-              cache.current.set(text, translated);
-            }
+
+          for (const item of batchItems) {
+            if (failedTexts.has(item.source)) continue;
+            const translated = data?.translations?.[item.source];
+            if (typeof translated !== "string") continue;
+            const restored = item.restore(translated);
+            const displayValue = normalizeTranslationForDisplay(restored, item.original);
+            if (displayValue) cache.current.set(item.original, displayValue);
           }
           if (cancelled) return;
         }
