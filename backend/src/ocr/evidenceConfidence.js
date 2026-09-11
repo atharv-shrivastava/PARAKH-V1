@@ -15,7 +15,8 @@ const RULE_ENGINE_FIELDS = [
   "expiryDate", "batchNumber", "consumerCarePhone", "consumerCareEmail", "countryOfOrigin", "fssaiLicenseNumber",
 ];
 
-const WEIGHTS = { datakart: 0.50, gemini: 0.30, rapidocr: 0.20 };
+const CONFIDENCE_WEIGHTS = { gemini: 0.60, rapidocr: 0.40 };
+const HIGH_CONFIDENCE_THRESHOLD = 0.70;
 
 function clamp01(value) {
   const number = Number(value);
@@ -50,33 +51,19 @@ function dataKartMatch(fieldKey, currentValue, registeredValue) {
   return common.length >= 2 && common.length / Math.min(leftTokens.size, rightTokens.size) >= 0.8;
 }
 
-function findRapidConfidence(field, evidence) {
-  if (field?.status !== "found") return null;
-  const preferredIndex = Number.isInteger(field?.evidenceIndex) ? field.evidenceIndex : -1;
-  if (preferredIndex >= 0 && evidence?.[preferredIndex]) {
-    const confidence = clamp01(evidence[preferredIndex]?.confidence);
-    if (confidence != null) return confidence;
-  }
-  const target = normalize(field?.value);
-  if (!target) return null;
-  let best = null;
-  for (const item of Array.isArray(evidence) ? evidence : []) {
-    const text = normalize(item?.text);
-    if (!text || !(text === target || text.includes(target) || target.includes(text))) continue;
-    const confidence = clamp01(item?.confidence);
-    if (confidence != null && (best == null || confidence > best)) best = confidence;
-  }
-  return best;
+function rapidEvidenceScore(field) {
+  const explicit = clamp01(field?.ocrEvidenceQuality);
+  if (explicit != null) return explicit;
+  const confidence = clamp01(field?.rapidOcrConfidence);
+  return confidence ?? 0;
 }
 
 async function fetchDataKartByGtin(gtin) {
   const normalizedGtin = String(gtin ?? "").replace(/\D/g, "");
   const baseUrl = String(process.env.DATAKART_API_URL || "http://localhost:4000").replace(/\/$/, "");
   if (!normalizedGtin) return { product: null, matchedGtin: null };
-
   const url = `${baseUrl}/api/products/gtin/${encodeURIComponent(normalizedGtin)}`;
   console.log(`[DataKart] lookup gtin=${normalizedGtin} url=${url}`);
-
   let response;
   try {
     response = await fetch(url, { signal: AbortSignal.timeout(Number(process.env.DATAKART_TIMEOUT_MS || 4000)) });
@@ -84,17 +71,13 @@ async function fetchDataKartByGtin(gtin) {
     console.error(`[DataKart] request failed gtin=${normalizedGtin}:`, error?.message || error);
     throw error;
   }
-
   const responseText = await response.text();
   console.log(`[DataKart] response status=${response.status} gtin=${normalizedGtin} body=${responseText.slice(0, 1000)}`);
-
   let payload = {};
   try { payload = JSON.parse(responseText); } catch {}
-
   if (response.status === 404) return { product: null, matchedGtin: null };
   if (!response.ok) throw new Error(`DataKart API returned HTTP ${response.status}.`);
   if (!payload?.found || !payload?.product) return { product: null, matchedGtin: null };
-
   console.log(`[DataKart] MATCH gtin=${normalizedGtin} stored=${payload.matchedGtin || payload.product.gtin || "unknown"}`);
   return { product: payload.product, matchedGtin: payload.matchedGtin || payload.product.gtin || normalizedGtin };
 }
@@ -103,8 +86,24 @@ function buildRuleEngineInput(result) {
   return Object.fromEntries(RULE_ENGINE_FIELDS.map((key) => {
     const field = result?.[key];
     if (!field || typeof field !== "object") return [key, field];
-    return [key, { value: field.value ?? null, raw: field.raw ?? null, evidence: field.evidence ?? null, confidence: field.confidence ?? 0, status: field.status || "absent", ...(field.imageIndex != null ? { imageIndex: field.imageIndex } : {}), ...(field.evidenceIndex != null ? { evidenceIndex: field.evidenceIndex } : {}) }];
+    const confidence = clamp01(field.confidence) ?? 0;
+    const highConfidence = field.status === "found" && confidence >= HIGH_CONFIDENCE_THRESHOLD;
+    return [key, {
+      value: highConfidence ? (field.value ?? null) : null,
+      raw: highConfidence ? (field.raw ?? null) : null,
+      evidence: highConfidence ? (field.evidence ?? null) : null,
+      confidence,
+      status: highConfidence ? "found" : "unverified",
+      ...(highConfidence && field.imageIndex != null ? { imageIndex: field.imageIndex } : {}),
+      ...(highConfidence && field.evidenceIndex != null ? { evidenceIndex: field.evidenceIndex } : {}),
+    }];
   }));
+}
+
+function confidenceState(confidence) {
+  if (confidence >= 0.85) return "high";
+  if (confidence >= HIGH_CONFIDENCE_THRESHOLD) return "acceptable";
+  return "review";
 }
 
 export async function applyEvidenceConfidence(result, options = {}) {
@@ -112,22 +111,16 @@ export async function applyEvidenceConfidence(result, options = {}) {
   const next = { ...result };
   const evidence = Array.isArray(result?.rawOcrEvidence) ? result.rawOcrEvidence : [];
 
-  // IMPORTANT: DataKart must use the actual barcode scanner result only.
-  // RapidOCR/Gemini may read human-readable barcode digits as evidence, but
-  // those values are never allowed to become the authoritative GTIN.
-  const scannedBarcode = String(next.barcode?.source === "BARCODE_IMAGE_DECODER" ? next.barcode?.value : "")
-    .replace(/\D/g, "");
+  // GTIN comes only from the dedicated local barcode scanner result.
+  // DataKart is reference verification only and never becomes Rules Engine input.
+  const scannedBarcode = String(next.barcode?.source === "BARCODE_IMAGE_DECODER" ? next.barcode?.value : "").replace(/\D/g, "");
   const barcode = scannedBarcode || null;
   console.log(`[DataKart] barcode source=${barcode ? "BARCODE_SCANNER" : barcodeImageProvided ? "BARCODE_UNREADABLE" : "NONE"} gtin=${barcode || "none"}`);
-
-  next.ruleEngineInput = buildRuleEngineInput(result);
-  next.majorityVote = next.ruleEngineInput;
 
   let dataKart = null;
   let dataKartMatchedGtin = null;
   let dataKartError = null;
   let webMrpRange = null;
-  const geminiAvailable = Boolean(result?.aiSemantic?.providerCount);
   if (barcode) {
     try {
       const lookup = await fetchDataKartByGtin(barcode);
@@ -154,30 +147,33 @@ export async function applyEvidenceConfidence(result, options = {}) {
   const details = {};
   for (const [fieldKey, fieldValue] of Object.entries(result || {})) {
     if (!fieldValue || typeof fieldValue !== "object" || !FIELD_MAP[fieldKey]) continue;
-    const gemini = geminiAvailable ? clamp01(fieldValue.confidence) : null;
-    const rapidocr = findRapidConfidence(fieldValue, evidence);
+    const gemini = clamp01(fieldValue.confidence);
+    const rapidocr = rapidEvidenceScore(fieldValue);
     const registeredValue = dataKart?.[FIELD_MAP[fieldKey]];
     const dataKartMatchState = dataKartMatch(fieldKey, fieldValue.value, registeredValue);
-    const datakart = dataKartMatchState == null ? null : dataKartMatchState ? 1 : 0;
-    const fused = (WEIGHTS.datakart * (datakart ?? 0))
-      + (WEIGHTS.gemini * (gemini ?? 0))
-      + (WEIGHTS.rapidocr * (rapidocr ?? 0));
+    const fused = Math.max(0, Math.min(1,
+      CONFIDENCE_WEIGHTS.gemini * (gemini ?? 0) + CONFIDENCE_WEIGHTS.rapidocr * rapidocr,
+    ));
     const verification = dataKartMatchState === true ? "MATCH" : dataKartMatchState === false ? "MISMATCH" : "UNVERIFIED";
-    const state = verification === "MATCH" ? "verified" : verification === "MISMATCH" ? "mismatch" : fused >= 0.375 ? "likely" : "review";
-
-    next[fieldKey] = {
+    const nextField = {
       ...fieldValue,
       confidence: Math.round(fused * 1000) / 1000,
       evidenceConfidence: Math.round(fused * 1000) / 1000,
-      confidenceSources: { datakart, gemini, rapidocr, weights: { ...WEIGHTS } },
+      confidenceSources: { gemini, rapidocr, weights: { ...CONFIDENCE_WEIGHTS }, dataKart: null },
       verification,
       verificationIcon: verification === "MATCH" ? "✓" : verification === "MISMATCH" ? "✕" : "?",
       confidenceLabel: "Evidence confidence",
       dataKart: { state: verification, registeredValue: registeredValue ?? null },
-      confidenceState: state,
+      confidenceState: confidenceState(fused),
     };
-    details[fieldKey] = next[fieldKey].confidenceSources;
+    next[fieldKey] = nextField;
+    details[fieldKey] = nextField.confidenceSources;
   }
+
+  // Snapshot only the high-confidence extracted package data for the Rules Engine.
+  // DataKart values are intentionally excluded from this object.
+  next.ruleEngineInput = buildRuleEngineInput(next);
+  next.majorityVote = next.ruleEngineInput;
 
   if (next.mrp && webMrpRange?.min != null && webMrpRange?.max != null && next.mrp.value != null) {
     next.mrp = {
@@ -188,8 +184,9 @@ export async function applyEvidenceConfidence(result, options = {}) {
   }
 
   next.evidenceConfidence = {
-    weights: { ...WEIGHTS },
-    method: "Fixed evidence voting: DataKart 50% + Gemini 30% + RapidOCR 20%. DataKart GTIN lookup uses only the barcode scanner result; OCR/Gemini barcode text is evidence only.",
+    weights: { ...CONFIDENCE_WEIGHTS },
+    highConfidenceThreshold: HIGH_CONFIDENCE_THRESHOLD,
+    method: "Gemini visual extraction (60%) + RapidOCR evidence quality (40%). OCR evidence is required for high-confidence Rules Engine input. DataKart is reference verification only and never contributes to extracted-field confidence or Rules Engine input.",
     dataKartAvailable: Boolean(dataKart),
     dataKartError,
     dataKartMatchedGtin,
