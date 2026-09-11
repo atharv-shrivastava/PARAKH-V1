@@ -69,6 +69,7 @@ function LiveInspectionIntelligence({ data, loading }) {
       <IntelligenceCard label="HIGHEST VIOLATING SHOP / SOURCE" value={data?.highestViolatingShop} empty="No violating shop yet" />
       <IntelligenceCard label="HIGHEST VIOLATING BRAND" value={data?.highestViolatingBrand} empty="No violating brand yet" />
       <IntelligenceCard label="HIGHEST VIOLATING RULE" value={data?.highestViolatingRule} empty="No violating rule yet" />
+      <IntelligenceCard label="MOST VIOLATIONS" value={data?.highestViolatingRule} empty="No violation pattern yet" />
     </div>
   </section>;
 }
