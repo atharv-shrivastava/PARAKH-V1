@@ -25,23 +25,30 @@ function normalizeMissingEvidenceViolations(
   findings: OverallInspectionResult['findings'],
 ): OverallInspectionResult['findings'] {
   return findings.map((finding) => {
-    const missingEvidence = Array.isArray(finding.missingEvidence) ? finding.missingEvidence : [];
     const evidenceUsed = Array.isArray(finding.evidenceUsed) ? finding.evidenceUsed : [];
+    const missingEvidence = Array.isArray(finding.missingEvidence) ? finding.missingEvidence : [];
     const message = String(finding.message ?? '').toLowerCase();
+    const reason = String(finding.violationReason ?? '').toLowerCase();
 
-    // A generic EXISTS/VALID_* rule must not turn missing or low-confidence
-    // evidence into a legal violation. A violation requires actual evidence
-    // of non-compliance or an explicit inspector-recorded missing declaration.
-    const isAutoMissingEvidenceFinding = finding.status === 'VIOLATION'
-      && missingEvidence.length > 0
-      && evidenceUsed.length === 0
-      && /not established|could not be verified|could not be established/.test(message);
+    // The generic evaluator historically represented missing/low-confidence
+    // declarations as VIOLATION findings even though it had no evidence for
+    // the finding. Treat those as UNABLE_TO_VERIFY. Real evidence-backed
+    // violations and explicit inspector findings remain VIOLATION.
+    const describesUnverifiedEvidence =
+      /not established|could not be verified|could not be established|was not supplied as evidence/.test(`${message} ${reason}`);
+    const hasNoSupportingEvidence = evidenceUsed.length === 0;
+    const isAutoMissingEvidenceFinding =
+      finding.status === 'VIOLATION' &&
+      hasNoSupportingEvidence &&
+      describesUnverifiedEvidence &&
+      (missingEvidence.length === 0 || missingEvidence.length > 0);
 
     if (!isAutoMissingEvidenceFinding) return finding;
 
     return {
       ...finding,
       status: 'UNABLE_TO_VERIFY',
+      violationReason: undefined,
       message: 'The required declaration could not be established from the submitted evidence. This is not proof that the declaration is absent; inspector verification is required.',
     };
   });
