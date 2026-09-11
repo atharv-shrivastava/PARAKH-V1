@@ -12,6 +12,7 @@ function Stat({ label, value, helper }) {
 
 export default function AdminDashboard() {
   const [data, setData] = useState(null);
+  const [dashboardIntel, setDashboardIntel] = useState(null);
   const [pending, setPending] = useState(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -19,14 +20,18 @@ export default function AdminDashboard() {
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const [overviewResponse, reportsResponse] = await Promise.all([
+      const [overviewResponse, reportsResponse, intelResponse] = await Promise.all([
         apiFetch(`${API_URL}/admin/overview`),
         apiFetch(`${API_URL}/batch-alerts/incidents?status=REPORTED`),
+        apiFetch(`${API_URL}/analytics/dashboard`),
       ]);
       const overview = await overviewResponse.json().catch(() => ({}));
       const reports = await reportsResponse.json().catch(() => ({}));
+      const intel = await intelResponse.json().catch(() => ({}));
       if (!overviewResponse.ok) throw new Error(overview.error || "Could not load admin control center");
+      if (!intelResponse.ok) throw new Error(intel.error || "Could not load violation intelligence");
       setData(overview);
+      setDashboardIntel(intel);
       setPending(Array.isArray(reports.reports) ? reports.reports.length : 0);
     } catch (e) {
       setError(e?.message || "Could not load admin control center");
@@ -42,6 +47,7 @@ export default function AdminDashboard() {
 
   const counts = data?.counts || {};
   const recent = data?.recentInspections || [];
+  const mostViolations = dashboardIntel?.highestViolatingRule || null;
   return <main className="admin-dashboard admin-dashboard-modern">
     <header className="admin-hero"><div><p className="card-kicker">PARAKH · ADMIN CONTROL CENTER</p><h1>Operate the system, verify the evidence.</h1><p>State-wide intelligence now lives in the shared Compliance Intelligence view. This dashboard is reserved for administration, verification and operational controls.</p></div><div className="admin-hero-actions"><button type="button" className="admin-secondary" onClick={load}>Refresh data</button><Link className="admin-primary" to="/intelligence">Open intelligence</Link></div></header>
     <section className="admin-stat-grid">
@@ -49,6 +55,7 @@ export default function AdminDashboard() {
       <Stat label="Products" value={counts.products} helper="Stored product records" />
       <Stat label="Inspections" value={counts.inspections} helper="Recorded checks" />
       <Stat label="Violations" value={counts.violations} helper="Recorded non-compliance" />
+      <Stat label="Most violations" value={mostViolations?.name || "None yet"} helper={mostViolations ? `${mostViolations.count} recorded occurrences` : "No violation pattern yet"} />
       <Stat label="Needs review" value={counts.review} helper="Awaiting verification" />
       <Stat label="Batch reports" value={pending} helper="Awaiting alert verification" />
     </section>
