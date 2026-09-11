@@ -4,6 +4,8 @@ import { evaluateInspectionComplete as evaluateSpecializedInspection } from './l
 import { evaluateInspection as evaluateConfiguredRules } from './evaluator.js';
 import { unitSalePriceFinding } from './unit-sale-price-evaluator.js';
 
+const MIN_USABLE_FIELD_CONFIDENCE = 0.30;
+
 function canonical(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v);
   if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
@@ -29,10 +31,6 @@ function normalizeMissingEvidenceViolations(
     const message = String(finding.message ?? '').toLowerCase();
     const reason = String(finding.violationReason ?? '').toLowerCase();
 
-    // The generic evaluator can represent an unestablished declaration as a
-    // VIOLATION even when it has no supporting evidence. That is uncertainty,
-    // not proof of non-compliance. Keep evidence-backed and explicit inspector
-    // findings as genuine violations.
     const describesUnverifiedEvidence =
       /not established|could not be verified|could not be established|was not supplied as evidence/.test(
         `${message} ${reason}`,
@@ -53,6 +51,45 @@ function normalizeMissingEvidenceViolations(
   });
 }
 
+function evidenceForFinding(request: InspectionRequest, field: string) {
+  return (request.evidence ?? []).filter((item) =>
+    item.field === field ||
+    item.field === field.replace(/^declarations\./, '') ||
+    field === 'declarations.dateOfManufacturePackingImport' && item.field === 'declarations.manufactureOrImportDate' ||
+    field === 'declarations.dateOfManufacturePackingImport' && item.field === 'declarations.dateOfPacking' ||
+    field === 'declarations.dateOfManufacturePackingImport' && item.field === 'declarations.dateOfManufacture',
+  );
+}
+
+function normalizePopulatedFieldFindings(
+  request: InspectionRequest,
+  findings: OverallInspectionResult['findings'],
+): OverallInspectionResult['findings'] {
+  return findings.map((finding) => {
+    if (finding.status !== 'UNABLE_TO_VERIFY') return finding;
+    if (String(finding.field ?? '').startsWith('visual.') || String(finding.field ?? '').startsWith('rule23.')) return finding;
+
+    const evidence = evidenceForFinding(request, String(finding.field ?? ''));
+    const usableEvidence = evidence.filter((item) =>
+      item.normalizedValue !== undefined &&
+      item.normalizedValue !== null &&
+      String(item.normalizedValue).trim() !== '' &&
+      Number(item.confidence || 0) >= MIN_USABLE_FIELD_CONFIDENCE,
+    );
+
+    if (!usableEvidence.length) return finding;
+
+    return {
+      ...finding,
+      status: 'PASS',
+      violationReason: undefined,
+      message: 'Requirement satisfied from a populated declaration field. The officer may still review the extracted value before final submission.',
+      evidenceUsed: usableEvidence,
+      missingEvidence: [],
+    };
+  });
+}
+
 export function evaluateInspectionCompleteWithCurrentRules(
   r: InspectionRequest,
   rules?: RuleDefinition[],
@@ -61,9 +98,6 @@ export function evaluateInspectionCompleteWithCurrentRules(
   const configured = rules?.length ? evaluateConfiguredRules(r, rules) : null;
   const configuredIds = new Set((rules ?? []).map(rule => rule.ruleId));
 
-  // Database-managed rule definitions replace the generic rule layer. The
-  // specialized evaluators remain for advanced checks whose rule IDs are not
-  // represented in the configurable rule catalog.
   const findings = configured
     ? [
         ...specialized.findings.filter(f => !configuredIds.has(f.ruleId)),
@@ -76,7 +110,10 @@ export function evaluateInspectionCompleteWithCurrentRules(
     findings.push(unitSalePrice);
   }
 
-  const normalizedFindings = normalizeMissingEvidenceViolations(findings);
+  const normalizedFindings = normalizePopulatedFieldFindings(
+    r,
+    normalizeMissingEvidenceViolations(findings),
+  );
   const summary = summarize(normalizedFindings);
   const overallStatus: EvaluationStatus = summary.violations > 0
     ? 'VIOLATION'
