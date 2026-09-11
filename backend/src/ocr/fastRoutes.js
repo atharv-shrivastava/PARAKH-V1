@@ -57,6 +57,27 @@ function tokenSimilarity(leftValue, rightValue) {
   return overlap / Math.max(leftTokens.size, rightTokens.size);
 }
 
+function numericOccurrenceQuality(wanted, candidate, allowUnit = false) {
+  const expected = String(wanted ?? "").replace(/,/g, "").trim();
+  if (!expected) return 0;
+  const source = String(candidate ?? "");
+  const matches = [...source.matchAll(/\d+(?:[.,]\d+)?/g)];
+  let embedded = false;
+  for (const match of matches) {
+    const token = String(match[0]).replace(/,/g, "");
+    if (token !== expected) continue;
+    const start = Number(match.index || 0);
+    const end = start + match[0].length;
+    const previous = start > 0 ? source[start - 1] : "";
+    const next = end < source.length ? source[end] : "";
+    const previousAlnum = /[A-Za-z0-9]/.test(previous);
+    const nextAlnum = /[A-Za-z0-9]/.test(next);
+    if (!previousAlnum && (!nextAlnum || (allowUnit && /[A-Za-z]/.test(next)))) return 1;
+    if (previousAlnum || nextAlnum) embedded = true;
+  }
+  return embedded ? 0.35 : 0;
+}
+
 function numberTokens(value) {
   return (String(value ?? "").match(/\d+(?:[.,]\d+)?/g) || []).map((token) => token.replace(/,/g, ""));
 }
@@ -68,30 +89,28 @@ function unitTokens(value) {
 function evidenceMatchScore(key, field, item) {
   const candidate = normalizeText(item?.text);
   if (!candidate) return 0;
-
   const value = normalizeText(field?.value);
   const raw = normalizeText(field?.raw);
   const evidence = normalizeText(field?.evidence);
-  const candidateNorm = normalizeMatchText(candidate);
-  const valueNorm = normalizeMatchText(value);
 
   if (key === "mrp") {
-    const valueNumbers = numberTokens(value);
-    const candidateNumbers = numberTokens(candidate);
-    const exactNumber = valueNumbers.some((wanted) => candidateNumbers.some((actual) => actual === wanted));
-    if (exactNumber) return candidateNorm.includes("mrp") ? 0.99 : 1;
-    return 0;
+    const wanted = numberTokens(value)[0];
+    if (!wanted) return 0;
+    const quality = numericOccurrenceQuality(wanted, candidate, false);
+    return quality;
   }
 
   if (key === "netQuantity") {
-    const wantedNumbers = numberTokens(value);
-    const actualNumbers = numberTokens(candidate);
-    const numberMatch = wantedNumbers.some((wanted) => actualNumbers.some((actual) => actual === wanted));
-    const wantedUnits = unitTokens(`${value} ${field?.unit || ""}`);
-    const actualUnits = unitTokens(candidate);
-    if (numberMatch && (!wantedUnits.length || wantedUnits.some((unit) => actualUnits.includes(unit)))) return 1;
-    if (numberMatch) return 0.85;
-    return 0;
+    const wanted = numberTokens(value)[0];
+    if (!wanted) return 0;
+    const quantityQuality = numericOccurrenceQuality(wanted, candidate, true);
+    if (quantityQuality === 1) {
+      const wantedUnits = unitTokens(`${value} ${field?.unit || ""}`);
+      const actualUnits = unitTokens(candidate);
+      if (!wantedUnits.length || wantedUnits.some((unit) => actualUnits.includes(unit))) return 1;
+      return 0.85;
+    }
+    return quantityQuality;
   }
 
   if (["dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate"].includes(key)) {
@@ -107,7 +126,6 @@ function evidenceMatchScore(key, field, item) {
   const evidenceScore = tokenSimilarity(evidence, candidate);
   const best = Math.max(valueScore, rawScore, evidenceScore);
   if (best >= 0.82) return best;
-
   if (key === "productName" && best >= 0.62) return best;
   if (["manufacturer", "packer", "marketer", "importer"].includes(key) && best >= 0.68) return best;
   if (["manufacturerAddress", "packerAddress", "marketerAddress", "importerAddress"].includes(key) && best >= 0.5) return best;
@@ -120,9 +138,8 @@ function resolveEvidenceIndex(key, field, rapidEvidence) {
   const providedIndex = Number.isInteger(field?.evidenceIndex) ? field.evidenceIndex : -1;
   if (providedIndex >= 0 && providedIndex < evidence.length) {
     const providedScore = evidenceMatchScore(key, field, evidence[providedIndex]);
-    if (providedScore >= 0.68) return { index: providedIndex, score: providedScore };
+    if (providedScore >= 0.35) return { index: providedIndex, score: providedScore };
   }
-
   const preferredImage = Number.isInteger(field?.imageIndex) ? field.imageIndex : null;
   let best = null;
   for (let index = 0; index < evidence.length; index += 1) {
@@ -131,37 +148,28 @@ function resolveEvidenceIndex(key, field, rapidEvidence) {
     if (preferredImage !== null && item.imageIndex !== preferredImage) continue;
     const score = evidenceMatchScore(key, field, item);
     if (!score) continue;
-    if (!best || score > best.score || (score === best.score && Number(item.confidence || 0) > Number(best.item.confidence || 0))) {
-      best = { index, score, item };
-    }
+    if (!best || score > best.score || (score === best.score && Number(item.confidence || 0) > Number(best.item.confidence || 0))) best = { index, score, item };
   }
-
   if (!best && preferredImage !== null) {
     for (let index = 0; index < evidence.length; index += 1) {
       const item = evidence[index];
       if (!item?.boundingBox) continue;
       const score = evidenceMatchScore(key, field, item);
       if (!score) continue;
-      if (!best || score > best.score || (score === best.score && Number(item.confidence || 0) > Number(best.item.confidence || 0))) {
-        best = { index, score, item };
-      }
+      if (!best || score > best.score || (score === best.score && Number(item.confidence || 0) > Number(best.item.confidence || 0))) best = { index, score, item };
     }
   }
-
   return best ? { index: best.index, score: best.score } : { index: -1, score: 0 };
 }
 
 async function analyzeWithRapid(images) {
   const formData = new FormData();
-  const ocrUrl = process.env.NODE_ENV === "production"
-    ? (process.env.RAPID_OCR_URL || "http://localhost:8081")
-    : "http://localhost:8081";
+  const ocrUrl = process.env.NODE_ENV === "production" ? (process.env.RAPID_OCR_URL || "http://localhost:8081") : "http://localhost:8081";
   images.forEach((image, imageIndex) => {
     const bytes = Buffer.from(image.base64, "base64");
     formData.append("images", new Blob([bytes], { type: image.mediaType }), `parakh-${imageIndex + 1}.${extension(image.mediaType)}`);
   });
   console.log("[RapidOCR] Target:", `${ocrUrl}/api/ocr/analyze`);
-
   let response;
   try {
     response = await fetch(`${ocrUrl}/api/ocr/analyze`, { method: "POST", body: formData });
@@ -169,18 +177,12 @@ async function analyzeWithRapid(images) {
     console.error("[RapidOCR] Connection error:", error);
     throw Object.assign(new Error(`Could not reach RapidOCR: ${error.message}`), { code: "OCR_RAPID_CONNECTION_ERROR", statusCode: 502 });
   }
-
   const responseText = await response.text();
   console.log("[RapidOCR] HTTP status:", response.status);
   console.log("[RapidOCR] Response:", responseText);
-
   let data = {};
   try { data = JSON.parse(responseText); } catch {}
-
-  if (!response.ok) {
-    throw Object.assign(new Error(data?.error || data?.message || data?.detail || `RapidOCR returned HTTP ${response.status}`), { code: "OCR_RAPID_ERROR", statusCode: 502 });
-  }
-
+  if (!response.ok) throw Object.assign(new Error(data?.error || data?.message || data?.detail || `RapidOCR returned HTTP ${response.status}`), { code: "OCR_RAPID_ERROR", statusCode: 502 });
   const evidence = Array.isArray(data?.result?.declarationEvidence)
     ? data.result.declarationEvidence.map((item, index) => {
         const serviceImageIndex = Number(item?.imageIndex);
@@ -200,22 +202,13 @@ async function analyzeWithRapid(images) {
 }
 
 async function readImages(files) {
-  return Promise.all(files.map(async (file) => ({
-    base64: (await fs.readFile(file.path)).toString("base64"),
-    mediaType: file.mimetype,
-  })));
+  return Promise.all(files.map(async (file) => ({ base64: (await fs.readFile(file.path)).toString("base64"), mediaType: file.mimetype })));
 }
 
 function normalizeField(field) {
   if (!field || typeof field !== "object") return { value: null, raw: null, confidence: 0, evidence: null, status: "absent" };
   const rawStatus = String(field.status || "").toLowerCase();
-  const status = rawStatus === "not_detected"
-    ? "absent"
-    : rawStatus === "referenced_inner_pack"
-      ? "ambiguous"
-      : ["found", "absent", "unreadable", "ambiguous"].includes(rawStatus)
-        ? rawStatus
-        : field.value != null ? "found" : "absent";
+  const status = rawStatus === "not_detected" ? "absent" : rawStatus === "referenced_inner_pack" ? "ambiguous" : ["found", "absent", "unreadable", "ambiguous"].includes(rawStatus) ? rawStatus : field.value != null ? "found" : "absent";
   return {
     value: field.value ?? null,
     raw: field.raw ?? field.evidence ?? null,
@@ -230,6 +223,8 @@ function normalizeField(field) {
     ...(field.source ? { source: field.source } : {}),
     ...(field.verification ? { verification: field.verification } : {}),
     ...(field.votes ? { votes: field.votes } : {}),
+    ...(field.ocrEvidenceQuality != null ? { ocrEvidenceQuality: Number(field.ocrEvidenceQuality) } : {}),
+    ...(field.ocrEvidenceMatch ? { ocrEvidenceMatch: field.ocrEvidenceMatch } : {}),
   };
 }
 
@@ -242,13 +237,10 @@ function validateSemanticFields(fields, rapidEvidence) {
   const unitLike = /^(?:g|kg|mg|ml|l|cm|mm|m|pcs?|pieces?|number|nos?)$/i;
   const validated = {};
   const warnings = [];
-
   for (const [key, rawField] of Object.entries(fields || {})) {
     const field = normalizeField(rawField);
     const value = field.value == null ? "" : normalizeText(field.value);
-
     if (field.status === "found" && !value) field.status = "absent";
-
     if (field.status === "found") {
       if (numericFields.has(key)) {
         const n = Number(value.replace(/[^0-9.]/g, ""));
@@ -275,20 +267,24 @@ function validateSemanticFields(fields, rapidEvidence) {
       }
       if (field.confidence < 0.55) {
         field.status = "ambiguous";
-        warnings.push(key + " is below the automatic acceptance confidence threshold.");
+        warnings.push(key + " is below the semantic model confidence threshold.");
       }
     }
 
     const resolved = field.status === "found" ? resolveEvidenceIndex(key, field, rapidEvidence) : { index: -1, score: 0 };
     const evidenceIndex = resolved.index;
     const evidence = evidenceIndex >= 0 ? rapidEvidence?.[evidenceIndex] : null;
+    const ocrEvidenceQuality = resolved.score;
+    const ocrEvidenceMatch = ocrEvidenceQuality >= 0.9 ? "STRONG" : ocrEvidenceQuality >= 0.3 ? "WEAK" : "NONE";
 
-    if (field.status === "found" && evidenceIndex < 0) {
-      warnings.push(`${key} has no trustworthy OCR evidence match.`);
-    }
+    if (field.status === "found" && evidenceIndex < 0) warnings.push(`${key} has no trustworthy OCR evidence match.`);
+    if (field.status === "found" && ocrEvidenceMatch === "WEAK") warnings.push(`${key} was found only inside crowded OCR text; confidence reduced.`);
+    if (field.status === "found" && ocrEvidenceMatch === "NONE") warnings.push(`${key} could not be verified against raw OCR text.`);
 
     validated[key] = {
       ...field,
+      ocrEvidenceQuality,
+      ocrEvidenceMatch,
       ...(evidence ? {
         evidenceIndex,
         imageIndex: evidence.imageIndex,
@@ -296,13 +292,10 @@ function validateSemanticFields(fields, rapidEvidence) {
         boundingBox: evidence.boundingBox || null,
         imageWidth: evidence.imageWidth || null,
         imageHeight: evidence.imageHeight || null,
-      } : {
-        evidenceIndex: -1,
-        boundingBox: null,
-      }),
+        rapidOcrConfidence: evidence.confidence,
+      } : { evidenceIndex: -1, boundingBox: null, rapidOcrConfidence: 0 }),
     };
   }
-
   return { fields: validated, warnings };
 }
 
@@ -312,30 +305,11 @@ function mergeSemanticFields(deterministicFields, aiFields, aiEnabled) {
 }
 
 const DECLARATION_TYPE_BY_FIELD = {
-  productName: "PRODUCT_NAME",
-  brandName: "BRAND",
-  manufacturer: "MANUFACTURER",
-  manufacturerAddress: "ADDRESS",
-  packer: "PACKER",
-  packerAddress: "ADDRESS",
-  marketer: "MARKETER",
-  marketerAddress: "ADDRESS",
-  importer: "IMPORTER",
-  importerAddress: "ADDRESS",
-  netQuantity: "NET_QUANTITY",
-  unit: "NET_QUANTITY",
-  mrp: "MRP",
-  currency: "MRP",
-  dateOfManufacture: "DATE_OF_MANUFACTURE",
-  dateOfPacking: "DATE_OF_PACKING",
-  bestBefore: "BEST_BEFORE",
-  expiryDate: "EXPIRY_DATE",
-  batchNumber: "BATCH_NUMBER",
-  consumerCarePhone: "CONSUMER_CARE",
-  consumerCareEmail: "CONSUMER_CARE",
-  countryOfOrigin: "COUNTRY_OF_ORIGIN",
-  fssaiLicenseNumber: "FSSAI_LICENSE",
-  barcode: "BARCODE",
+  productName: "PRODUCT_NAME", brandName: "BRAND", manufacturer: "MANUFACTURER", manufacturerAddress: "ADDRESS",
+  packer: "PACKER", packerAddress: "ADDRESS", marketer: "MARKETER", marketerAddress: "ADDRESS", importer: "IMPORTER", importerAddress: "ADDRESS",
+  netQuantity: "NET_QUANTITY", unit: "NET_QUANTITY", mrp: "MRP", currency: "MRP", dateOfManufacture: "DATE_OF_MANUFACTURE", dateOfPacking: "DATE_OF_PACKING",
+  bestBefore: "BEST_BEFORE", expiryDate: "EXPIRY_DATE", batchNumber: "BATCH_NUMBER", consumerCarePhone: "CONSUMER_CARE", consumerCareEmail: "CONSUMER_CARE",
+  countryOfOrigin: "COUNTRY_OF_ORIGIN", fssaiLicenseNumber: "FSSAI_LICENSE", barcode: "BARCODE",
 };
 
 function buildSemanticDeclarationEvidence(fields) {
@@ -366,17 +340,10 @@ function buildSemanticDeclarationEvidence(fields) {
 }
 
 function buildPresentationChecks(rapid, fields) {
-  const relevant = [
-    "productName", "brandName", "manufacturer", "packer", "importer",
-    "netQuantity", "mrp", "dateOfManufacture", "dateOfPacking", "bestBefore",
-    "expiryDate", "consumerCarePhone", "consumerCareEmail", "countryOfOrigin",
-    "fssaiLicenseNumber", "batchNumber",
-  ];
-
+  const relevant = ["productName", "brandName", "manufacturer", "packer", "importer", "netQuantity", "mrp", "dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate", "consumerCarePhone", "consumerCareEmail", "countryOfOrigin", "fssaiLicenseNumber", "batchNumber"];
   const normalize = (value) => normalizeText(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const similarity = (a, b) => {
-    const left = normalize(a);
-    const right = normalize(b);
+    const left = normalize(a); const right = normalize(b);
     if (!left || !right) return 0;
     if (left === right) return 1;
     if (left.includes(right) || right.includes(left)) return 0.92;
@@ -385,14 +352,12 @@ function buildPresentationChecks(rapid, fields) {
     const intersection = [...leftWords].filter((x) => rightWords.has(x)).length;
     return intersection / Math.max(1, Math.max(leftWords.size, rightWords.size));
   };
-
   const byImage = new Map();
   for (const item of rapid.evidence || []) {
     if (!item?.boundingBox) continue;
     if (!byImage.has(item.imageIndex)) byImage.set(item.imageIndex, []);
     byImage.get(item.imageIndex).push(item);
   }
-
   const rows = {};
   for (const key of relevant) {
     const field = normalizeField(fields?.[key]);
@@ -404,67 +369,42 @@ function buildPresentationChecks(rapid, fields) {
       if (score < 0.45) continue;
       if (!best || score > best.score || (score === best.score && item.confidence > best.item.confidence)) best = { item, score };
     }
-
     const box = best?.item?.boundingBox || null;
     const width = Number(best?.item?.imageWidth || 0);
     const height = Number(best?.item?.imageHeight || 0);
     const lineHeightRatio = box && height ? box.height / height : null;
     const imageKey = best?.item?.imageIndex ?? field.imageIndex ?? 0;
     const imageLines = byImage.get(imageKey) || [];
-    const medianHeight = imageLines.length
-      ? [...imageLines].map((x) => Number(x.boundingBox?.height || 0)).filter(Boolean).sort((a, b) => a - b)[Math.floor(imageLines.length / 2)]
-      : null;
+    const medianHeight = imageLines.length ? [...imageLines].map((x) => Number(x.boundingBox?.height || 0)).filter(Boolean).sort((a, b) => a - b)[Math.floor(imageLines.length / 2)] : null;
     const relativeSize = box && medianHeight ? box.height / Math.max(1, medianHeight) : null;
-
     let readability = "NOT_ESTABLISHED";
     if (field.status === "unreadable" || field.status === "ambiguous" || field.confidence < 0.6) readability = "REVIEW";
     else if (box && relativeSize !== null && relativeSize < 0.55) readability = "SMALL_TEXT_REVIEW";
     else if (field.value) readability = "LIKELY_READABLE";
-
     let fontSizeScreening = "NOT_MEASURED";
     if (box && lineHeightRatio !== null) fontSizeScreening = lineHeightRatio < 0.006 ? "VERY_SMALL_REVIEW" : lineHeightRatio < 0.010 ? "SMALL_TEXT_REVIEW" : "DETECTED";
-
     let placement = "NOT_LOCATED";
     let zone = null;
     if (box && width && height) {
-      const cx = box.left + box.width / 2;
-      const cy = box.top + box.height / 2;
+      const cx = box.left + box.width / 2; const cy = box.top + box.height / 2;
       const horizontal = cx < width / 3 ? "LEFT" : cx > (width * 2) / 3 ? "RIGHT" : "CENTER";
       const vertical = cy < height / 3 ? "TOP" : cy > (height * 2) / 3 ? "BOTTOM" : "MIDDLE";
-      zone = vertical + "-" + horizontal;
-      placement = "LOCATED_FOR_REVIEW";
+      zone = vertical + "-" + horizontal; placement = "LOCATED_FOR_REVIEW";
     }
-
-    rows[key] = {
-      field: key,
-      value: field.value ?? null,
-      status: field.status,
-      confidence: field.confidence,
-      imageIndex: best?.item?.imageIndex ?? field.imageIndex ?? null,
-      readability,
-      fontSizeScreening,
-      placement,
-      zone,
-      relativeLineHeight: lineHeightRatio,
-      relativeTextSize: relativeSize,
-      evidenceText: best?.item?.text || field.raw || field.evidence || null,
-    };
+    rows[key] = { field: key, value: field.value ?? null, status: field.status, confidence: field.confidence, imageIndex: best?.item?.imageIndex ?? field.imageIndex ?? null, readability, fontSizeScreening, placement, zone, relativeLineHeight: lineHeightRatio, relativeTextSize: relativeSize, evidenceText: best?.item?.text || field.raw || field.evidence || null };
   }
-
   const values = Object.values(rows);
-  const summary = {
-    fieldsChecked: values.length,
-    likelyReadable: values.filter((x) => x.readability === "LIKELY_READABLE").length,
-    readabilityReview: values.filter((x) => x.readability === "REVIEW" || x.readability === "SMALL_TEXT_REVIEW").length,
-    smallTextReview: values.filter((x) => x.fontSizeScreening === "SMALL_TEXT_REVIEW" || x.fontSizeScreening === "VERY_SMALL_REVIEW").length,
-    located: values.filter((x) => x.placement === "LOCATED_FOR_REVIEW").length,
-    notLocated: values.filter((x) => x.placement === "NOT_LOCATED").length,
-  };
-
   return {
     disclaimer: "Visual screening is assistive. Relative text-size signals are not a calibrated statutory measurement in millimetres; final font-size and placement compliance must be verified by the inspector against the applicable commodity and display-panel requirements.",
     rows,
-    summary,
+    summary: {
+      fieldsChecked: values.length,
+      likelyReadable: values.filter((x) => x.readability === "LIKELY_READABLE").length,
+      readabilityReview: values.filter((x) => x.readability === "REVIEW" || x.readability === "SMALL_TEXT_REVIEW").length,
+      smallTextReview: values.filter((x) => x.fontSizeScreening === "SMALL_TEXT_REVIEW" || x.fontSizeScreening === "VERY_SMALL_REVIEW").length,
+      located: values.filter((x) => x.placement === "LOCATED_FOR_REVIEW").length,
+      notLocated: values.filter((x) => x.placement === "NOT_LOCATED").length,
+    },
   };
 }
 
@@ -474,35 +414,17 @@ function buildStructuredResult(rapid, aiSemantic = null) {
   const validation = validateSemanticFields(mergedFields, rapid.evidence);
   const fields = validation.fields;
   const result = {};
-  for (const key of [
-    "productName", "brandName", "manufacturer", "manufacturerAddress", "packer", "packerAddress",
-    "marketer", "marketerAddress", "importer", "importerAddress", "netQuantity", "unit", "mrp",
-    "currency", "dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate", "batchNumber",
-    "consumerCarePhone", "consumerCareEmail", "countryOfOrigin", "fssaiLicenseNumber", "barcode",
-  ]) result[key] = normalizeField(fields[key]);
-
-  const rawDeclarationEvidence = rapid.evidence.filter((item) => item.text).map((item, index) => ({
-    id: String(item.id || `ocr-evidence-${index}`),
-    imageIndex: Number(item.imageIndex || 0),
-    type: "OCR_TEXT",
-    text: item.text,
-    confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0.55)),
-    source: "rapidocr",
-    boundingBox: item.boundingBox || null,
-    imageWidth: item.imageWidth || null,
-    imageHeight: item.imageHeight || null,
-  }));
+  for (const key of ["productName", "brandName", "manufacturer", "manufacturerAddress", "packer", "packerAddress", "marketer", "marketerAddress", "importer", "importerAddress", "netQuantity", "unit", "mrp", "currency", "dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate", "batchNumber", "consumerCarePhone", "consumerCareEmail", "countryOfOrigin", "fssaiLicenseNumber", "barcode"]) result[key] = normalizeField(fields[key]);
+  const rawDeclarationEvidence = rapid.evidence.filter((item) => item.text).map((item, index) => ({ id: String(item.id || `ocr-evidence-${index}`), imageIndex: Number(item.imageIndex || 0), type: "OCR_TEXT", text: item.text, confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0.55)), source: "rapidocr", boundingBox: item.boundingBox || null, imageWidth: item.imageWidth || null, imageHeight: item.imageHeight || null }));
   const declarationEvidence = buildSemanticDeclarationEvidence(fields);
   const presentationChecks = buildPresentationChecks(rapid, fields);
-
   const warnings = [...validation.warnings];
   if (reconciliation?.metadata?.innerPackReference) warnings.push("Package text refers to an individual/inner pack for additional batch, date, price, or related details.");
   if (!aiSemantic?.enabled) warnings.push("All remote AI semantic providers unavailable; using local deterministic field mapping only.");
   if (aiSemantic?.enabled && aiSemantic.providerCount < 3) warnings.push(`Semantic verification used ${aiSemantic.providerCount} available AI provider(s); unavailable providers did not block the scan.`);
   if (presentationChecks.summary.smallTextReview > 0) warnings.push(`Visual screening flagged ${presentationChecks.summary.smallTextReview} declaration(s) for small-text review.`);
   if (presentationChecks.summary.notLocated > 0) warnings.push(`${presentationChecks.summary.notLocated} declaration(s) could not be spatially located from OCR evidence.`);
-
-  const needsReview = Object.values(result).some((field) => field?.status === "unreadable" || field?.status === "ambiguous" || (field?.status === "found" && Number(field.confidence || 0) < 0.6));
+  const needsReview = Object.values(result).some((field) => field?.status === "unreadable" || field?.status === "ambiguous" || (field?.status === "found" && Number(field.confidence || 0) < 0.6) || (field?.status === "found" && Number(field.ocrEvidenceQuality || 0) < 0.3));
   return {
     ...result,
     otherDeclarations: rawDeclarationEvidence.map((item) => item.text),
@@ -523,9 +445,7 @@ function buildStructuredResult(rapid, aiSemantic = null) {
 async function runSemanticProviders({ images, rapid, categoryOptions }) {
   const cloudflareGemma = "@cf/google/gemma-4-26b-a4b-it";
   const cloudflareMoondream = "@cf/moondream/moondream3.1-9B-A2B";
-  const providers = [
-    { name: "gemini", fn: interpretPackageWithGemini, args: {} },
-  ];
+  const providers = [{ name: "gemini", fn: interpretPackageWithGemini, args: {} }];
   if (process.env.PARAKH_SEMANTIC_VERIFY_ALL === "true") {
     providers.push(
       { name: "cloudflare-gemma", fn: interpretPackageWithCloudflare, args: { modelOverride: cloudflareGemma, providerName: "cloudflare-gemma" } },
@@ -552,42 +472,32 @@ async function handleFastAnalyze(req, res, files, barcodeFile = null) {
     const images = await readImages(files);
     let categoryOptions = [];
     try { categoryOptions = JSON.parse(req.body?.categoryOptions || "[]"); if (!Array.isArray(categoryOptions)) categoryOptions = []; } catch { categoryOptions = []; }
-
     const barcodeImageProvided = Boolean(barcodeFile);
     const submittedBarcode = String(req.body?.barcodeGtin || "").replace(/\D/g, "").trim();
     const uploadMs = Date.now() - startedAt;
-    const rapidStart = Date.now();
-    const rapid = await analyzeWithRapid(images);
-    const rapidMs = Date.now() - rapidStart;
-    const semanticStart = Date.now();
-    const aiSemantic = await runSemanticProviders({ images, rapid, categoryOptions });
-    const semanticMs = Date.now() - semanticStart;
+
+    const parallelStart = Date.now();
+    const rapidPromise = (async () => {
+      const started = Date.now();
+      return { value: await analyzeWithRapid(images), ms: Date.now() - started };
+    })();
+    const semanticPromise = (async () => {
+      const started = Date.now();
+      const emptyRapid = { evidence: [], rawText: "" };
+      return { value: await runSemanticProviders({ images, rapid: emptyRapid, categoryOptions }), ms: Date.now() - started };
+    })();
+    const [{ value: rapid, ms: rapidMs }, { value: aiSemantic, ms: semanticMs }] = await Promise.all([rapidPromise, semanticPromise]);
+    const parallelMs = Date.now() - parallelStart;
+
     const structuredResult = buildStructuredResult(rapid, aiSemantic);
     if (submittedBarcode) {
-      structuredResult.barcode = {
-        value: submittedBarcode,
-        raw: submittedBarcode,
-        confidence: 1,
-        evidence: submittedBarcode,
-        status: "found",
-        source: "BARCODE_IMAGE_DECODER",
-      };
+      structuredResult.barcode = { value: submittedBarcode, raw: submittedBarcode, confidence: 1, evidence: submittedBarcode, status: "found", source: "BARCODE_IMAGE_DECODER" };
     }
     const result = await applyEvidenceConfidence(structuredResult, { barcodeImageProvided });
     const totalMs = Date.now() - startedAt;
-    const parallelMs = totalMs - uploadMs;
 
-    console.log(
-      `[ocr:fast] images=${files.length} evidence=${rapid.evidence.length} rapid=${rapidMs}ms `
-      + `semantic=${semanticMs}ms gemini=${aiSemantic.timing?.gemini ?? 0}ms `
-      + `cloudflare-gemma=${aiSemantic.timing?.["cloudflare-gemma"] ?? 0}ms `
-      + `cloudflare-moondream=${aiSemantic.timing?.["cloudflare-moondream"] ?? 0}ms `
-      + `providers=${aiSemantic.providerCount} total=${totalMs}ms`,
-    );
-
-    const unavailableReasons = (aiSemantic.providers || [])
-      .filter((provider) => !provider.enabled)
-      .map((provider) => `${provider.provider}: ${provider.reason || "unavailable"}`);
+    console.log(`[ocr:fast] images=${files.length} evidence=${rapid.evidence.length} rapid=${rapidMs}ms semantic=${semanticMs}ms gemini=${aiSemantic.timing?.gemini ?? 0}ms cloudflare-gemma=${aiSemantic.timing?.["cloudflare-gemma"] ?? 0}ms cloudflare-moondream=${aiSemantic.timing?.["cloudflare-moondream"] ?? 0}ms providers=${aiSemantic.providerCount} total=${totalMs}ms parallel=${parallelMs}ms`);
+    const unavailableReasons = (aiSemantic.providers || []).filter((provider) => !provider.enabled).map((provider) => `${provider.provider}: ${provider.reason || "unavailable"}`);
 
     res.json({
       result,
@@ -608,10 +518,7 @@ async function handleFastAnalyze(req, res, files, barcodeFile = null) {
     const status = error.statusCode || 502;
     res.status(status).json({ error: { code: error.code || "OCR_FAST_ERROR", message: error.message || "Fast OCR analysis failed." } });
   } finally {
-    await Promise.all([
-      ...files.map((file) => fs.unlink(file.path).catch(() => {})),
-      ...(barcodeFile ? [fs.unlink(barcodeFile.path).catch(() => {})] : []),
-    ]);
+    await Promise.all([...files.map((file) => fs.unlink(file.path).catch(() => {})), ...(barcodeFile ? [fs.unlink(barcodeFile.path).catch(() => {})] : [])]);
   }
 }
 
