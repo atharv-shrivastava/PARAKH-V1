@@ -34,9 +34,9 @@ Stores authenticated session tokens, user ownership, expiry, and creation time.
 
 ## Shop
 
-Current fields include `id`, `name`, address/location fields, `sourceType`, optional `ownerId`, and timestamps. Inspections reference shops.
+Current fields include `id`, `name`, address/location fields, `city`, `state`, `latitude`, `longitude`, `sourceType`, optional `ownerId`, and timestamps. Inspections reference shops.
 
-`city` and `state` are currently used by the intelligence layer for geographic aggregation where available.
+`city` and `state` are used by the intelligence layer for geographic aggregation where available. Product records are location-filterable through their associated inspection/shop records, so a product can be found by shop, address, city, or state without duplicating location on the Product row.
 
 ## Category
 
@@ -63,6 +63,19 @@ Current fields include:
 - timestamps
 
 Products can have associated inspections, batch incidents and batch alerts.
+
+### Product location filtering
+
+Location is deliberately modeled through the real-world inspection source rather than duplicated on every Product record.
+
+The product database can filter stored products by:
+
+- shop name
+- shop address
+- city
+- state
+
+The location-aware endpoint returns the latest inspection location for each matching product, including available latitude/longitude. A product is returned when **any associated inspection** matches the requested location, allowing the same product to remain discoverable across multiple inspection locations.
 
 ## Scan
 
