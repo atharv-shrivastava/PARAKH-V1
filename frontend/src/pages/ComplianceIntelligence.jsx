@@ -3,124 +3,44 @@ import { apiFetch, getUser } from "../lib/auth";
 import "../styles/compliance-intelligence.css";
 
 const API_URL = "http://localhost:5000/api";
-const FILTERS = [
-  ["manufacturer", "Manufacturer"],
-  ["product", "Product"],
-  ["gtin", "GTIN"],
-  ["batch", "Batch number"],
-  ["violation", "Violation type"],
-  ["district", "City / district"],
-  ["state", "State"],
-];
+const FILTERS = [["manufacturer","Manufacturer"],["product","Product"],["gtin","GTIN"],["batch","Batch number"],["violation","Violation type"],["district","City / district"],["state","State"]];
 
-function Metric({ label, value, helper }) {
-  return <div className="intel-metric"><span>{label}</span><strong>{value ?? 0}</strong>{helper && <small>{helper}</small>}</div>;
+function Metric({ label, value }) { return <div className="intel-metric"><span>{label}</span><strong>{value ?? 0}</strong></div>; }
+
+function LineChart({ data=[] }) {
+  const values = data.map(x => Number(x?.inspections || 0)); const max = Math.max(...values,1); const w=760,h=250,p=34;
+  const points=values.map((v,i)=>{const x=p+(i*Math.max(1,(w-2*p)/Math.max(1,values.length-1))); const y=h-p-(v/max)*(h-2*p); return {x,y,v,label:data[i]?.month||""};});
+  if(!points.length) return <div className="intel-empty">No matching data yet.</div>;
+  const path=points.map((pt,i)=>`${i?"L":"M"}${pt.x.toFixed(1)} ${pt.y.toFixed(1)}`).join(" ");
+  return <div className="intel-chart-wrap"><svg viewBox={`0 0 ${w} ${h}`} className="intel-chart" role="img" aria-label="Inspection trend chart"><line x1={p} y1={h-p} x2={w-p} y2={h-p} className="intel-axis"/><line x1={p} y1={p} x2={p} y2={h-p} className="intel-axis"/><path d={path} className="intel-line" fill="none"/>{points.map((pt,i)=><g key={i}><circle cx={pt.x} cy={pt.y} r="4" className="intel-point"/><title>{`${pt.label}: ${pt.v} inspections`}</title>{(i===0||i===points.length-1||i%3===0)&&<text x={pt.x} y={h-10} textAnchor="middle" className="intel-axis-label">{pt.label.slice(5)}</text>}</g>)}</svg></div>;
 }
 
-function Bars({ items = [], labelKey, valueKey = "count", suffix = "" }) {
-  const max = Math.max(...items.map((x) => Number(x?.[valueKey] || 0)), 1);
-  if (!items.length) return <div className="intel-empty">No matching data yet.</div>;
-  return <div className="intel-bars">{items.slice(0, 10).map((item, index) => {
-    const value = Number(item?.[valueKey] || 0);
-    return <div className="intel-bar-row" key={`${String(item?.[labelKey])}-${index}`}>
-      <div className="intel-bar-label"><span>{item?.[labelKey] || "Unknown"}</span><b>{value}{suffix}</b></div>
-      <div className="intel-bar-track"><i style={{ width: `${Math.max(4, (value / max) * 100)}%` }} /></div>
-    </div>;
-  })}</div>;
+function VerticalBars({ items=[], labelKey, valueKey="count", suffix="" }) {
+  const rows=items.slice(0,10), max=Math.max(...rows.map(x=>Number(x?.[valueKey]||0)),1); if(!rows.length) return <div className="intel-empty">No matching data yet.</div>;
+  return <div className="intel-chart-wrap"><svg viewBox="0 0 760 280" className="intel-chart" role="img"><line x1="42" y1="238" x2="740" y2="238" className="intel-axis"/>{rows.map((item,i)=>{const value=Number(item?.[valueKey]||0), bw=Math.max(34,Math.min(62,680/Math.max(rows.length,1)-10)), gap=(680-rows.length*bw)/Math.max(rows.length-1,1), x=50+i*(bw+gap), bh=(value/max)*180; return <g key={i}><rect x={x} y={238-bh} width={bw} height={bh} rx="6" className="intel-bar"/><text x={x+bw/2} y={228} textAnchor="middle" className="intel-axis-label">{String(item?.[labelKey]||"?").slice(0,10)}</text><text x={x+bw/2} y={230-bh} textAnchor="middle" className="intel-value-label">{value}{suffix}</text><title>{`${item?.[labelKey]||"Unknown"}: ${value}${suffix}`}</title></g>})}</svg></div>;
 }
 
-function buildQuery(filters, verified) {
-  const params = new URLSearchParams();
-  Object.entries(filters).forEach(([key, value]) => { if (String(value || "").trim()) params.set(key, value); });
-  if (verified) params.set("verified", "true");
-  return params.toString();
+function Donut({ items=[] }) {
+  const rows=items.slice(0,6); const total=rows.reduce((s,x)=>s+Number(x?.count||0),0); if(!total) return <div className="intel-empty">No severity data yet.</div>; let cursor=0; const cx=150,cy=150,r=90,C=2*Math.PI*r;
+  return <div className="intel-donut-wrap"><svg viewBox="0 0 300 300" className="intel-donut" role="img" aria-label="Violation severity chart">{rows.map((item,i)=>{const n=Number(item?.count||0), dash=(n/total)*C, offset=-cursor; cursor+=dash; return <circle key={i} cx={cx} cy={cy} r={r} className={`intel-donut-segment s${i%6}`} strokeDasharray={`${dash} ${C-dash}`} strokeDashoffset={offset} transform={`rotate(-90 ${cx} ${cy})`} title={`${item?.severity||"Unknown"}: ${n}`}/>})}<text x="150" y="145" textAnchor="middle" className="intel-donut-total">{total}</text><text x="150" y="166" textAnchor="middle" className="intel-donut-label">violations</text></svg><div className="intel-legend">{rows.map((x,i)=><div key={i}><i className={`legend-dot s${i%6}`} /><span>{x?.severity||"Unknown"}</span><b>{x?.count||0}</b></div>)}</div></div>;
 }
+
+function buildQuery(filters, verified) { const p=new URLSearchParams(); Object.entries(filters).forEach(([k,v])=>{if(String(v||"").trim())p.set(k,v)}); if(verified)p.set("verified","true"); return p.toString(); }
 
 export default function ComplianceIntelligence() {
-  const user = getUser();
-  const [filters, setFilters] = useState({ manufacturer: "", product: "", gtin: "", batch: "", violation: "", district: "", state: "", from: "", to: "" });
-  const [verifiedOnly, setVerifiedOnly] = useState(false);
-  const [data, setData] = useState(null);
-  const [alerts, setAlerts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const query = buildQuery(filters, verifiedOnly);
-      const [intelligenceResponse, alertResponse] = await Promise.all([
-        apiFetch(`${API_URL}/analytics/intelligence?${query}`),
-        apiFetch(`${API_URL}/batch-alerts?limit=20`),
-      ]);
-      const intelligence = await intelligenceResponse.json().catch(() => ({}));
-      const alertData = await alertResponse.json().catch(() => ({}));
-      if (!intelligenceResponse.ok) throw new Error(intelligence.error || "Could not load compliance intelligence");
-      setData(intelligence);
-      setAlerts(Array.isArray(alertData.alerts) ? alertData.alerts : []);
-    } catch (e) {
-      setError(e?.message || "Could not load compliance intelligence");
-    } finally {
-      setLoading(false);
-    }
-  }, [filters, verifiedOnly]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const visibleManufacturerRows = useMemo(() => data?.manufacturerLeaderboard || [], [data]);
-
-  return <main className="intel-page">
-    <header className="intel-hero">
-      <div>
-        <p className="intel-kicker">PARAKH · COMPLIANCE INTELLIGENCE</p>
-        <h1>State-wide compliance intelligence</h1>
-        <p>Every recorded inspection becomes part of a connected view of manufacturers, products, batches, violations and geography.</p>
-      </div>
-      <div className="intel-scope">{user?.role === "ADMIN" ? "FULL STATE VIEW" : "STATE-WIDE READ VIEW"}</div>
-    </header>
-
-    <section className="intel-filter-panel">
-      <div className="intel-filter-grid">
-        {FILTERS.map(([key, label]) => <label key={key}><span>{label}</span><input value={filters[key]} onChange={(e) => setFilters((current) => ({ ...current, [key]: e.target.value }))} placeholder={`Filter by ${label.toLowerCase()}`} /></label>)}
-        <label><span>From</span><input type="date" value={filters.from} onChange={(e) => setFilters((current) => ({ ...current, from: e.target.value }))} /></label>
-        <label><span>To</span><input type="date" value={filters.to} onChange={(e) => setFilters((current) => ({ ...current, to: e.target.value }))} /></label>
-      </div>
-      <div className="intel-filter-actions">
-        <label className="intel-toggle"><input type="checkbox" checked={verifiedOnly} onChange={(e) => setVerifiedOnly(e.target.checked)} /><span>Verified violations only</span></label>
-        <button type="button" onClick={() => setFilters({ manufacturer: "", product: "", gtin: "", batch: "", violation: "", district: "", state: "", from: "", to: "" })}>Clear filters</button>
-      </div>
-    </section>
-
-    {error && <div className="intel-error">{error}<button type="button" onClick={load}>Retry</button></div>}
-    {loading && !data ? <div className="intel-loading">Loading connected compliance data…</div> : null}
-    {data && <>
-      <section className="intel-metrics">
-        <Metric label="Inspections" value={data.counts?.inspections} />
-        <Metric label="Recorded violations" value={data.counts?.recordedViolations} />
-        <Metric label="Verified violations" value={data.counts?.verifiedViolations} />
-        <Metric label="Affected batches" value={data.counts?.affectedBatches} />
-        <Metric label="Violation rate" value={`${data.counts?.violationRate ?? 0}%`} />
-      </section>
-
-      {alerts.length > 0 && <section className="intel-alert-panel"><div className="intel-section-head"><div><p className="intel-kicker">ACTIVE SAFETY SIGNALS</p><h2>Verified batch alerts</h2></div></div><div className="intel-alert-list">{alerts.slice(0, 5).map((alert) => <div className={`intel-alert ${String(alert.severity || "HIGH").toLowerCase()}`} key={alert.id}><div><strong>⚠ {alert.product?.productName || "Product"} · Batch {alert.batchNumber}</strong><p>{alert.message}</p><small>{alert.product?.manufacturerName || alert.product?.brandName || "Manufacturer not recorded"}</small></div><span>{alert.severity}</span></div>)}</div></section>}
-
-      <section className="intel-grid intel-grid-wide">
-        <div className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">TREND</p><h2>Inspection trend</h2></div></div><Bars items={data.trend} labelKey="month" valueKey="inspections" /></div>
-        <div className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">GEOGRAPHY</p><h2>Violations by district</h2></div></div><Bars items={data.districtViolations} labelKey="district" /></div>
-      </section>
-
-      <section className="intel-grid">
-        <div className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">VIOLATION PATTERNS</p><h2>Violation types</h2></div></div><Bars items={data.violationTypes} labelKey="violation" /></div>
-        <div className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">BATCH PATTERNS</p><h2>Affected batches</h2></div></div><Bars items={data.affectedBatches} labelKey="batch" /></div>
-      </section>
-
-      <section className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">MANUFACTURER COMPLIANCE</p><h2>Manufacturer analytics</h2><p>Use violation rate together with raw violation count. A manufacturer inspected more often will naturally accumulate more records.</p></div></div><div className="intel-table-wrap"><table className="intel-table"><thead><tr><th>Manufacturer</th><th>Inspections</th><th>Violations</th><th>Verified</th><th>Violation rate</th></tr></thead><tbody>{visibleManufacturerRows.map((row) => <tr key={row.manufacturer}><td>{row.manufacturer}</td><td>{row.inspections}</td><td>{row.violations}</td><td>{row.verifiedViolations}</td><td>{row.violationRate}%</td></tr>)}{!visibleManufacturerRows.length && <tr><td colSpan="5">No manufacturer data for the current filters.</td></tr>}</tbody></table></div></section>
-
-      <section className="intel-grid">
-        <div className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">PRODUCTS</p><h2>Products with violations</h2></div></div><Bars items={data.productViolations} labelKey="product" /></div>
-        <div className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">SEVERITY</p><h2>Violation severity</h2></div></div><Bars items={data.severityBreakdown} labelKey="severity" /></div>
-      </section>
-    </>}
-  </main>;
+  const user=getUser(); const [filters,setFilters]=useState({manufacturer:"",product:"",gtin:"",batch:"",violation:"",district:"",state:"",from:"",to:""}); const [verifiedOnly,setVerifiedOnly]=useState(false); const [data,setData]=useState(null); const [alerts,setAlerts]=useState([]); const [loading,setLoading]=useState(true); const [error,setError]=useState("");
+  const load=useCallback(async()=>{setLoading(true);setError("");try{const query=buildQuery(filters,verifiedOnly);const [ir,ar]=await Promise.all([apiFetch(`${API_URL}/analytics/intelligence?${query}`),apiFetch(`${API_URL}/batch-alerts?limit=20`)]);const intelligence=await ir.json().catch(()=>({}));const alertData=await ar.json().catch(()=>({}));if(!ir.ok)throw new Error(intelligence.error||"Could not load compliance intelligence");setData(intelligence);setAlerts(Array.isArray(alertData.alerts)?alertData.alerts:[])}catch(e){setError(e?.message||"Could not load compliance intelligence")}finally{setLoading(false)}},[filters,verifiedOnly]);
+  useEffect(()=>{load()},[load]);
+  const visibleManufacturerRows=useMemo(()=>data?.manufacturerLeaderboard||[],[data]);
+  const clear=()=>setFilters({manufacturer:"",product:"",gtin:"",batch:"",violation:"",district:"",state:"",from:"",to:""});
+  return <main className="intel-page"><header className="intel-hero"><div><p className="intel-kicker">PARAKH · COMPLIANCE INTELLIGENCE</p><h1>State-wide compliance intelligence</h1><p>Every recorded inspection becomes part of a connected view of manufacturers, products, batches, violations and geography.</p></div><div className="intel-scope">{user?.role==="ADMIN"?"FULL STATE VIEW":"STATE-WIDE READ VIEW"}</div></header>
+    <section className="intel-filter-panel"><div className="intel-filter-grid">{FILTERS.map(([key,label])=><label key={key}><span>{label}</span><input value={filters[key]} onChange={e=>setFilters(c=>({...c,[key]:e.target.value}))} placeholder={`Filter by ${label.toLowerCase()}`}/></label>)}<label><span>From</span><input type="date" value={filters.from} onChange={e=>setFilters(c=>({...c,from:e.target.value}))}/></label><label><span>To</span><input type="date" value={filters.to} onChange={e=>setFilters(c=>({...c,to:e.target.value}))}/></label></div><div className="intel-filter-actions"><label className="intel-toggle"><input type="checkbox" checked={verifiedOnly} onChange={e=>setVerifiedOnly(e.target.checked)}/><span>Verified violations only</span></label><button type="button" onClick={clear}>Clear filters</button></div></section>
+    {error&&<div className="intel-error">{error}<button type="button" onClick={load}>Retry</button></div>}{loading&&!data?<div className="intel-loading">Loading connected compliance data…</div>:null}{data&&<>
+      <section className="intel-metrics"><Metric label="Inspections" value={data.counts?.inspections}/><Metric label="Recorded violations" value={data.counts?.recordedViolations}/><Metric label="Verified violations" value={data.counts?.verifiedViolations}/><Metric label="Affected batches" value={data.counts?.affectedBatches}/><Metric label="Violation rate" value={`${data.counts?.violationRate??0}%`}/></section>
+      {alerts.length>0&&<section className="intel-alert-panel"><div className="intel-section-head"><div><p className="intel-kicker">ACTIVE SAFETY SIGNALS</p><h2>Verified batch alerts</h2></div></div><div className="intel-alert-list">{alerts.slice(0,5).map(alert=><div className={`intel-alert ${String(alert.severity||"HIGH").toLowerCase()}`} key={alert.id}><div><strong>⚠ {alert.product?.productName||"Product"} · Batch {alert.batchNumber}</strong><p>{alert.message}</p><small>{alert.product?.manufacturerName||alert.product?.brandName||"Manufacturer not recorded"}</small></div><span>{alert.severity}</span></div>)}</div></section>}
+      <section className="intel-grid intel-grid-wide"><div className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">DYNAMIC TREND GRAPH</p><h2>Inspections over time</h2><p>Changes automatically with every active filter.</p></div></div><LineChart data={data.trend}/></div><div className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">DYNAMIC GEOGRAPHY GRAPH</p><h2>Violations by district</h2><p>Filtered district distribution.</p></div></div><VerticalBars items={data.districtViolations} labelKey="district"/></div></section>
+      <section className="intel-grid"><div className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">VIOLATION GRAPH</p><h2>Violation types</h2></div></div><VerticalBars items={data.violationTypes} labelKey="violation"/></div><div className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">BATCH GRAPH</p><h2>Affected batches</h2></div></div><VerticalBars items={data.affectedBatches} labelKey="batch"/></div></section>
+      <section className="intel-grid"><div className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">SEVERITY GRAPH</p><h2>Violation severity</h2></div></div><Donut items={data.severityBreakdown}/></div><div className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">MANUFACTURER ANALYTICS</p><h2>Manufacturer violation rate</h2></div></div><VerticalBars items={(data.manufacturerLeaderboard||[]).slice(0,10)} labelKey="manufacturer" valueKey="violationRate" suffix="%"/></div></section>
+      <section className="intel-card"><div className="intel-section-head"><div><p className="intel-kicker">MANUFACTURER COMPLIANCE</p><h2>Manufacturer analytics table</h2></div></div><div className="intel-table-wrap"><table className="intel-table"><thead><tr><th>Manufacturer</th><th>Inspections</th><th>Violations</th><th>Verified</th><th>Violation rate</th></tr></thead><tbody>{visibleManufacturerRows.map(row=><tr key={row.manufacturer}><td>{row.manufacturer}</td><td>{row.inspections}</td><td>{row.violations}</td><td>{row.verifiedViolations}</td><td>{row.violationRate}%</td></tr>)}{!visibleManufacturerRows.length&&<tr><td colSpan="5">No manufacturer data for the current filters.</td></tr>}</tbody></table></div></section>
+    </>}</main>;
 }
