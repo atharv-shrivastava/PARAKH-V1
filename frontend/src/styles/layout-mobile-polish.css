@@ -2,10 +2,10 @@
 
 .app-layout {
   min-height: 100vh;
+  display: flex;
 }
 
-/* The sidebar already occupies its 240px flex slot.
-   Keep the content as the remaining flex item instead of adding another 240px offset. */
+/* Keep the sidebar in the flex layout and let the main area consume the rest. */
 .sidebar {
   flex: 0 0 240px;
   width: 240px !important;
@@ -18,19 +18,13 @@
   min-width: 0;
   width: auto !important;
   max-width: none !important;
-  margin-left: 0 !important;
+  margin: 0 !important;
   padding: 26px 24px 40px !important;
   justify-content: flex-start !important;
-  overflow-x: clip;
+  overflow-x: hidden;
 }
 
-.main-content > * {
-  box-sizing: border-box;
-  min-width: 0;
-  max-width: 1180px;
-  width: 100%;
-}
-
+/* Scan-only containment. Dashboard pages are intentionally left alone. */
 .scan-page,
 .scan-review,
 .rule23-assessment,
@@ -38,6 +32,7 @@
 .rule-23-assessment,
 .officer-submission-review {
   box-sizing: border-box;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
 }
@@ -76,14 +71,12 @@
   background: color-mix(in srgb, currentColor 14%, transparent);
 }
 
-/* Keep content compact on tablets. */
 @media (max-width: 1100px) and (min-width: 769px) {
   .main-content {
     padding: 22px 18px 32px !important;
   }
 }
 
-/* Mobile: compact top navigation, no horizontal page drift. */
 @media (max-width: 768px) {
   .app-layout {
     display: block !important;
@@ -166,14 +159,10 @@
 
   .main-content {
     width: 100% !important;
-    margin-left: 0 !important;
+    margin: 0 !important;
     padding: 18px 12px 28px !important;
     display: block !important;
-  }
-
-  .main-content > * {
-    width: 100%;
-    max-width: none;
+    overflow-x: hidden;
   }
 
   .page-header {
@@ -215,28 +204,5 @@
   .shops-grid,
   .products-grid {
     grid-template-columns: 1fr !important;
-  }
-}
-
-@media (max-width: 480px) {
-  .main-content {
-    padding: 14px 9px 24px !important;
-  }
-
-  .sidebar {
-    padding-left: 8px !important;
-    padding-right: 8px !important;
-  }
-
-  .sidebar-user strong {
-    font-size: 12px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .nav-icon,
-  .navigation a,
-  .sidebar-user button {
-    transition: none !important;
   }
 }
