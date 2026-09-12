@@ -1,5 +1,7 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import Layout from "./components/Layout";
+import Rule23Assessment from "./components/Rule23Assessment";
+import InspectionSubmissionGate from "./components/InspectionSubmissionGate";
 import Dashboard from "./pages/Dashboard";
 import Scan from "./pages/ScanV2";
 import Shops from "./pages/Shops";
@@ -31,11 +33,19 @@ import { getToken, getUser } from "./lib/auth";
 function Protected() { const location = useLocation(); return getToken() ? <Outlet /> : <Navigate to="/login" replace state={{ from: location.pathname }} />; }
 function AdminOnly() { return getUser()?.role === "ADMIN" ? <Outlet /> : <Navigate to="/" replace />; }
 
+function ScanWithOfficerReview() {
+  return <>
+    <Scan />
+    <Rule23Assessment />
+    <InspectionSubmissionGate />
+  </>;
+}
+
 function App() {
   return <BrowserRouter><Routes>
     <Route path="/login" element={<Login />} /><Route path="/register" element={<Register />} /><Route path="/verify-email" element={<VerifyEmail />} /><Route path="/forgot-password" element={<ResetPassword />} /><Route path="/reset-password" element={<ResetPassword />} />
     <Route element={<Protected />}><Route element={<Layout />}>
-      <Route path="/" element={<Dashboard />} /><Route path="/scan" element={<Scan />} />
+      <Route path="/" element={<Dashboard />} /><Route path="/scan" element={<ScanWithOfficerReview />} />
       <Route path="/ecommerce-inspection" element={<EcommerceInspection />} />
       <Route path="/shops" element={<Shops />} /><Route path="/shops/:shopId" element={<ShopDetails />} /><Route path="/shops/:shopId/products" element={<ShopProducts />} />
       <Route path="/products" element={<Products />} /><Route path="/products/category/:categoryId" element={<CategoryPage />} /><Route path="/products/item/:id" element={<ProductDetails />} />
