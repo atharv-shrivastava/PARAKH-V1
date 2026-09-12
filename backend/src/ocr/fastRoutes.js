@@ -265,9 +265,11 @@ function validateSemanticFields(fields, rapidEvidence) {
         field.status = "ambiguous";
         warnings.push(key + " failed date-format validation.");
       }
-      if (field.confidence < 0.55) {
+      if (field.confidence < 0.30) {
         field.status = "ambiguous";
-        warnings.push(key + " is below the semantic model confidence threshold.");
+        warnings.push(key + " is below the 30% semantic confidence floor.");
+      } else if (field.confidence < 0.60) {
+        warnings.push(key + " is low-confidence and should be reviewed by the officer.");
       }
     }
 
@@ -476,18 +478,14 @@ async function handleFastAnalyze(req, res, files, barcodeFile = null) {
     const submittedBarcode = String(req.body?.barcodeGtin || "").replace(/\D/g, "").trim();
     const uploadMs = Date.now() - startedAt;
 
-    const parallelStart = Date.now();
-    const rapidPromise = (async () => {
-      const started = Date.now();
-      return { value: await analyzeWithRapid(images), ms: Date.now() - started };
-    })();
-    const semanticPromise = (async () => {
-      const started = Date.now();
-      const emptyRapid = { evidence: [], rawText: "" };
-      return { value: await runSemanticProviders({ images, rapid: emptyRapid, categoryOptions }), ms: Date.now() - started };
-    })();
-    const [{ value: rapid, ms: rapidMs }, { value: aiSemantic, ms: semanticMs }] = await Promise.all([rapidPromise, semanticPromise]);
-    const parallelMs = Date.now() - parallelStart;
+    const rapidStarted = Date.now();
+    const rapid = await analyzeWithRapid(images);
+    const rapidMs = Date.now() - rapidStarted;
+
+    const semanticStarted = Date.now();
+    const aiSemantic = await runSemanticProviders({ images, rapid, categoryOptions });
+    const semanticMs = Date.now() - semanticStarted;
+    const parallelMs = rapidMs + semanticMs;
 
     const structuredResult = buildStructuredResult(rapid, aiSemantic);
     if (submittedBarcode) {
@@ -496,7 +494,7 @@ async function handleFastAnalyze(req, res, files, barcodeFile = null) {
     const result = await applyEvidenceConfidence(structuredResult, { barcodeImageProvided });
     const totalMs = Date.now() - startedAt;
 
-    console.log(`[ocr:fast] images=${files.length} evidence=${rapid.evidence.length} rapid=${rapidMs}ms semantic=${semanticMs}ms gemini=${aiSemantic.timing?.gemini ?? 0}ms cloudflare-gemma=${aiSemantic.timing?.["cloudflare-gemma"] ?? 0}ms cloudflare-moondream=${aiSemantic.timing?.["cloudflare-moondream"] ?? 0}ms providers=${aiSemantic.providerCount} total=${totalMs}ms parallel=${parallelMs}ms`);
+    console.log(`[ocr:fast] images=${files.length} evidence=${rapid.evidence.length} rapid=${rapidMs}ms semantic=${semanticMs}ms gemini=${aiSemantic.timing?.gemini ?? 0}ms cloudflare-gemma=${aiSemantic.timing?.["cloudflare-gemma"] ?? 0}ms cloudflare-moondream=${aiSemantic.timing?.["cloudflare-moondream"] ?? 0}ms providers=${aiSemantic.providerCount} total=${totalMs}ms sequential=true`);
     const unavailableReasons = (aiSemantic.providers || []).filter((provider) => !provider.enabled).map((provider) => `${provider.provider}: ${provider.reason || "unavailable"}`);
 
     res.json({
