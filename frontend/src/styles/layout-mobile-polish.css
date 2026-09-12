@@ -5,16 +5,32 @@
 }
 
 .main-content {
+  box-sizing: border-box;
+  min-width: 0;
   width: calc(100% - 240px) !important;
   max-width: none !important;
   margin-left: 240px !important;
   padding: 26px 24px 40px !important;
   justify-content: flex-start !important;
+  overflow-x: clip;
 }
 
 .main-content > * {
+  box-sizing: border-box;
+  min-width: 0;
   max-width: 1180px;
   width: 100%;
+}
+
+.scan-page,
+.scan-review,
+.rule23-assessment,
+.inspection-submission-review,
+.rule-23-assessment,
+.officer-submission-review {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .sidebar {
