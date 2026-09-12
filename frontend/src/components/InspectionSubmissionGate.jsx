@@ -71,7 +71,7 @@ export default function InspectionSubmissionGate() {
   const ready = reviewed && (status.totalViolations === 0 || status.selectedViolations === status.totalViolations) && status.unableToVerify === 0;
 
   return (
-    <section className="scan-review officer-review-card">
+    <section className="scan-review inspection-submission-review officer-review-card" style={{ marginTop: 16 }}>
       <div className="section-heading">
         <div>
           <h2>Officer submission review</h2>
