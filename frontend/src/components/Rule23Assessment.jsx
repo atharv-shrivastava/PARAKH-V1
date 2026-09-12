@@ -38,7 +38,7 @@ export default function Rule23Assessment() {
   const potentiallyDeceptive = assessment.deceptivePackage === true;
 
   return (
-    <section className="scan-review" style={{ marginTop: 16 }}>
+    <section className="scan-review rule23-assessment" style={{ marginTop: 16 }}>
       <div className="section-heading">
         <div>
           <h2>Rule 23 visual assessment</h2>
@@ -47,7 +47,7 @@ export default function Rule23Assessment() {
         <strong>{complete ? "Assessment recorded" : "Assessment required"}</strong>
       </div>
 
-      <div style={{ display: "grid", gap: 12 }}>
+      <div className="rule23-assessment-fields">
         <label>
           <strong>Was the package visually inspected for Rule 23?</strong>
           <select value={assessment.visualInspectionPerformed ? "yes" : "no"} onChange={(event) => update("visualInspectionPerformed", event.target.value === "yes")}>
