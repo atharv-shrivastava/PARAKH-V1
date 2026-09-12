@@ -18,6 +18,7 @@ const FIELD_VALUE_SCHEMA = {
   type: "object",
   properties: {
     value: { type: "string" },
+    displayValue: { type: "string" },
     raw: { type: "string" },
     evidence: { type: "string" },
     confidence: { type: "number", minimum: 0, maximum: 1 },
@@ -25,7 +26,7 @@ const FIELD_VALUE_SCHEMA = {
     imageIndex: { type: "integer", minimum: 0 },
     evidenceIndex: { type: "integer", minimum: 0 },
   },
-  required: ["value", "raw", "evidence", "confidence", "status", "imageIndex", "evidenceIndex"],
+  required: ["value", "displayValue", "raw", "evidence", "confidence", "status", "imageIndex", "evidenceIndex"],
 };
 
 export function buildSemanticSchema(categoryOptions = []) {
@@ -49,7 +50,7 @@ export function buildSemanticSchema(categoryOptions = []) {
   };
 }
 
-export function buildSemanticPrompt({ detections = [], rawText = "", categoryOptions = [] } = {}) {
+export function buildSemanticPrompt({ detections = [], rawText = "", categoryOptions = [], targetLanguage = "en" } = {}) {
   const compactDetections = detections.slice(0, 160).map((item, index) => ({
     evidenceIndex: index,
     imageIndex: item.imageIndex,
@@ -66,7 +67,19 @@ export function buildSemanticPrompt({ detections = [], rawText = "", categoryOpt
   }));
   return `PARAKH semantic package mapper. Inspect the ORIGINAL package image(s) AND RapidOCR text/boxes together.
 
+USER DISPLAY LANGUAGE: ${String(targetLanguage || "en").toLowerCase()}
+
 Use visual evidence first and OCR as supporting text. You have access to the original package images in this request. Do not rely only on the OCR text. Use spatial relationships between labels, logos, product-name text, prices, quantities and dates. Correct OCR mistakes only when the actual image supports the correction. Never invent values.
+
+CRITICAL MULTILINGUAL FIELD RULES:
+1. "value" is the canonical extracted value as printed or semantically identified on the package. Keep it suitable for compliance rules and DataKart comparison.
+2. "displayValue" is the human-readable version that should be shown inside PARAKH fields for the selected USER DISPLAY LANGUAGE.
+3. Translate or transliterate only when the field is meaningfully translatable. Product names and generic commodity descriptions may be translated when appropriate.
+4. Preserve brand names, manufacturer/packer/marketer/importer legal names, addresses, phone numbers, email addresses, GTIN/barcodes, FSSAI/license IDs, batch codes, dates and numeric MRP/quantity values. Never invent a translated legal identifier.
+5. Units may be localized for display, but the canonical "value" should remain the package value. Example: canonical "500 g" may display as the local-language equivalent while retaining the number.
+6. Country names and generic product descriptions may be localized when the target language has a natural equivalent.
+7. If the target language is English, displayValue should normally equal value.
+8. If a faithful localization would be unsafe or uncertain, displayValue MUST equal value.
 
 CRITICAL PRODUCT IDENTITY RULES:
 1. productName means the consumer-facing marketed name of the actual product shown on the package.
@@ -80,7 +93,7 @@ CRITICAL PRODUCT IDENTITY RULES:
 9. A token such as "#0326" or a similar short numeric/marked code MUST NOT be returned as productName.
 10. Do not infer productName merely because a candidate is the largest remaining OCR box. Product-name selection requires positive semantic and visual evidence that the text is consumer-facing product branding/name.
 11. Common legitimate marketed names containing numbers (for example 7UP or a product line with a number) may be accepted only when the image/context clearly presents them as branding or a product name.
-12. If the product name is not confidently visible, return value="", status="absent". Do NOT guess from batch codes, manufacturer text, slogans, claims, ingredients, or category names.
+12. If the product name is not confidently visible, return value="", displayValue="", status="absent". Do NOT guess from batch codes, manufacturer text, slogans, claims, ingredients, or category names.
 
 CRITICAL EVIDENCE RULES:
 1. evidenceIndex refers ONLY to the numbered RapidOCR detection objects below.
@@ -94,7 +107,7 @@ CRITICAL EVIDENCE RULES:
 9. Prefer the OCR fragment with the greatest lexical overlap with the field value. A semantically related label with poor value overlap is NOT valid evidence.
 10. When no OCR detection corresponds to the value, set status to unreadable or absent as appropriate instead of inventing geometry.
 
-For every field return an object. Use empty strings for value/raw/evidence/imageIndex/evidenceIndex when the field is not detected, with status=absent. For a detected field return value, confidence (0..1), status, imageIndex and evidenceIndex. Distinguish manufacturer/packer/marketer/importer, net quantity vs serving size, and MRP vs sale/offer price. Do not assess legal compliance.
+For every field return an object. Use empty strings for value/displayValue/raw/evidence/imageIndex/evidenceIndex when the field is not detected, with status=absent. For a detected field return value, displayValue, confidence, status, imageIndex and evidenceIndex. Distinguish manufacturer/packer/marketer/importer, net quantity vs serving size, and MRP vs sale/offer price. Do not assess legal compliance.
 
 suggestedCategory is optional. When uncertain, omit it. When supplied, use only one supplied category id.
 
@@ -118,8 +131,11 @@ export function normalizeSemanticResult(parsed, categoryOptions = []) {
     const status = ["found", "absent", "not_detected", "unreadable", "ambiguous"].includes(statusRaw)
       ? statusRaw === "not_detected" ? "absent" : statusRaw
       : value?.value != null && text(value.value) ? "found" : "absent";
+    const canonical = value?.value != null && text(value.value) ? text(value.value) : null;
+    const localized = value?.displayValue != null && text(value.displayValue) ? text(value.displayValue) : canonical;
     normalized[key] = {
-      value: value?.value != null && text(value.value) ? value.value : null,
+      value: canonical,
+      displayValue: localized,
       raw: value?.raw != null && text(value.raw) ? value.raw : null,
       evidence: value?.evidence != null && text(value.evidence) ? value.evidence : null,
       confidence: confidence(value?.confidence),
