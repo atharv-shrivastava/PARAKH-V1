@@ -17,6 +17,7 @@ const RULE_ENGINE_FIELDS = [
 
 const CONFIDENCE_WEIGHTS = { gemini: 0.60, rapidocr: 0.40 };
 const HIGH_CONFIDENCE_THRESHOLD = 0.70;
+const RULE_ENGINE_MIN_CONFIDENCE = 0.30;
 
 function clamp01(value) {
   const number = Number(value);
@@ -87,15 +88,16 @@ function buildRuleEngineInput(result) {
     const field = result?.[key];
     if (!field || typeof field !== "object") return [key, field];
     const confidence = clamp01(field.confidence) ?? 0;
-    const highConfidence = field.status === "found" && confidence >= HIGH_CONFIDENCE_THRESHOLD;
+    const valueText = field.value == null ? "" : String(field.value).trim();
+    const ruleEngineEligible = valueText !== "" && !["absent", "unreadable"].includes(field.status) && confidence >= RULE_ENGINE_MIN_CONFIDENCE;
     return [key, {
-      value: highConfidence ? (field.value ?? null) : null,
-      raw: highConfidence ? (field.raw ?? null) : null,
-      evidence: highConfidence ? (field.evidence ?? null) : null,
+      value: ruleEngineEligible ? field.value : null,
+      raw: ruleEngineEligible ? (field.raw ?? null) : null,
+      evidence: ruleEngineEligible ? (field.evidence ?? null) : null,
       confidence,
-      status: highConfidence ? "found" : "unverified",
-      ...(highConfidence && field.imageIndex != null ? { imageIndex: field.imageIndex } : {}),
-      ...(highConfidence && field.evidenceIndex != null ? { evidenceIndex: field.evidenceIndex } : {}),
+      status: ruleEngineEligible ? "found" : "unverified",
+      ...(ruleEngineEligible && field.imageIndex != null ? { imageIndex: field.imageIndex } : {}),
+      ...(ruleEngineEligible && field.evidenceIndex != null ? { evidenceIndex: field.evidenceIndex } : {}),
     }];
   }));
 }
@@ -188,7 +190,8 @@ export async function applyEvidenceConfidence(result, options = {}) {
   next.evidenceConfidence = {
     weights: { ...CONFIDENCE_WEIGHTS },
     highConfidenceThreshold: HIGH_CONFIDENCE_THRESHOLD,
-    method: "Gemini visual extraction (60%) + RapidOCR evidence quality (40%). OCR evidence is required for high-confidence Rules Engine input. DataKart is reference verification only and never contributes to extracted-field confidence or Rules Engine input.",
+    ruleEngineMinimumConfidence: RULE_ENGINE_MIN_CONFIDENCE,
+    method: "Gemini visual extraction (60%) + RapidOCR evidence quality (40%). Fields with usable values at 30% or higher remain eligible for Rules Engine evaluation; below 30% is withheld. DataKart is reference verification only and never contributes to Rules Engine input.",
     dataKartAvailable: Boolean(dataKart),
     dataKartError,
     dataKartMatchedGtin,
