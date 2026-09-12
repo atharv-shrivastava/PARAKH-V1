@@ -18,19 +18,24 @@ function injectStyles() {
   style.id = STYLE_ID;
   style.textContent = `
     #${CARD_ID}{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 0 0}
-    .parakh-status-filter{border:1px solid var(--border-color,#d8dee8);background:var(--card-background,#fff);color:inherit;border-radius:12px;padding:12px;text-align:left;cursor:pointer;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
-    .parakh-status-filter:hover{transform:translateY(-1px);box-shadow:0 5px 18px rgba(0,0,0,.08)}
-    .parakh-status-filter[data-active="true"]{border-color:currentColor;box-shadow:0 0 0 2px rgba(100,116,139,.12)}
-    .parakh-status-filter strong{display:block;font-size:14px;margin-bottom:4px}
-    .parakh-status-filter span{display:block;font-size:24px;font-weight:800;line-height:1.1}
-    #${PANEL_ID}{margin-top:12px;border:1px solid var(--border-color,#d8dee8);border-radius:14px;padding:14px;background:var(--card-background,#fff)}
-    .parakh-drilldown-header{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}
-    .parakh-drilldown-header h3{margin:0;font-size:16px}
-    .parakh-drilldown-header button{border:0;background:transparent;color:inherit;cursor:pointer;font-size:18px;line-height:1}
-    .parakh-drilldown-item{border:1px solid var(--border-color,#d8dee8);border-radius:10px;padding:11px 12px;margin-top:8px}
-    .parakh-drilldown-item strong{display:block}
-    .parakh-drilldown-item small{display:block;margin-top:3px;opacity:.75}
-    .parakh-drilldown-item p{margin:7px 0 0;line-height:1.45}
+    .parakh-status-filter{border:1px solid var(--theme-border,var(--border-color,#d8dee8));background:var(--theme-surface,var(--card-background,#fff));color:var(--theme-text,var(--text-primary,#172033));border-radius:12px;padding:12px;text-align:left;cursor:pointer;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;box-shadow:var(--theme-shadow,0 2px 8px rgba(15,23,42,.06))}
+    .parakh-status-filter:hover{transform:translateY(-1px);box-shadow:0 5px 18px rgba(0,0,0,.14)}
+    .parakh-status-filter[data-active="true"]{border-color:var(--theme-primary,currentColor);box-shadow:0 0 0 2px color-mix(in srgb,var(--theme-primary) 18%,transparent)}
+    .parakh-status-filter strong{display:block;font-size:14px;margin-bottom:4px;color:var(--theme-text,var(--text-primary,#172033))}
+    .parakh-status-filter span{display:block;font-size:24px;font-weight:800;line-height:1.1;color:var(--theme-text,var(--text-primary,#172033))}
+    .parakh-status-filter[data-status="UNABLE_TO_VERIFY"]{border-left:4px solid #d97706}
+    .parakh-status-filter[data-status="PASS"]{border-left:4px solid #16a34a}
+    .parakh-status-filter[data-status="VIOLATION"]{border-left:4px solid #dc2626}
+    .parakh-status-filter[data-status="NOT_APPLICABLE"]{border-left:4px solid #64748b}
+    #${PANEL_ID}{margin-top:12px;border:1px solid var(--theme-border,var(--border-color,#d8dee8));border-radius:14px;padding:14px;background:var(--theme-surface,var(--card-background,#fff));color:var(--theme-text,var(--text-primary,#172033));box-shadow:var(--theme-shadow,0 4px 16px rgba(15,23,42,.06))}
+    .parakh-drilldown-header{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px;color:var(--theme-text,var(--text-primary,#172033))}
+    .parakh-drilldown-header h3{margin:0;font-size:16px;color:var(--theme-text,var(--text-primary,#172033))}
+    .parakh-drilldown-header small{color:var(--theme-muted,var(--text-secondary,#647084))}
+    .parakh-drilldown-header button{border:0;background:transparent;color:var(--theme-text,var(--text-primary,#172033));cursor:pointer;font-size:18px;line-height:1}
+    .parakh-drilldown-item{border:1px solid var(--theme-border,var(--border-color,#d8dee8));border-radius:10px;padding:11px 12px;margin-top:8px;background:var(--theme-soft,var(--muted-bg,#f8fafc));color:var(--theme-text,var(--text-primary,#172033))}
+    .parakh-drilldown-item strong{display:block;color:var(--theme-text,var(--text-primary,#172033))}
+    .parakh-drilldown-item small{display:block;margin-top:3px;color:var(--theme-muted,var(--text-secondary,#647084));opacity:1}
+    .parakh-drilldown-item p{margin:7px 0 0;line-height:1.45;color:var(--theme-text,var(--text-primary,#172033))}
     @media (max-width:760px){#${CARD_ID}{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media (max-width:420px){#${CARD_ID}{grid-template-columns:1fr}}
   `;
