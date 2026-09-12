@@ -13,6 +13,7 @@ import analyticsRouter from "./routes/analytics.js";
 import batchAlertsRouter from "./routes/batchAlerts.js";
 import datakartRouter from "./routes/datakart.js";
 import fastOcrRouter from "./ocr/fastRoutes.js";
+import semanticTimingRouter from "./ocr/semanticTimingRoutes.js";
 import ocrRouter from "./ocr/routes.js";
 import ecommerceOcrRouter from "./routes/ecommerceOcr.js";
 
@@ -37,6 +38,8 @@ app.use("/api/products/ecommerce-ocr", ecommerceOcrRouter);
 
 // Production OCR uses RapidOCR + semantic verification.
 app.use("/api/ocr", fastOcrRouter);
+// Gemini vs Grok benchmark/timing endpoint.
+app.use("/api/ocr", semanticTimingRouter);
 // Structured compliance evaluation is kept separate from OCR extraction.
 app.use("/api/ocr", ocrRouter);
 
