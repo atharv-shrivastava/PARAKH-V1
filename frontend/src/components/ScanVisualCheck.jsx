@@ -25,7 +25,7 @@ const REQUIRED_TYPES = new Set([
 const TYPE_LABELS = {
   PRODUCT_NAME: "Product name",
   MANUFACTURER: "Manufacturer",
-  ADDRESS: "Address",
+  ADDRESS: "Manufacturer address",
   PACKER: "Packer",
   IMPORTER: "Importer",
   NET_QUANTITY: "Net quantity",
@@ -36,6 +36,22 @@ const TYPE_LABELS = {
   EXPIRY_DATE: "Expiry date",
   CONSUMER_CARE: "Consumer care",
 };
+
+function declarationLabel(item) {
+  const type = String(item?.type || "").toUpperCase();
+  const combined = `${item?.value ?? ""} ${item?.text ?? ""}`.toLowerCase();
+  if (type === "CONSUMER_CARE") {
+    if (/@/.test(combined)) return "Consumer care email";
+    if (/\b(?:toll\s*free|phone|mobile|tel|contact|\+?\d[\d\s().-]{6,})\b/i.test(combined)) return "Consumer care phone";
+    return "Consumer care";
+  }
+  if (type === "ADDRESS") {
+    if (/\b(?:packer|packed by|packed at)\b/i.test(combined)) return "Packer address";
+    if (/\b(?:importer|imported by|imported at)\b/i.test(combined)) return "Importer address";
+    return "Manufacturer address";
+  }
+  return TYPE_LABELS[type] || type.replaceAll("_", " ");
+}
 
 function analyzePixels(data, width, height) {
   let sum = 0;
@@ -386,8 +402,9 @@ export default function ScanVisualCheck() {
                   if (!item.boundingBox) return null;
                   const key = `${item.imageIndex}-${item.type}-${index}`;
                   const selected = selectedDeclarationKey === key;
-                  return <button type="button" className={`visual-declaration-box declaration-${item.type}${selected ? " is-selected" : ""}`} key={key} data-declaration-key={key} aria-label={`${TYPE_LABELS[item.type] || item.type}: ${item.value ?? item.text}`} title={`${TYPE_LABELS[item.type] || item.type}: ${item.value ?? item.text}`} onClick={() => setSelectedDeclarationKey(key)} style={{ left: `${item.boundingBox.left * 100}%`, top: `${item.boundingBox.top * 100}%`, width: `${item.boundingBox.width * 100}%`, height: `${item.boundingBox.height * 100}%` }}>
-                    <span>{TYPE_LABELS[item.type] || item.type.replaceAll("_", " ")}</span>
+                  const label = declarationLabel(item);
+                  return <button type="button" className={`visual-declaration-box declaration-${item.type}${selected ? " is-selected" : ""}`} key={key} data-declaration-key={key} aria-label={`${label}: ${item.value ?? item.text}`} title={`${label}: ${item.value ?? item.text}`} onClick={() => setSelectedDeclarationKey(key)} style={{ left: `${item.boundingBox.left * 100}%`, top: `${item.boundingBox.top * 100}%`, width: `${item.boundingBox.width * 100}%`, height: `${item.boundingBox.height * 100}%` }}>
+                    <span>{label}</span>
                   </button>;
                 })}
                 {!imageDeclarations.some((item) => item.boundingBox) && <div className="visual-declaration-no-box">No verified OCR geometry was returned for this image.</div>}
@@ -397,8 +414,9 @@ export default function ScanVisualCheck() {
                 {imageDeclarations.length ? imageDeclarations.map((item, index) => {
                   const key = `${item.imageIndex}-${item.type}-${index}`;
                   const selected = selectedDeclarationKey === key;
+                  const label = declarationLabel(item);
                   return <button type="button" className={`visual-declaration-item${selected ? " is-selected" : ""}`} key={key} onClick={() => { setSelectedDeclarationKey(key); if (!item.boundingBox) setActiveDeclarationImage(item.imageIndex); }}>
-                    <span className="visual-declaration-type">{TYPE_LABELS[item.type] || item.type.replaceAll("_", " ")}</span>
+                    <span className="visual-declaration-type">{label}</span>
                     <strong>{item.value ?? item.text ?? "Declaration detected"}</strong>
                     {item.value && item.text && String(item.value).trim() !== String(item.text).trim() && <small>OCR evidence: {item.text}</small>}
                     <small>{item.boundingBox ? "Verified OCR position · Click to focus" : "Semantic evidence without verified OCR position"}</small>
