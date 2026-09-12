@@ -35,35 +35,51 @@
 .barcode-data-comparison .ocr-edit-field input[data-comparison-status="UNKNOWN"] { border-color: var(--border, #d1d5db); font-weight: 600; }
 .barcode-data-comparison .ocr-edit-field small[data-comparison-detail] { display: block; margin-top: 6px; }
 
-/* Compliance findings: keep dynamically rendered finding text readable. */
+/* Compliance findings: explicit text colors for every dynamic status/finding block. */
 .scan-review .status-message,
 .scan-review .status-message *,
 .scan-review details,
 .scan-review details summary,
-.scan-review details > *,
-.scan-review [class*="finding"],
-.scan-review [class*="Finding"],
-.scan-review [class*="violation"],
-.scan-review [class*="Violation"],
-.scan-review [class*="unable"],
-.scan-review [class*="Unable"] {
+.scan-review details summary span,
+.scan-review details summary strong,
+.scan-review details summary small,
+.scan-review details .rule-review-dropdown-body,
+.scan-review details .rule-review-dropdown-body *,
+.scan-review .rule-review-panel,
+.scan-review .rule-review-panel *,
+.scan-review .ocr-summary,
+.scan-review .ocr-summary * {
   color: var(--text-primary, #172033) !important;
 }
 
-.scan-review [class*="finding"] small,
-.scan-review [class*="Finding"] small,
-.scan-review [class*="violation"] small,
-.scan-review [class*="Violation"] small,
-.scan-review [class*="unable"] small,
-.scan-review [class*="Unable"] small {
+.scan-review .ocr-summary,
+.scan-review details summary small {
   color: var(--text-secondary, #647084) !important;
 }
 
-.scan-review [class*="violation"] button,
-.scan-review [class*="Violation"] button,
-.scan-review [class*="unable"] button,
-.scan-review [class*="Unable"] button {
-  color: inherit !important;
+/* Covers status cards/components mounted outside the rule-review panel as well. */
+[class*="compliance"],
+[class*="Compliance"],
+[class*="finding"],
+[class*="Finding"],
+[class*="violation"],
+[class*="Violation"],
+[class*="unable"],
+[class*="Unable"],
+[class*="passed"],
+[class*="Passed"],
+[class*="out-of-scope"],
+[class*="OutOfScope"] {
+  color: var(--text-primary, #172033);
+}
+
+[class*="compliance"] h1, [class*="compliance"] h2, [class*="compliance"] h3, [class*="compliance"] h4, [class*="compliance"] strong,
+[class*="finding"] h1, [class*="finding"] h2, [class*="finding"] h3, [class*="finding"] h4, [class*="finding"] strong,
+[class*="violation"] h1, [class*="violation"] h2, [class*="violation"] h3, [class*="violation"] h4, [class*="violation"] strong,
+[class*="unable"] h1, [class*="unable"] h2, [class*="unable"] h3, [class*="unable"] h4, [class*="unable"] strong,
+[class*="passed"] h1, [class*="passed"] h2, [class*="passed"] h3, [class*="passed"] h4, [class*="passed"] strong,
+[class*="out-of-scope"] h1, [class*="out-of-scope"] h2, [class*="out-of-scope"] h3, [class*="out-of-scope"] h4, [class*="out-of-scope"] strong {
+  color: var(--text-primary, #172033) !important;
 }
 
 @media (max-width: 800px) { .scan-image-grid { grid-template-columns: repeat(2, 1fr); } .ocr-status-grid { grid-template-columns: 1fr; } }
