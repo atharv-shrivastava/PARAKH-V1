@@ -12,22 +12,24 @@
 .barcode-preview-heading span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--theme-muted, var(--text-secondary, #6b7280)); font-size: 12px; }
 .barcode-preview-image { display: block; width: 100%; max-height: 180px; object-fit: contain; border-radius: 8px; background: var(--theme-input, #fff); border: 1px solid var(--theme-border, var(--border, #e5e7eb)); }
 .barcode-preview-meta { margin-top: 9px; color: var(--theme-muted, var(--text-secondary, #6b7280)); font-size: 13px; line-height: 1.4; }
-.scan-review { padding: 24px; background: var(--theme-surface, var(--surface, #fff)); color: var(--theme-text, var(--text-primary, #172033)); border: 1px solid var(--theme-border, var(--border, #e5e7eb)); border-radius: 14px; margin-bottom: 20px; box-shadow: var(--theme-shadow, 0 4px 16px rgba(15,23,42,.06)); min-width: 0; max-width: 100%; overflow: hidden; }
-.scan-review .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; min-width: 0; }
-.scan-review .section-heading > div { flex: 1 1 420px; min-width: 0; max-width: 100%; }
+.scan-review { width: 100%; box-sizing: border-box; padding: 24px; background: var(--theme-surface, var(--surface, #fff)); color: var(--theme-text, var(--text-primary, #172033)); border: 1px solid var(--theme-border, var(--border, #e5e7eb)); border-radius: 14px; margin-bottom: 20px; box-shadow: var(--theme-shadow, 0 4px 16px rgba(15,23,42,.06)); min-width: 0; max-width: 100%; overflow-x: clip; overflow-y: visible; contain: inline-size; }
+.scan-review .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; min-width: 0; width: 100%; }
+.scan-review .section-heading > div { flex: 1 1 420px; min-width: 0; max-width: 100%; width: 100%; }
 .scan-review .section-heading h2, .scan-review .section-heading h3 { max-width: 100%; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .scan-review .section-heading p { max-width: 100%; min-width: 0; overflow-wrap: anywhere; word-break: break-word; line-height: 1.55; }
-.scan-review .section-heading > strong { flex: 0 0 auto; max-width: 100%; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
-.scan-review label { display: grid; gap: 8px; margin-top: 18px; font-size: 13px; font-weight: 600; color: var(--theme-text, var(--text-primary, #172033)); min-width: 0; }
-.scan-review input, .scan-review textarea, .scan-review select { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 12px; border: 1px solid var(--theme-border, var(--border, #d1d5db)); border-radius: 8px; font: inherit; background: var(--theme-input, var(--surface, #fff)); color: var(--theme-input-text, var(--theme-text, var(--text-primary, #172033))); }
-.scan-review input::placeholder, .scan-review textarea::placeholder { color: var(--theme-muted, #94a3b8); }
+.scan-review .section-heading > strong { flex: 1 1 180px; max-width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; word-break: break-word; text-align: left; }
+.scan-review label { display: grid; gap: 8px; margin-top: 18px; font-size: 13px; font-weight: 600; color: var(--theme-text, var(--text-primary, #172033)); min-width: 0; max-width: 100%; width: 100%; box-sizing: border-box; }
+.scan-review input, .scan-review textarea, .scan-review select { display: block; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 12px; border: 1px solid var(--theme-border, var(--border, #d1d5db)); border-radius: 8px; font: inherit; background: var(--theme-input, var(--surface, #fff)); color: var(--theme-input-text, var(--theme-text, var(--text-primary, #172033))); }
 .scan-review option { background: var(--theme-input, #fff); color: var(--theme-input-text, var(--theme-text, #172033)); }
 .scan-review textarea { min-height: 140px; resize: vertical; }
-.scan-review .secondary-button, .scan-review .primary-button { max-width: 100%; box-sizing: border-box; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
-.scan-review .status-message { max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; word-break: break-word; }
-.scan-review .ocr-status-grid { min-width: 0; }
-.scan-review .ocr-status-grid > div { min-width: 0; overflow: hidden; }
-.scan-review .ocr-status-grid strong, .scan-review .ocr-status-grid span { overflow-wrap: anywhere; word-break: break-word; }
+.scan-review .secondary-button, .scan-review .primary-button { display: block; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.scan-review .status-message { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; overflow-wrap: anywhere; word-break: break-word; }
+.scan-review .ocr-status-grid { width: 100%; min-width: 0; max-width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.scan-review .ocr-status-grid > div { min-width: 0; max-width: 100%; width: 100%; overflow: hidden; box-sizing: border-box; }
+.scan-review .ocr-status-grid strong, .scan-review .ocr-status-grid span { overflow-wrap: anywhere; word-break: break-word; min-width: 0; max-width: 100%; }
+.scan-review .rule23-assessment-fields { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; overflow-x: clip; }
+.scan-review .rule23-assessment-fields > * { min-width: 0; max-width: 100%; box-sizing: border-box; }
+.scan-review * { max-width: 100%; box-sizing: border-box; }
 .scan-suggestion { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; padding: 12px; border-radius: 8px; background: var(--theme-soft, var(--primary-light, #f8fafc)); color: var(--theme-text, var(--text-primary, #172033)); }
 .scan-image-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 18px 0; min-width: 0; }
 .scan-image-card { overflow: hidden; border: 1px solid var(--theme-border, var(--border, #e5e7eb)); border-radius: 10px; background: var(--theme-surface, var(--surface, #f8fafc)); color: var(--theme-text, var(--text-primary, #172033)); }
@@ -120,14 +122,17 @@
   color: inherit;
 }
 
-/* Rule 23 + Officer submission review: keep long legal copy inside the card. */
 .rule23-assessment,
 .inspection-submission-review,
 .rule-23-assessment,
 .officer-submission-review {
+  display: block;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
+  overflow-x: clip;
+  overflow-y: visible;
+  contain: inline-size;
 }
 
 .rule23-assessment .section-heading,
@@ -135,20 +140,35 @@
 .rule-23-assessment .section-heading,
 .officer-submission-review .section-heading {
   display: flex;
+  width: 100%;
+  min-width: 0;
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
   flex-wrap: wrap;
-  min-width: 0;
 }
 
 .rule23-assessment .section-heading > div,
 .inspection-submission-review .section-heading > div,
 .rule-23-assessment .section-heading > div,
 .officer-submission-review .section-heading > div {
-  flex: 1 1 420px;
+  flex: 1 1 100%;
   min-width: 0;
   max-width: 100%;
+  width: 100%;
+}
+
+.rule23-assessment .section-heading > strong,
+.inspection-submission-review .section-heading > strong,
+.rule-23-assessment .section-heading > strong,
+.officer-submission-review .section-heading > strong {
+  flex: 1 1 100%;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .rule23-assessment .section-heading h2,
@@ -169,30 +189,57 @@
 .inspection-submission-review label,
 .rule-23-assessment label,
 .officer-submission-review label {
+  display: grid;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
+  overflow: hidden;
+}
+
+.rule23-assessment label strong,
+.inspection-submission-review label strong,
+.rule-23-assessment label strong,
+.officer-submission-review label strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .rule23-assessment select,
 .inspection-submission-review select,
 .rule-23-assessment select,
 .officer-submission-review select {
+  display: block;
   width: 100%;
-  max-width: 100%;
   min-width: 0;
+  max-width: 100%;
 }
 
 .rule23-assessment .secondary-button,
 .inspection-submission-review .secondary-button,
 .rule-23-assessment .secondary-button,
 .officer-submission-review .secondary-button {
+  display: block;
   width: 100%;
+  min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
   text-align: center;
+}
+
+.rule23-assessment .status-message,
+.inspection-submission-review .status-message,
+.rule-23-assessment .status-message,
+.officer-submission-review .status-message {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 @media (max-width: 560px) {
