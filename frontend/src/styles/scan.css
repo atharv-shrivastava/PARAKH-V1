@@ -34,4 +34,36 @@
 .barcode-data-comparison .ocr-edit-field input[data-comparison-status="MISMATCH"] { border-color: #dc2626; font-weight: 600; }
 .barcode-data-comparison .ocr-edit-field input[data-comparison-status="UNKNOWN"] { border-color: var(--border, #d1d5db); font-weight: 600; }
 .barcode-data-comparison .ocr-edit-field small[data-comparison-detail] { display: block; margin-top: 6px; }
+
+/* Compliance findings: keep dynamically rendered finding text readable. */
+.scan-review .status-message,
+.scan-review .status-message *,
+.scan-review details,
+.scan-review details summary,
+.scan-review details > *,
+.scan-review [class*="finding"],
+.scan-review [class*="Finding"],
+.scan-review [class*="violation"],
+.scan-review [class*="Violation"],
+.scan-review [class*="unable"],
+.scan-review [class*="Unable"] {
+  color: var(--text-primary, #172033) !important;
+}
+
+.scan-review [class*="finding"] small,
+.scan-review [class*="Finding"] small,
+.scan-review [class*="violation"] small,
+.scan-review [class*="Violation"] small,
+.scan-review [class*="unable"] small,
+.scan-review [class*="Unable"] small {
+  color: var(--text-secondary, #647084) !important;
+}
+
+.scan-review [class*="violation"] button,
+.scan-review [class*="Violation"] button,
+.scan-review [class*="unable"] button,
+.scan-review [class*="Unable"] button {
+  color: inherit !important;
+}
+
 @media (max-width: 800px) { .scan-image-grid { grid-template-columns: repeat(2, 1fr); } .ocr-status-grid { grid-template-columns: 1fr; } }
