@@ -54,6 +54,14 @@ function makeField(value, evidence, source = 'LOCAL_OCR_REPAIR') {
   };
 }
 
+function shouldReplaceField(current, candidate) {
+  if (!candidate) return false;
+  if (!current?.value || current?.status !== 'found') return true;
+  const currentConfidence = confidenceOf(current.confidence);
+  const candidateConfidence = confidenceOf(candidate.confidence);
+  return candidateConfidence > currentConfidence + 0.02;
+}
+
 function quantityRepair(detections = [], rawText = '') {
   const lines = Array.isArray(detections) ? detections.filter((item) => text(item?.text)) : [];
 
@@ -91,7 +99,6 @@ function quantityRepair(detections = [], rawText = '') {
 function mrpRepair(detections = [], rawText = '') {
   const lines = Array.isArray(detections) ? detections.filter((item) => text(item?.text)) : [];
   for (const item of lines) {
-    const valueMatch = text(item.text).match(QUANTITY_PAIR_RE);
     if (MRP_LINE_RE.test(text(item.text))) {
       const match = text(item.text).match(MRP_VALUE_RE);
       if (match) return { value: match[1].replace(/,/g, ''), evidence: [item] };
@@ -115,19 +122,16 @@ export function repairNumericFields(fields = {}, detections = [], rawText = '') 
   const repaired = Object.fromEntries(Object.entries(fields || {}));
   const quantity = quantityRepair(detections, rawText);
   if (quantity) {
-    const currentQuantity = repaired.netQuantity;
-    const currentUnit = repaired.unit;
-    if (!currentQuantity?.value || currentQuantity?.status !== 'found') {
-      repaired.netQuantity = makeField(quantity.quantity, quantity.evidence);
-    }
-    if (!currentUnit?.value || currentUnit?.status !== 'found') {
-      repaired.unit = makeField(quantity.unit, quantity.evidence);
-    }
+    const quantityField = makeField(quantity.quantity, quantity.evidence);
+    const unitField = makeField(quantity.unit, quantity.evidence);
+    if (shouldReplaceField(repaired.netQuantity, quantityField)) repaired.netQuantity = quantityField;
+    if (shouldReplaceField(repaired.unit, unitField)) repaired.unit = unitField;
   }
 
   const mrp = mrpRepair(detections, rawText);
-  if (mrp && (!repaired.mrp?.value || repaired.mrp?.status !== 'found')) {
-    repaired.mrp = makeField(mrp.value, mrp.evidence);
+  if (mrp) {
+    const mrpField = makeField(mrp.value, mrp.evidence);
+    if (shouldReplaceField(repaired.mrp, mrpField)) repaired.mrp = mrpField;
   }
   return repaired;
 }
