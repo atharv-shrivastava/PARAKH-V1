@@ -1,50 +1,57 @@
-/* Layout spacing + mobile navigation polish. Visual only. */
+/* Layout spacing + mobile navigation polish. */
 
 .app-layout {
   min-height: 100vh;
-  display: flex;
-  align-items: stretch;
   width: 100%;
   min-width: 0;
 }
 
-/* Keep the sidebar in the flex layout. theme.css previously made it fixed,
-   which removed it from normal layout flow and caused every page to start
-   underneath the sidebar. Sticky keeps it visible without breaking sizing. */
+/* Desktop: sidebar stays fixed to the viewport. Only its navigation area
+   scrolls, while the main page remains independently scrollable. */
 .sidebar {
-  position: sticky !important;
+  position: fixed !important;
+  left: 0 !important;
   top: 0 !important;
-  align-self: flex-start;
-  flex: 0 0 240px;
+  bottom: 0 !important;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  flex: none;
   width: 240px !important;
-  min-width: 240px;
+  min-width: 240px !important;
   height: 100vh !important;
   min-height: 100vh !important;
+  max-height: 100vh !important;
+  overflow: hidden !important;
   box-sizing: border-box;
+}
+
+.navigation {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  scrollbar-width: thin;
+  gap: 5px !important;
 }
 
 .main-content {
   box-sizing: border-box;
-  flex: 1 1 auto;
-  min-width: 0;
   width: auto !important;
   max-width: none !important;
-  margin: 0 !important;
+  min-width: 0;
+  min-height: 100vh;
+  margin-left: 240px !important;
   padding: 26px 24px 40px !important;
-  justify-content: flex-start !important;
   overflow-x: hidden;
 }
 
-/* Every direct page root must be allowed to shrink inside the remaining
-   content column. This prevents intrinsic child widths from crossing the
-   sidebar boundary. */
 .main-content > * {
   box-sizing: border-box;
   min-width: 0;
   max-width: 100%;
 }
 
-/* Scan-only containment. Dashboard pages are intentionally left alone. */
 .scan-page,
 .scan-review,
 .rule23-assessment,
@@ -58,11 +65,8 @@
 }
 
 .logo {
+  flex: 0 0 auto;
   margin-bottom: 28px !important;
-}
-
-.navigation {
-  gap: 5px !important;
 }
 
 .navigation a {
@@ -104,12 +108,17 @@
 
   .sidebar {
     position: sticky !important;
+    left: auto !important;
     top: 0 !important;
+    bottom: auto !important;
     width: 100% !important;
     min-width: 0 !important;
-    flex: none;
+    max-width: 100% !important;
     height: auto !important;
     min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    flex: none !important;
     padding: 10px 10px 9px !important;
     z-index: 1000;
     border-right: 0 !important;
@@ -133,10 +142,12 @@
 
   .sidebar .navigation {
     width: 100%;
+    flex: 0 0 auto !important;
+    display: flex;
     flex-direction: row !important;
     gap: 6px !important;
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
     padding: 1px 0 3px;
     scrollbar-width: none;
   }
@@ -179,7 +190,8 @@
 
   .main-content {
     width: 100% !important;
-    margin: 0 !important;
+    min-height: calc(100vh - 180px);
+    margin-left: 0 !important;
     padding: 18px 12px 28px !important;
     display: block !important;
     overflow-x: hidden;
