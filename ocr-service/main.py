@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 # Render free instances expose very little CPU. Limit ONNX Runtime thread pools
-a# avoid oversubscription on the small CPU allocation. GPU/DirectML mode does
+# to avoid oversubscription on the small CPU allocation. GPU/DirectML mode does
 # not need these CPU inference limits, but leaving them set is harmless because
 # the ONNX execution provider handles the main inference work.
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -270,7 +270,7 @@ async def _analyze_contents(items: list[tuple[bytes, str]]):
             "warnings": [warning for item in visual_evidence for warning in item.get("warnings", [])],
             "visualEvidence": visual_evidence,
             "unreadableFields": [],
-            "needsReview": any(entry["confidence"] < 0.6 for entry in all_entries) or bool(visual_evidence and any(item["warnings"] for item in visual_evidence)),
+            "needsReview": any(entry["confidence"] < 0.6 for entry in all_entries) or any(item.get("warnings") for item in visual_evidence),
         },
     }
 
