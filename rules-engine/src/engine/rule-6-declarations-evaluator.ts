@@ -98,7 +98,11 @@ const REQUIREMENTS: Requirement[] = [
   {
     code: 'PCR-R6-1-G', number: '6(1)(g)', field: 'declarations.otherRequiredParticulars',
     aliases: ['declarations.otherParticulars'],
-    label: 'other particulars required by the rules'
+    label: 'other particulars required by the rules',
+    conditional: r =>
+      path(r, 'declarations.otherRequiredParticularsRequired') === true ||
+      path(r, 'declarations.otherParticularsRequired') === true ||
+      Boolean(evidenceValue(r, ['declarations.otherRequiredParticularsApplicable', 'declarations.otherParticularsApplicable']))
   },
   {
     code: 'PCR-R6-2', number: '6(2)', field: 'declarations.consumerComplaintContact',
