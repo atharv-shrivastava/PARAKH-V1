@@ -31,6 +31,12 @@ export default function InspectionSubmissionGate() {
         setReviewed(false);
       }
     };
+    const resetForNewScan = () => {
+      sessionStorage.removeItem(REVIEW_KEY);
+      setReviewed(false);
+      setStatus(readStatus());
+      setMessage("");
+    };
     refresh();
     const observer = new MutationObserver(refresh);
     observer.observe(document.body, { childList: true, subtree: true });
@@ -52,22 +58,26 @@ export default function InspectionSubmissionGate() {
       }
     };
     document.addEventListener("submit", submitGuard, true);
+    window.addEventListener("parakh:compliance-result", resetForNewScan);
     return () => {
       observer.disconnect();
       document.removeEventListener("submit", submitGuard, true);
+      window.removeEventListener("parakh:compliance-result", resetForNewScan);
     };
   }, [active, reviewed]);
 
   if (!active) return null;
 
+  const ready = reviewed && (status.totalViolations === 0 || status.selectedViolations === status.totalViolations) && status.unableToVerify === 0;
+
   return (
-    <section className="scan-review" style={{ marginTop: 16 }}>
+    <section className="scan-review officer-review-card">
       <div className="section-heading">
         <div>
           <h2>Officer submission review</h2>
-          <p>Submission is blocked until engine violations are explicitly selected and all Unable to Verify findings have been reviewed.</p>
+          <p>Submission is blocked until engine violations are explicitly resolved and all Unable to Verify findings have been reviewed.</p>
         </div>
-        <strong>{reviewed && (status.totalViolations === 0 || status.selectedViolations === status.totalViolations) ? "Ready for submission" : "Review required"}</strong>
+        <strong>{ready ? "Ready for submission" : "Review required"}</strong>
       </div>
 
       <div className="ocr-status-grid">
@@ -80,7 +90,11 @@ export default function InspectionSubmissionGate() {
         Mark current unresolved findings as reviewed / Unable to Verify
       </button>}
 
-      {message && <div className="status-message" style={{ marginTop: 10 }}>{message}</div>}
+      {status.totalViolations > 0 && status.selectedViolations < status.totalViolations && <div className="status-message review-required-card" style={{ marginTop: 10 }}>
+        {status.totalViolations - status.selectedViolations} engine violation{status.totalViolations - status.selectedViolations === 1 ? "" : "s"} still require explicit officer selection.
+      </div>}
+
+      {message && <div className="status-message review-required-card" style={{ marginTop: 10 }}>{message}</div>}
     </section>
   );
 }
