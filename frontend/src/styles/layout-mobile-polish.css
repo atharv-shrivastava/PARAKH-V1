@@ -3,13 +3,24 @@
 .app-layout {
   min-height: 100vh;
   display: flex;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
 }
 
-/* Keep the sidebar in the flex layout and let the main area consume the rest. */
+/* Keep the sidebar in the flex layout. theme.css previously made it fixed,
+   which removed it from normal layout flow and caused every page to start
+   underneath the sidebar. Sticky keeps it visible without breaking sizing. */
 .sidebar {
+  position: sticky !important;
+  top: 0 !important;
+  align-self: flex-start;
   flex: 0 0 240px;
   width: 240px !important;
   min-width: 240px;
+  height: 100vh !important;
+  min-height: 100vh !important;
+  box-sizing: border-box;
 }
 
 .main-content {
@@ -22,6 +33,15 @@
   padding: 26px 24px 40px !important;
   justify-content: flex-start !important;
   overflow-x: hidden;
+}
+
+/* Every direct page root must be allowed to shrink inside the remaining
+   content column. This prevents intrinsic child widths from crossing the
+   sidebar boundary. */
+.main-content > * {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* Scan-only containment. Dashboard pages are intentionally left alone. */
@@ -84,7 +104,7 @@
 
   .sidebar {
     position: sticky !important;
-    top: 0;
+    top: 0 !important;
     width: 100% !important;
     min-width: 0 !important;
     flex: none;
@@ -163,6 +183,11 @@
     padding: 18px 12px 28px !important;
     display: block !important;
     overflow-x: hidden;
+  }
+
+  .main-content > * {
+    width: 100%;
+    max-width: 100%;
   }
 
   .page-header {
