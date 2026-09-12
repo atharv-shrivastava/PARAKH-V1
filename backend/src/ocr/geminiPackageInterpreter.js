@@ -87,6 +87,7 @@ function mergeDeterministicEvidence(geminiFields, detections, rawText) {
 export async function interpretPackageWithGemini({ images = [], detections = [], rawText = "", categoryOptions = [], signal } = {}) {
   const apiKey = process.env.GEMINI_API_KEY || process.env.OCR_AI_API_KEY || "";
   const model = process.env.GEMINI_SEMANTIC_MODEL || "gemini-3.7-flash";
+  const useResponseSchema = String(process.env.GEMINI_USE_RESPONSE_SCHEMA || "false").toLowerCase() === "true";
   if (!apiKey) {
     console.warn(`[ocr:gemini-semantic] SKIPPED model=${model} reason=GEMINI_API_KEY is not configured.`);
     return { enabled: false, provider: "gemini", model, reason: "GEMINI_API_KEY is not configured." };
@@ -98,33 +99,30 @@ export async function interpretPackageWithGemini({ images = [], detections = [],
     { text: prompt },
   ];
 
-  const request = async (withSchema) => ai.models.generateContent({
+  const request = async () => ai.models.generateContent({
     model,
     contents,
     config: {
       responseMimeType: "application/json",
-      ...(withSchema ? { responseSchema: buildSemanticSchema(categoryOptions) } : {}),
+      ...(useResponseSchema ? { responseSchema: buildSemanticSchema(categoryOptions) } : {}),
       thinkingConfig: { thinkingLevel: "low" },
-      maxOutputTokens: 1800,
+      maxOutputTokens: 1400,
     },
   });
 
   try {
     if (signal?.aborted) throw new DOMException("The request was aborted.", "AbortError");
 
-    let response;
-    try {
-      response = await request(true);
-    } catch (error) {
-      if (Number(error?.status) !== 400) throw error;
-      console.warn(`[ocr:gemini-semantic] Structured schema rejected; retrying JSON-only model=${model}`);
-      response = await request(false);
-    }
+    console.log(`[ocr:gemini-semantic] START model=${model} responseSchema=${useResponseSchema}`);
+    const startedAt = Date.now();
+    const response = await request();
+    const elapsedMs = Date.now() - startedAt;
+    console.log(`[ocr:gemini-semantic] DONE model=${model} elapsed=${elapsedMs}ms`);
 
     const parsed = parseJsonContent(response.text || "", { recoverTruncated: true });
     const normalized = normalizeSemanticResult(parsed, categoryOptions);
     const mergedFields = mergeDeterministicEvidence(normalized.fields, detections, rawText);
-    return { enabled: true, provider: "gemini", model, fields: mergedFields, suggestedCategory: normalized.suggestedCategory };
+    return { enabled: true, provider: "gemini", model, fields: mergedFields, suggestedCategory: normalized.suggestedCategory, timingMs: elapsedMs };
   } catch (error) {
     if (error?.name === "AbortError") throw error;
     console.error(`[ocr:gemini-semantic] FAILED model=${model} status=${error?.status ?? "unknown"} reason=${error?.message || "Gemini semantic interpretation failed."}`, error);
