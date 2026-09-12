@@ -6,6 +6,7 @@ import {
   parseJsonContent,
 } from "./semanticPackageCommon.js";
 import { interpretOcrFields } from "./ocrFieldInterpreter.js";
+import { repairNumericFields } from "./numericFieldRepair.js";
 
 const OCR_PRIORITY_FIELDS = new Set([
   "mrp",
@@ -31,7 +32,7 @@ function normalizeText(value) {
 }
 
 function mergeDeterministicEvidence(geminiFields, detections, rawText) {
-  const deterministic = interpretOcrFields({ detections, rawText })?.fields || {};
+  const deterministic = repairNumericFields(interpretOcrFields({ detections, rawText })?.fields || {}, detections, rawText);
   const merged = {};
 
   for (const [key, geminiField] of Object.entries(geminiFields || {})) {
@@ -54,11 +55,6 @@ function mergeDeterministicEvidence(geminiFields, detections, rawText) {
       continue;
     }
 
-    // Numeric/regulatory fields benefit from exact OCR anchoring. Gemini remains
-    // the semantic interpreter, but it should not replace a directly detected
-    // MRP, quantity, date, batch, FSSAI or contact value with "absent" or a
-    // weaker guess. Prefer the local value when it has stronger deterministic
-    // confidence and a concrete OCR evidence box.
     const localHasGeometry = Boolean(localField?.evidence?.length && localField?.evidence?.some?.((item) => item?.boundingBox));
     const localConfidence = Number(localField?.confidence || 0);
     const aiConfidence = Number(geminiField?.confidence || 0);
@@ -73,9 +69,6 @@ function mergeDeterministicEvidence(geminiFields, detections, rawText) {
       continue;
     }
 
-    // Keep Gemini semantics, but attach deterministic evidence when both
-    // providers independently found the field. This gives downstream evidence
-    // validation something concrete to match against.
     merged[key] = {
       ...geminiField,
       displayValue: geminiField?.displayValue || geminiField?.value || localField?.value || "",
@@ -123,10 +116,6 @@ export async function interpretPackageWithGemini({ images = [], detections = [],
     try {
       response = await request(true);
     } catch (error) {
-      // A 400 here is commonly a request/schema validation failure. Retry with
-      // JSON MIME enforcement but without the structured schema, then validate
-      // the returned object ourselves. This keeps semantic mapping alive while
-      // remaining compatible with Gemini API schema restrictions.
       if (Number(error?.status) !== 400) throw error;
       console.warn(`[ocr:gemini-semantic] Structured schema rejected; retrying JSON-only model=${model}`);
       response = await request(false);
