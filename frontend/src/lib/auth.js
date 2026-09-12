@@ -11,6 +11,13 @@ const RULE_ENGINE_FIELDS = [
   "consumerCarePhone", "consumerCareEmail", "countryOfOrigin", "fssaiLicenseNumber",
 ];
 
+const NON_LOCALIZABLE_OCR_FIELDS = new Set([
+  "manufacturer", "manufacturerAddress", "packer", "packerAddress", "marketer", "marketerAddress",
+  "importer", "importerAddress", "consumerCarePhone", "consumerCareEmail", "fssaiLicenseNumber",
+  "barcode", "mrp", "currency", "dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate",
+  "batchNumber", "netQuantity",
+]);
+
 export function getToken() { return localStorage.getItem(TOKEN_KEY); }
 export function getUser() { try { return JSON.parse(localStorage.getItem(USER_KEY) || "null"); } catch { return null; } }
 
@@ -129,11 +136,48 @@ function sanitizeRulesEngineBody(body) {
   }
 }
 
+async function localizeOcrFields(payload) {
+  const target = String(localStorage.getItem("parakh_language") || "en").trim().toLowerCase();
+  if (!target || target === "en" || !payload?.result || typeof payload.result !== "object") return payload;
+
+  const candidates = [];
+  for (const [key, field] of Object.entries(payload.result)) {
+    if (NON_LOCALIZABLE_OCR_FIELDS.has(key) || !field || typeof field !== "object" || field.status !== "found") continue;
+    const value = String(field.value ?? "").trim();
+    if (!value || value.length < 2) continue;
+    candidates.push({ key, value });
+  }
+  if (!candidates.length) return payload;
+
+  try {
+    const response = await fetch(`${API_URL}/translate`, {
+      method: "POST",
+      headers: { ...authHeaders(true), "Content-Type": "application/json" },
+      body: JSON.stringify({ target, source: "auto", texts: candidates.map((item) => item.value) }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.translations) return payload;
+
+    for (const { key, value } of candidates) {
+      const localized = String(data.translations[value] ?? value).trim() || value;
+      payload.result[key] = {
+        ...payload.result[key],
+        canonicalValue: value,
+        displayValue: localized,
+      };
+    }
+  } catch {
+    // Localization is presentation-only. OCR results must remain usable when translation is unavailable.
+  }
+  return payload;
+}
+
 async function sanitizeOcrResponse(response) {
   if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) return response;
   try {
     const payload = await response.clone().json();
     if (payload?.result && typeof payload.result === "object") {
+      await localizeOcrFields(payload);
       delete payload.result.barcode;
       delete payload.result.gtin;
       delete payload.result.barcodeConfidence;
