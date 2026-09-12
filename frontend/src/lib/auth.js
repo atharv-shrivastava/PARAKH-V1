@@ -83,30 +83,72 @@ function isDataKartLookup(url) {
   return /\/api\/datakart\/gtin\//.test(url);
 }
 
+async function preprocessOcrImage(file) {
+  const source = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => createImageBitmap(file));
+  try {
+    const sourceWidth = source.width || 1;
+    const sourceHeight = source.height || 1;
+    const maxSide = 2000;
+    const scale = Math.min(1.75, maxSide / Math.max(sourceWidth, sourceHeight));
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("OCR preprocessing context unavailable.");
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.filter = "contrast(1.14) brightness(1.03) saturate(0.92)";
+    context.drawImage(source, 0, 0, width, height);
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
+    if (!blob) throw new Error("OCR preprocessing failed to encode the image.");
+    const processedName = file.name.replace(/\.[^.]+$/, "") + "-ocr.jpg";
+    return new File([blob], processedName, { type: "image/jpeg", lastModified: Date.now() });
+  } finally {
+    source.close();
+  }
+}
+
 async function optimizeOcrBody(body) {
   if (!(body instanceof FormData)) return body;
   const entries = [...body.entries()];
   const optimized = new FormData();
   for (const [key, value] of entries) {
-    if (!(typeof File !== "undefined" && value instanceof File && value.type.startsWith("image/"))) { optimized.append(key, value); continue; }
+    if (!(typeof File !== "undefined" && value instanceof File && value.type.startsWith("image/"))) {
+      optimized.append(key, value);
+      continue;
+    }
     try {
-      const bitmap = await createImageBitmap(value);
-      const maxSide = 1600;
-      if (Math.max(bitmap.width, bitmap.height) <= maxSide && value.size <= 2 * 1024 * 1024) {
-        bitmap.close(); optimized.append(key, value, value.name); continue;
-      }
-      const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-      const context = canvas.getContext("2d");
-      if (!context) { bitmap.close(); optimized.append(key, value, value.name); continue; }
-      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close();
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.78));
-      if (blob && blob.size < value.size) optimized.append(key, new File([blob], value.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" }), value.name.replace(/\.[^.]+$/, ".jpg"));
+      const processed = await preprocessOcrImage(value);
+      if (processed.size <= Math.max(value.size * 1.35, 2.5 * 1024 * 1024)) optimized.append(key, processed, processed.name);
       else optimized.append(key, value, value.name);
-    } catch { optimized.append(key, value, value.name); }
+    } catch {
+      try {
+        const bitmap = await createImageBitmap(value, { imageOrientation: "from-image" }).catch(() => createImageBitmap(value));
+        const maxSide = 2000;
+        const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        const context = canvas.getContext("2d");
+        if (!context) {
+          bitmap.close();
+          optimized.append(key, value, value.name);
+          continue;
+        }
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
+        context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close();
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.86));
+        if (blob && blob.size < value.size * 1.35) optimized.append(key, new File([blob], value.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" }), value.name.replace(/\.[^.]+$/, ".jpg"));
+        else optimized.append(key, value, value.name);
+      } catch {
+        optimized.append(key, value, value.name);
+      }
+    }
   }
   return optimized;
 }
