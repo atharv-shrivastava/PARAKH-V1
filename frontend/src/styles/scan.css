@@ -12,14 +12,24 @@
 .barcode-preview-heading span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--theme-muted, var(--text-secondary, #6b7280)); font-size: 12px; }
 .barcode-preview-image { display: block; width: 100%; max-height: 180px; object-fit: contain; border-radius: 8px; background: var(--theme-input, #fff); border: 1px solid var(--theme-border, var(--border, #e5e7eb)); }
 .barcode-preview-meta { margin-top: 9px; color: var(--theme-muted, var(--text-secondary, #6b7280)); font-size: 13px; line-height: 1.4; }
-.scan-review { padding: 24px; background: var(--theme-surface, var(--surface, #fff)); color: var(--theme-text, var(--text-primary, #172033)); border: 1px solid var(--theme-border, var(--border, #e5e7eb)); border-radius: 14px; margin-bottom: 20px; box-shadow: var(--theme-shadow, 0 4px 16px rgba(15,23,42,.06)); }
-.scan-review label { display: grid; gap: 8px; margin-top: 18px; font-size: 13px; font-weight: 600; color: var(--theme-text, var(--text-primary, #172033)); }
-.scan-review input, .scan-review textarea, .scan-review select { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--theme-border, var(--border, #d1d5db)); border-radius: 8px; font: inherit; background: var(--theme-input, var(--surface, #fff)); color: var(--theme-input-text, var(--theme-text, var(--text-primary, #172033))); }
+.scan-review { padding: 24px; background: var(--theme-surface, var(--surface, #fff)); color: var(--theme-text, var(--text-primary, #172033)); border: 1px solid var(--theme-border, var(--border, #e5e7eb)); border-radius: 14px; margin-bottom: 20px; box-shadow: var(--theme-shadow, 0 4px 16px rgba(15,23,42,.06)); min-width: 0; max-width: 100%; overflow: hidden; }
+.scan-review .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; min-width: 0; }
+.scan-review .section-heading > div { flex: 1 1 420px; min-width: 0; max-width: 100%; }
+.scan-review .section-heading h2, .scan-review .section-heading h3 { max-width: 100%; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.scan-review .section-heading p { max-width: 100%; min-width: 0; overflow-wrap: anywhere; word-break: break-word; line-height: 1.55; }
+.scan-review .section-heading > strong { flex: 0 0 auto; max-width: 100%; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.scan-review label { display: grid; gap: 8px; margin-top: 18px; font-size: 13px; font-weight: 600; color: var(--theme-text, var(--text-primary, #172033)); min-width: 0; }
+.scan-review input, .scan-review textarea, .scan-review select { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 12px; border: 1px solid var(--theme-border, var(--border, #d1d5db)); border-radius: 8px; font: inherit; background: var(--theme-input, var(--surface, #fff)); color: var(--theme-input-text, var(--theme-text, var(--text-primary, #172033))); }
 .scan-review input::placeholder, .scan-review textarea::placeholder { color: var(--theme-muted, #94a3b8); }
 .scan-review option { background: var(--theme-input, #fff); color: var(--theme-input-text, var(--theme-text, #172033)); }
 .scan-review textarea { min-height: 140px; resize: vertical; }
+.scan-review .secondary-button, .scan-review .primary-button { max-width: 100%; box-sizing: border-box; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.scan-review .status-message { max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; word-break: break-word; }
+.scan-review .ocr-status-grid { min-width: 0; }
+.scan-review .ocr-status-grid > div { min-width: 0; overflow: hidden; }
+.scan-review .ocr-status-grid strong, .scan-review .ocr-status-grid span { overflow-wrap: anywhere; word-break: break-word; }
 .scan-suggestion { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; padding: 12px; border-radius: 8px; background: var(--theme-soft, var(--primary-light, #f8fafc)); color: var(--theme-text, var(--text-primary, #172033)); }
-.scan-image-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 18px 0; }
+.scan-image-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 18px 0; min-width: 0; }
 .scan-image-card { overflow: hidden; border: 1px solid var(--theme-border, var(--border, #e5e7eb)); border-radius: 10px; background: var(--theme-surface, var(--surface, #f8fafc)); color: var(--theme-text, var(--text-primary, #172033)); }
 .scan-image-card img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
 .scan-image-card-actions { display:flex; gap:6px; flex-wrap:wrap; padding:8px; }
@@ -29,12 +39,12 @@
 .ocr-status-grid div { padding: 14px; border: 1px solid var(--theme-border, var(--border, #e5e7eb)); border-radius: 9px; background: var(--theme-soft, var(--muted-bg, #f8fafc)); color: var(--theme-text, var(--text-primary, #172033)); }
 .ocr-status-grid strong, .ocr-status-grid span { display: block; }
 .ocr-status-grid span { margin-top: 5px; color: var(--theme-muted, var(--text-secondary, #6b7280)); }
-.ocr-summary { margin: 12px 0; color: var(--theme-muted, var(--text-secondary, #4b5563)); font-size: 14px; }
+.ocr-summary { margin: 12px 0; color: var(--theme-muted, var(--text-secondary, #4b5563)); font-size: 14px; overflow-wrap: anywhere; }
 
 .barcode-data-comparison .ocr-edit-field input[data-comparison-status="MATCH"] { border-color: #16a34a; font-weight: 600; }
 .barcode-data-comparison .ocr-edit-field input[data-comparison-status="MISMATCH"] { border-color: #dc2626; font-weight: 600; }
 .barcode-data-comparison .ocr-edit-field input[data-comparison-status="UNKNOWN"] { border-color: var(--theme-border, var(--border, #d1d5db)); font-weight: 600; }
-.barcode-data-comparison .ocr-edit-field small[data-comparison-detail] { display: block; margin-top: 6px; color: var(--theme-muted, var(--text-secondary, #647084)); }
+.barcode-data-comparison .ocr-edit-field small[data-comparison-detail] { display: block; margin-top: 6px; color: var(--theme-muted, var(--text-secondary, #647084)); overflow-wrap: anywhere; }
 
 .scan-review .status-message,
 .scan-review .status-message *,
@@ -108,6 +118,87 @@
 .passed-card *,
 .out-of-scope-card * {
   color: inherit;
+}
+
+/* Rule 23 + Officer submission review: keep long legal copy inside the card. */
+.rule23-assessment,
+.inspection-submission-review,
+.rule-23-assessment,
+.officer-submission-review {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.rule23-assessment .section-heading,
+.inspection-submission-review .section-heading,
+.rule-23-assessment .section-heading,
+.officer-submission-review .section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.rule23-assessment .section-heading > div,
+.inspection-submission-review .section-heading > div,
+.rule-23-assessment .section-heading > div,
+.officer-submission-review .section-heading > div {
+  flex: 1 1 420px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.rule23-assessment .section-heading h2,
+.rule23-assessment .section-heading p,
+.inspection-submission-review .section-heading h2,
+.inspection-submission-review .section-heading p,
+.rule-23-assessment .section-heading h2,
+.rule-23-assessment .section-heading p,
+.officer-submission-review .section-heading h2,
+.officer-submission-review .section-heading p {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.rule23-assessment label,
+.inspection-submission-review label,
+.rule-23-assessment label,
+.officer-submission-review label {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.rule23-assessment select,
+.inspection-submission-review select,
+.rule-23-assessment select,
+.officer-submission-review select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.rule23-assessment .secondary-button,
+.inspection-submission-review .secondary-button,
+.rule-23-assessment .secondary-button,
+.officer-submission-review .secondary-button {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: center;
+}
+
+@media (max-width: 560px) {
+  .scan-review { padding: 18px; }
+  .scan-review .section-heading > div { flex-basis: 100%; }
+  .scan-review .section-heading > strong { width: 100%; }
 }
 
 @media (max-width: 800px) { .scan-image-grid { grid-template-columns: repeat(2, 1fr); } .ocr-status-grid { grid-template-columns: 1fr; } }
