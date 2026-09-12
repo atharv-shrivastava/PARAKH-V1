@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 # Render free instances expose very little CPU. Limit ONNX Runtime thread pools
-# to avoid oversubscription on the small CPU allocation. GPU/DirectML mode does
+a# avoid oversubscription on the small CPU allocation. GPU/DirectML mode does
 # not need these CPU inference limits, but leaving them set is harmless because
 # the ONNX execution provider handles the main inference work.
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -19,6 +19,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 from rapidocr import RapidOCR
+from visual_evidence import assess as assess_visual_quality
 
 app = FastAPI(title="PARAKH RapidOCR Service")
 
@@ -186,9 +187,11 @@ def extract_result(result: Any, image_index: int, image_width: int, image_height
 async def _analyze_contents(items: list[tuple[bytes, str]]):
     started_at = time.monotonic()
     prepared = []
+    visual_evidence = []
     for image_index, (content, _media_type) in enumerate(items[:6]):
         try:
             prepared.append(np.asarray(_prepare_image(content)))
+            visual_evidence.append({"imageIndex": image_index + 1, **assess_visual_quality(content)})
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Invalid image {image_index + 1}: {exc}") from exc
 
@@ -264,9 +267,10 @@ async def _analyze_contents(items: list[tuple[bytes, str]]):
         "result": {
             "declarationEvidence": all_entries,
             "rawText": "\n\n".join(part for part in raw_text_parts if part).strip(),
-            "warnings": [],
+            "warnings": [warning for item in visual_evidence for warning in item.get("warnings", [])],
+            "visualEvidence": visual_evidence,
             "unreadableFields": [],
-            "needsReview": any(entry["confidence"] < 0.6 for entry in all_entries),
+            "needsReview": any(entry["confidence"] < 0.6 for entry in all_entries) or bool(visual_evidence and any(item["warnings"] for item in visual_evidence)),
         },
     }
 
