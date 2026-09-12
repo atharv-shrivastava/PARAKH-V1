@@ -206,26 +206,3 @@
     grid-template-columns: 1fr !important;
   }
 }
-
-@media (max-width: 480px) {
-  .main-content {
-    padding: 14px 9px 24px !important;
-  }
-
-  .sidebar {
-    padding-left: 8px !important;
-    padding-right: 8px !important;
-  }
-
-  .sidebar-user strong {
-    font-size: 12px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .nav-icon,
-  .navigation a,
-  .sidebar-user button {
-    transition: none !important;
-  }
-}

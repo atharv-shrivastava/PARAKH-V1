@@ -12,17 +12,53 @@ function isFound(field) {
   return field?.status === "found" && text(field?.value) !== "";
 }
 
-// Manufacturing/batch/inkjet codes are frequently short alphanumeric strings.
-// Do not let them become product names simply because a semantic model selected them.
-// Keep common consumer-facing names such as 7UP or 5 STAR valid by requiring a
-// stronger code signature: either an explicit # numeric code or a compact run of
-// letters followed by at least two digits.
 function looksLikeProductCode(value) {
   const source = text(value).toUpperCase().replace(/\s+/g, "");
   if (!source) return false;
   if (/^#\d{2,8}$/.test(source)) return true;
   if (/^[A-Z]{2,}\d{2,}[A-Z0-9]*$/.test(source) && source.length <= 20) return true;
   return false;
+}
+
+const EXPIRY_EVIDENCE_RE = /\b(?:expiry|expires?|exp\.?|use\s*by|best\s*before|use\s*within|shelf\s*life)\b/i;
+const MANUFACTURE_EVIDENCE_RE = /\b(?:manufactur(?:e|ed|ing)?|mfg\.?|mfd\.?|date\s*of\s*(?:manufacture|mfg)|निर्माण|उत्पादन)\b/i;
+const PACKING_EVIDENCE_RE = /\b(?:pack(?:ed|ing)?|pkd\.?|date\s*of\s*packing)\b/i;
+
+function evidenceText(field) {
+  return [field?.value, field?.raw, field?.evidence].map(text).filter(Boolean).join(" | ");
+}
+
+function sanitizeDateField(key, field) {
+  if (!field || typeof field !== "object" || !isFound(field)) return field;
+  const evidence = evidenceText(field);
+
+  if (key === "dateOfManufacture" && EXPIRY_EVIDENCE_RE.test(evidence) && !MANUFACTURE_EVIDENCE_RE.test(evidence)) {
+    return {
+      ...field,
+      value: null,
+      raw: field.raw ?? evidence,
+      evidence: field.evidence ?? evidence,
+      confidence: 0,
+      status: "ambiguous",
+      verification: "rejected-expiry-as-manufacture",
+      source: "SEMANTIC_CONSENSUS",
+    };
+  }
+
+  if (key === "dateOfPacking" && EXPIRY_EVIDENCE_RE.test(evidence) && !PACKING_EVIDENCE_RE.test(evidence)) {
+    return {
+      ...field,
+      value: null,
+      raw: field.raw ?? evidence,
+      evidence: field.evidence ?? evidence,
+      confidence: 0,
+      status: "ambiguous",
+      verification: "rejected-expiry-as-packing-date",
+      source: "SEMANTIC_CONSENSUS",
+    };
+  }
+
+  return field;
 }
 
 function sanitizeField(key, field) {
@@ -39,17 +75,20 @@ function sanitizeField(key, field) {
       source: "SEMANTIC_CONSENSUS",
     };
   }
-  return field;
+  return sanitizeDateField(key, field);
 }
 
 function voteField(key, providers) {
   const observations = providers
     .filter((provider) => provider?.enabled && provider?.fields?.[key])
-    .map((provider) => ({
-      provider: provider.provider,
-      field: sanitizeField(key, provider.fields[key]),
-      normalized: comparable(provider.fields[key].value),
-    }));
+    .map((provider) => {
+      const field = sanitizeField(key, provider.fields[key]);
+      return {
+        provider: provider.provider,
+        field,
+        normalized: comparable(field?.value),
+      };
+    });
 
   const found = observations.filter((item) => isFound(item.field));
   const votes = observations.map((item) => ({ provider: item.provider, status: item.field.status, value: item.field.value ?? null }));
