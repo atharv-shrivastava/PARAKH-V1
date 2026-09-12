@@ -2,24 +2,39 @@
 
 .app-layout {
   min-height: 100vh;
+  display: flex;
+}
+
+/* Keep the sidebar in the flex layout and let the main area consume the rest. */
+.sidebar {
+  flex: 0 0 240px;
+  width: 240px !important;
+  min-width: 240px;
 }
 
 .main-content {
-  width: calc(100% - 240px) !important;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto !important;
   max-width: none !important;
-  margin-left: 240px !important;
+  margin: 0 !important;
   padding: 26px 24px 40px !important;
   justify-content: flex-start !important;
+  overflow-x: hidden;
 }
 
-.main-content > * {
-  max-width: 1180px;
+/* Scan-only containment. Dashboard pages are intentionally left alone. */
+.scan-page,
+.scan-review,
+.rule23-assessment,
+.inspection-submission-review,
+.rule-23-assessment,
+.officer-submission-review {
+  box-sizing: border-box;
   width: 100%;
-}
-
-.sidebar {
-  width: 240px !important;
-  padding: 22px 14px 16px !important;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .logo {
@@ -56,14 +71,12 @@
   background: color-mix(in srgb, currentColor 14%, transparent);
 }
 
-/* Keep content compact on tablets. */
 @media (max-width: 1100px) and (min-width: 769px) {
   .main-content {
     padding: 22px 18px 32px !important;
   }
 }
 
-/* Mobile: compact top navigation, no horizontal page drift. */
 @media (max-width: 768px) {
   .app-layout {
     display: block !important;
@@ -73,6 +86,8 @@
     position: sticky !important;
     top: 0;
     width: 100% !important;
+    min-width: 0 !important;
+    flex: none;
     height: auto !important;
     min-height: 0 !important;
     padding: 10px 10px 9px !important;
@@ -144,14 +159,10 @@
 
   .main-content {
     width: 100% !important;
-    margin-left: 0 !important;
+    margin: 0 !important;
     padding: 18px 12px 28px !important;
     display: block !important;
-  }
-
-  .main-content > * {
-    width: 100%;
-    max-width: none;
+    overflow-x: hidden;
   }
 
   .page-header {
