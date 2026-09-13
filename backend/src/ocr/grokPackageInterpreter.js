@@ -28,7 +28,10 @@ export async function interpretPackageWithGrok({ images = [], detections = [], r
 
   const prompt = buildSemanticPrompt({ detections, rawText, categoryOptions });
   const content = [
-    { type: "text", text: prompt },
+    {
+      type: "text",
+      text: `${prompt}\n\nYou are the independent second semantic verifier. Do not copy a plausible OCR answer without checking the corresponding image region. Pay special attention to numeric digits, MRP, quantity/unit, dates, batch codes, consumer-care phone/email, and manufacturer/address role separation. When Gemini-like or OCR-style evidence is uncertain, prefer status=ambiguous over guessing.`,
+    },
     ...images.map(({ base64, mediaType }) => ({
       type: "image_url",
       image_url: { url: `data:${mediaType};base64,${base64}` },
@@ -38,6 +41,7 @@ export async function interpretPackageWithGrok({ images = [], detections = [], r
   try {
     if (signal?.aborted) throw new DOMException("The request was aborted.", "AbortError");
 
+    const startedAt = Date.now();
     const response = await fetch("https://api.x.ai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -47,15 +51,19 @@ export async function interpretPackageWithGrok({ images = [], detections = [], r
       body: JSON.stringify({
         model,
         messages: [
-          { role: "system", content: "Return compact valid JSON only. No markdown or commentary." },
+          {
+            role: "system",
+            content: "You are an independent package-label evidence verifier for PARAKH V1. Inspect the supplied images directly. Return valid JSON only. Never invent missing package text. Preserve printed legal names, addresses, numbers, dates and identifiers. Use ambiguous/unreadable when image evidence is insufficient. Do not assess legal compliance.",
+          },
           { role: "user", content },
         ],
         temperature: 0,
-        max_tokens: 1800,
+        max_tokens: 2600,
       }),
       signal,
     });
 
+    const elapsedMs = Date.now() - startedAt;
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       const reason = data?.error?.message || data?.error || `Grok API returned HTTP ${response.status}.`;
@@ -72,6 +80,7 @@ export async function interpretPackageWithGrok({ images = [], detections = [], r
       model,
       fields: normalized.fields,
       suggestedCategory: normalized.suggestedCategory,
+      timingMs: elapsedMs,
     };
   } catch (error) {
     if (error?.name === "AbortError") throw error;
