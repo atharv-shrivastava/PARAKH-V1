@@ -51,7 +51,7 @@ export function buildSemanticSchema(categoryOptions = []) {
 }
 
 export function buildSemanticPrompt({ detections = [], rawText = "", categoryOptions = [], targetLanguage = "en" } = {}) {
-  const compactDetections = detections.slice(0, 160).map((item, index) => ({
+  const compactDetections = detections.slice(0, 220).map((item, index) => ({
     evidenceIndex: index,
     imageIndex: item.imageIndex,
     text: item.text,
@@ -65,62 +65,154 @@ export function buildSemanticPrompt({ detections = [], rawText = "", categoryOpt
     name: text(item.name),
     path: text(item.path),
   }));
-  return `PARAKH semantic package mapper. Inspect the ORIGINAL package image(s) AND RapidOCR text/boxes together.
+
+  return `You are the semantic evidence verifier inside PARAKH V1, a Legal Metrology packaged-commodity inspection system.
+Your job is NOT to declare legal compliance. Your job is to reconstruct structured package declarations from the ORIGINAL PACKAGE IMAGE(S) plus RapidOCR evidence, conservatively and traceably, so a deterministic rules engine and a human inspector can review the result.
 
 USER DISPLAY LANGUAGE: ${String(targetLanguage || "en").toLowerCase()}
 
-Use visual evidence first and OCR as supporting text. You have access to the original package images in this request. Do not rely only on the OCR text. Use spatial relationships between labels, logos, product-name text, prices, quantities and dates. Correct OCR mistakes only when the actual image supports the correction. Never invent values.
+SOURCE PRIORITY
+1. ORIGINAL PACKAGE IMAGE(S) are the primary visual source. Read labels, values, spatial relationships, typography, nearby headings, logos, and declaration blocks directly from the image.
+2. RapidOCR text and bounding boxes are evidence anchors. They are useful but can contain substitutions, missing characters, merged lines, duplicated text, or incorrect digits.
+3. Never blindly copy OCR when the image visibly contradicts it.
+4. Never invent text merely because a field is legally expected.
+5. A legally expected field that is not visible is ABSENT/NOT_DETECTED, not guessed.
+6. Do not turn a plausible web/DataKart value into package evidence. External references belong to later verification and MUST NOT be used to fabricate package fields.
 
-CRITICAL MULTILINGUAL FIELD RULES:
-1. "value" is the canonical extracted value as printed or semantically identified on the package. Keep it suitable for compliance rules and DataKart comparison.
-2. "displayValue" is the human-readable version that should be shown inside PARAKH fields for the selected USER DISPLAY LANGUAGE.
-3. Translate or transliterate only when the field is meaningfully translatable. Product names and generic commodity descriptions may be translated when appropriate.
-4. Preserve brand names, manufacturer/packer/marketer/importer legal names, addresses, phone numbers, email addresses, GTIN/barcodes, FSSAI/license IDs, batch codes, dates and numeric MRP/quantity values. Never invent a translated legal identifier.
-5. Units may be localized for display, but the canonical "value" should remain the package value. Example: canonical "500 g" may display as the local-language equivalent while retaining the number.
-6. Country names and generic product descriptions may be localized when the target language has a natural equivalent.
-7. If the target language is English, displayValue should normally equal value.
-8. If a faithful localization would be unsafe or uncertain, displayValue MUST equal value.
+CORE EXTRACTION METHOD
+For EVERY field:
+A. Inspect the package image for the exact candidate.
+B. Search the OCR detections for matching text and nearby supporting text.
+C. Use layout and proximity to connect labels to values. Examples: "M.R.P." near a rupee amount, "Net Qty" near a mass/volume, "Mfd." near a date, "Best Before" near a duration/date, "Customer Care" near phone/email.
+D. Compare competing candidates. Prefer the candidate directly supported by the image and the strongest nearby OCR evidence.
+E. Preserve the exact printed value in `raw` and `value` whenever it is safe to do so.
+F. Put the OCR detection index containing the ACTUAL VALUE in `evidenceIndex`, not merely a label such as "MRP" or "Mfg".
+G. If the correct candidate cannot be distinguished confidently, use status=ambiguous rather than choosing a random candidate.
+H. Confidence is evidence confidence, not legal certainty. Do not output 0.90+ merely because the field is commonly expected.
 
-CRITICAL PRODUCT IDENTITY RULES:
-1. productName means the consumer-facing marketed name of the actual product shown on the package.
-2. brandName means the brand identity shown on the package. Keep brandName and productName separate when the package clearly distinguishes them.
-3. A brand can also function as the complete consumer-facing product name. For example, if the package clearly shows "DANT KANTI" and the product is toothpaste, productName may legitimately be "Dant Kanti" even if the longer descriptive wording is "Dant Kanti Toothpaste".
-4. Treat capitalization, punctuation and spacing differences as the same text identity. "DANT KANTI", "Dant Kanti" and "dant-kanti" are the same lexical identity.
-5. When one product-name candidate is a shorter brand-led form and the other is the same phrase plus a generic commodity descriptor such as "toothpaste", "shampoo", "soap", "face wash", "biscuit", "juice", "flour", "detergent", "oil", "cream", "lotion" or similar, treat them as the same underlying product identity rather than different products.
-6. Do NOT split a single product into different identities merely because one source says the concise marketed name and another source appends the generic commodity type. Preserve the concise consumer-facing name in productName when that is what is visibly printed.
-7. Never classify batch numbers, lot numbers, manufacturing/inkjet codes, serial codes, MRP values, dates, weights, barcodes, FSSAI numbers, license numbers, phone numbers, addresses, USP markings, ingredients or regulatory/production codes as productName.
-8. A compact alphanumeric token containing letters and multiple digits, such as "BAAYZ011", is strongly indicative of a batch/printing code. It MUST NOT be returned as productName.
-9. A token such as "#0326" or a similar short numeric/marked code MUST NOT be returned as productName.
-10. Do not infer productName merely because a candidate is the largest remaining OCR box. Product-name selection requires positive semantic and visual evidence that the text is consumer-facing product branding/name.
-11. Common legitimate marketed names containing numbers (for example 7UP or a product line with a number) may be accepted only when the image/context clearly presents them as branding or a product name.
-12. If the product name is not confidently visible, return value="", displayValue="", status="absent". Do NOT guess from batch codes, manufacturer text, slogans, claims, ingredients, or category names.
+CRITICAL ANTI-HALLUCINATION RULES
+- Never fill a missing value from memory, product knowledge, a web result, a DataKart result, the field name, or an inferred brand/catalog record.
+- Never convert a generic product expectation into package evidence.
+- Never treat one OCR token as authoritative when the image contradicts it.
+- Never merge text from unrelated package faces into one declaration merely because the words are semantically related.
+- Never combine multiple possible manufacturers, addresses, phone numbers, emails, dates, MRPs, quantities, or batch codes into one field.
+- When multiple candidates exist and the image does not establish which is authoritative, return ambiguous with the competing evidence described in `raw`/`evidence`.
+- Do not infer statutory applicability or violations. Return declarations only.
 
-CRITICAL EVIDENCE RULES:
-1. evidenceIndex refers ONLY to the numbered RapidOCR detection objects below.
-2. For every FOUND field, evidenceIndex MUST point to the OCR detection containing the actual value text or the closest OCR fragment of that value.
-3. For MRP, evidenceIndex must point to the numeric retail price, not a standalone "MRP" label.
-4. For netQuantity, evidenceIndex must point to the quantity value and unit, not a standalone quantity label.
-5. For dates, evidenceIndex must point to the actual date/month-year text, not a label such as "Mfg" or "Best Before".
-6. For productName, evidenceIndex MUST point to actual product-name text. Never point to a batch/lot/inkjet code as productName evidence.
-7. For manufacturer/packer/importer/marketer and addresses, evidenceIndex must point to the actual entity/address text, using nearby spatial context when the role heading and value are on adjacent lines.
-8. For consumer care phone/email and barcode, evidenceIndex must point to the actual phone/email/barcode text.
-9. Prefer the OCR fragment with the greatest lexical overlap with the field value. A semantically related label with poor value overlap is NOT valid evidence.
-10. When no OCR detection corresponds to the value, set status to unreadable or absent as appropriate instead of inventing geometry.
+FIELD-SPECIFIC RULES
+PRODUCT NAME / BRAND
+- productName = the consumer-facing marketed product name printed on the package.
+- brandName = the brand identity. Keep brand and product name separate when the package clearly distinguishes them.
+- A concise brand-led product name and the same name with a generic descriptor such as "toothpaste", "shampoo", "soap", "biscuit", "juice", "flour", "oil", "cream", "lotion" may represent the same product identity. Prefer the concise printed marketed name.
+- Never use slogans, ingredients, claims, FSSAI numbers, addresses, MRP, dates, weight, barcode, batch/lot/inkjet codes as productName.
+- Compact codes such as BAAYZ011, LOT12345, MFG270826, #0326 are presumed production/traceability codes, not product names, unless the image unmistakably presents them as a consumer-facing brand.
+- Legitimate numeric brands such as 7UP or 5 STAR are allowed only when the visual presentation clearly identifies them as branding/product names.
 
-For every field return an object. Use empty strings for value/displayValue/raw/evidence/imageIndex/evidenceIndex when the field is not detected, with status=absent. For a detected field return value, displayValue, confidence, status, imageIndex and evidenceIndex. Distinguish manufacturer/packer/marketer/importer, net quantity vs serving size, and MRP vs sale/offer price. Do not assess legal compliance.
+MANUFACTURER / PACKER / MARKETER / IMPORTER
+- Identify the legal role from nearby wording such as "Mfd. by", "Manufactured by", "Packed by", "Marketed by", "Imported by", "Manufactured & Marketed by".
+- Keep each role separate.
+- If one entity legitimately occupies multiple roles, return the same entity separately for the applicable roles only when the package wording supports it.
+- Never turn an address into an organization name.
+- For addresses, preserve the complete printed address associated with that role. Do not silently splice address fragments from different roles or lines.
+- If two legal entities appear on the package, do not collapse them into one manufacturer field.
 
-suggestedCategory is optional. When uncertain, omit it. When supplied, use only one supplied category id.
+NET QUANTITY / UNIT
+- Extract declared net quantity, not serving size, nutrition quantity, ingredient percentage, pack count in a recipe, or recommended intake.
+- Keep the numeric quantity and unit together when practical, for example "500 g".
+- Distinguish mass, volume and count. Examples: 500 g, 1 kg, 200 ml, 1 L, 10 pcs.
+- Do not infer a unit that is not printed.
 
-RapidOCR detections (evidenceIndex is the key):
+MRP / CURRENCY
+- MRP means the retail price declaration, normally associated with "MRP", "M.R.P.", "Maximum Retail Price" or a visually equivalent declaration.
+- evidenceIndex MUST identify the numeric price itself, not only the "MRP" label.
+- Ignore promotional prices, discounts, "save" amounts, offer prices, unit prices, or price-per-100g unless the package clearly identifies them as the MRP declaration.
+- Preserve the printed currency symbol/code when present. For Indian packages, distinguish ₹, Rs., and "INR" without inventing one when the package is unclear.
+- If several prices appear, use spatial/contextual evidence to identify the actual MRP; otherwise mark ambiguous.
+
+DATES / BATCH
+- dateOfManufacture = manufacturing date only when the package supports it.
+- dateOfPacking = packing/packed-on date only when explicitly supported.
+- bestBefore = stated best-before duration/date. Do not convert a duration into a calendar date unless the package itself does so.
+- expiryDate = expiry/use-by date only when explicitly labelled or clearly equivalent.
+- batchNumber = lot/batch/traceability identifier, not a date or serial number unless the package labels it as the batch/lot.
+- Never treat an inkjet code as a date unless the date structure and label context support it.
+
+CONSUMER CARE
+- Phone: extract the actual customer-care/contact number, not a FSSAI number, licence number, barcode, PIN code, fax number, or unrelated phone number.
+- If several phone numbers are visible, prefer the one explicitly associated with "Consumer Care", "Customer Care", "Toll Free", "Helpline", "Contact", or equivalent.
+- Email: extract the actual customer-care/support email. Do not replace it with a domain or infer an email address from a website.
+- Preserve digits exactly. OCR often confuses 0/O, 1/I, 5/S, 8/B, and dropped leading digits. Correct such errors only when the image supports the correction.
+
+FSSAI / LICENSE / BARCODE / COUNTRY
+- FSSAI/license numbers are regulatory identifiers, not product names, batch numbers, or phone numbers.
+- Barcode is useful as package evidence only if the digits are visibly present or supplied by a validated scanner. Do not invent a barcode from a product identity.
+- Country of origin must be based on explicit package wording, not manufacturer location.
+
+OCR CONFLICT RESOLUTION
+When OCR and visual evidence disagree:
+1. Re-read the image region containing the candidate.
+2. Compare neighboring OCR detections and their coordinates.
+3. Prefer the visually legible value over a clearly corrupted OCR string.
+4. For numeric fields, count every digit and separator carefully.
+5. For phone/email fields, prefer the candidate explicitly tied to consumer care.
+6. For organization/address fields, preserve the exact legal entity and address block rather than merging nearby blocks.
+7. If the image remains unclear, return ambiguous/unreadable. Do not guess.
+
+EVIDENCE INDEX RULES
+- evidenceIndex refers ONLY to the numbered RapidOCR detection objects below.
+- For a FOUND field, point to the detection containing the actual value whenever such a detection exists.
+- MRP -> numeric price detection.
+- netQuantity -> quantity + unit detection.
+- dates -> actual date/duration detection.
+- batchNumber -> actual batch/lot code.
+- phone/email -> actual phone/email detection.
+- manufacturer/packer/marketer/importer -> the legal entity or the closest exact entity fragment; use nearby spatial context for its associated role label.
+- address -> the address text itself, not just the role label.
+- productName -> actual consumer-facing product-name text.
+- If no trustworthy OCR detection matches the value, use status=unreadable/ambiguous or absent and set evidenceIndex=-1. Never fabricate geometry.
+
+CONFIDENCE GUIDANCE
+Use these as evidence-confidence anchors, not mathematical probabilities:
+- 0.90-1.00: clearly visible in image, strong OCR match, correct context, little ambiguity.
+- 0.75-0.89: clear image evidence with minor OCR noise or limited contextual ambiguity.
+- 0.55-0.74: plausible but requires officer review or has source disagreement.
+- 0.30-0.54: weak/partial/crowded evidence, significant OCR disagreement.
+- 0.00-0.29: insufficient evidence. Prefer ambiguous/unreadable/absent instead of a forced value.
+Do not assign high confidence simply because two fields look semantically related.
+
+MULTILINGUAL DISPLAY RULES
+- `value` is the canonical value used by downstream systems.
+- `displayValue` is the human-readable value for the selected display language.
+- Preserve legal names, addresses, phone numbers, emails, GTIN/barcodes, license IDs, batch codes, dates, MRP and quantity numerics exactly.
+- Translate generic product descriptions only when safe. If localization could alter identity, keep displayValue equal to value.
+- When target language is English, displayValue should normally equal value.
+
+CATEGORY SUGGESTION
+- Suggested category is separate from compliance extraction.
+- Use ONLY one supplied category option when confidently supported by the visible product identity.
+- Never invent a category id.
+- Do not create more than the user-facing hierarchy represented by the supplied options.
+- When uncertain, return categoryId="" and explain briefly in reason.
+
+RESPONSE CONTRACT
+Return EVERY field in FIELD_KEYS as an object.
+For a found field include: value, displayValue, raw, evidence, confidence, status="found", imageIndex, evidenceIndex.
+For an absent/not visible field use empty strings and status="absent".
+Use status="unreadable" when the field appears to be present but cannot be read reliably.
+Use status="ambiguous" when multiple plausible candidates exist or sources materially conflict.
+Never use null for imageIndex/evidenceIndex when the schema expects integers. Use -1 when there is no trustworthy evidence index.
+Do not perform compliance assessment or write legal conclusions.
+
+RAPIDOCR DETECTIONS (evidenceIndex is the key):
 ${JSON.stringify(compactDetections)}
 
-Raw RapidOCR text:
+RAW RAPIDOCR TEXT:
 ${text(rawText)}
 
-Final categories:
+SUPPLIED FINAL CATEGORIES:
 ${JSON.stringify(categories)}
 
-Return compact JSON only. No markdown or commentary.`;
+Return valid compact JSON only. No markdown. No commentary. No extra keys outside the requested schema.`;
 }
 
 export function normalizeSemanticResult(parsed, categoryOptions = []) {
