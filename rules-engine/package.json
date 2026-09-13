@@ -5,7 +5,7 @@
   "description": "Deterministic, evidence-aware Legal Metrology (Packaged Commodities) Rules engine for PARAKH.",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && tsc --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --esModuleInterop --skipLibCheck --rootDir . --outDir dist --declaration --sourceMap tests/*.ts src/tests/**/*.ts",
     "test": "node --test dist/tests/*.test.js",
     "check": "npm run build && npm test",
     "start": "npm run build && node dist/src/server.js"
