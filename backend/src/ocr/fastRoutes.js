@@ -7,6 +7,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { authenticate } from "../middleware/auth.js";
 import { analyzeFontSize } from "./fontSizeAnalyzer.js";
+import { verifyPackageImageConsistency } from "./imageConsistencyVerifier.js";
 
 const router = express.Router();
 router.use(authenticate);
@@ -77,6 +78,18 @@ router.post("/analyze", upload.array("images"), async (req, res) => {
 
     const categoryOptions = parseJson(req.body?.categoryOptions, []);
     const pixelsPerMm = parseJson(req.body?.pixelsPerMm, {});
+
+    const imageConsistency = await verifyPackageImageConsistency({ files });
+    if (imageConsistency.blocked) {
+      return res.status(409).json({
+        error: {
+          code: "IMAGE_MISMATCH",
+          message: "The uploaded package images appear to belong to different products. Remove the incorrect image(s) and upload only images of the same package.",
+          imageConsistency,
+        },
+      });
+    }
+
     const rapid = await callRapidOcr({ files, categoryOptions });
     const tempResult = await writeTempImages(files);
     temp = tempResult;
@@ -110,6 +123,7 @@ router.post("/analyze", upload.array("images"), async (req, res) => {
     res.json({
       ...rapid,
       result,
+      imageConsistency,
       fontSizeAnalysis,
       fontSizeProvider: "opencv",
     });
