@@ -13,6 +13,7 @@ import "./styles/theme-backgrounds.css";
 import "./styles/rainbow-theme.css";
 import "./styles/product-experience.css";
 import "./styles/scan-theme.css";
+import "./styles/layout-fix.css";
 import "./lib/localBarcodeDetector";
 import { installComplianceStatusDrilldown } from "./lib/complianceStatusDrilldown";
 import { applyTheme, getTheme } from "./lib/theme";
