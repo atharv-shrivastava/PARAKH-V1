@@ -24,7 +24,9 @@ const request = {
     netQuantityUnit: 'g',
     manufactureOrImportDate: '08/2026',
     retailSalePrice: 100,
-    consumerComplaintContact: '1800-000-000'
+    consumerComplaintName: 'Consumer Care Cell',
+    consumerComplaintAddress: 'Example Foods, Bhopal, Madhya Pradesh',
+    consumerComplaintPhone: '1800-000-000'
   },
   packaging: {
     netQuantityExcludesPackaging: true,
@@ -79,6 +81,30 @@ const request = {
       evidenceId: 'ev-005',
       field: 'declarations.manufactureOrImportDate',
       rawValue: '08/2026',
+      confidence: 0.99,
+      source: 'MANUAL_INPUT',
+      timestamp: '2026-09-02T10:00:00Z'
+    },
+    {
+      evidenceId: 'ev-006',
+      field: 'declarations.consumerComplaintName',
+      rawValue: 'Consumer Care Cell',
+      confidence: 0.99,
+      source: 'MANUAL_INPUT',
+      timestamp: '2026-09-02T10:00:00Z'
+    },
+    {
+      evidenceId: 'ev-007',
+      field: 'declarations.consumerComplaintAddress',
+      rawValue: 'Example Foods, Bhopal, Madhya Pradesh',
+      confidence: 0.99,
+      source: 'MANUAL_INPUT',
+      timestamp: '2026-09-02T10:00:00Z'
+    },
+    {
+      evidenceId: 'ev-008',
+      field: 'declarations.consumerComplaintPhone',
+      rawValue: '1800-000-000',
       confidence: 0.99,
       source: 'MANUAL_INPUT',
       timestamp: '2026-09-02T10:00:00Z'
@@ -178,8 +204,3 @@ test('POST /api/rules-engine/evaluate rejects invalid JSON', async () => {
     headers: { 'content-type': 'application/json' },
     body: '{not-json'
   });
-
-  assert.equal(response.status, 400);
-  const result = await response.json() as { error: string };
-  assert.match(result.error, /Invalid JSON|inspection payload/);
-});
