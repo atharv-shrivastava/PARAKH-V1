@@ -178,6 +178,42 @@ function sanitizeRulesEngineBody(body) {
   }
 }
 
+async function localizeOcrFields(payload) {
+  const target = String(localStorage.getItem("parakh_language") || "en").trim().toLowerCase();
+  if (!target || target === "en" || !payload?.result || typeof payload.result !== "object") return payload;
+
+  const candidates = [];
+  for (const [key, field] of Object.entries(payload.result)) {
+    if (NON_LOCALIZABLE_OCR_FIELDS.has(key) || !field || typeof field !== "object" || field.status !== "found") continue;
+    const value = String(field.value ?? "").trim();
+    if (!value || value.length < 2) continue;
+    candidates.push({ key, value });
+  }
+  if (!candidates.length) return payload;
+
+  try {
+    const response = await fetch(`${API_URL}/translate`, {
+      method: "POST",
+      headers: { ...authHeaders(true), "Content-Type": "application/json" },
+      body: JSON.stringify({ target, source: "auto", texts: candidates.map((item) => item.value) }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.translations) return payload;
+
+    for (const { key, value } of candidates) {
+      const localized = String(data.translations[value] ?? value).trim() || value;
+      payload.result[key] = {
+        ...payload.result[key],
+        canonicalValue: value,
+        displayValue: localized,
+      };
+    }
+  } catch {
+    // Localization is presentation-only. OCR results must remain usable when translation is unavailable.
+  }
+  return payload;
+}
+
 function normalizeIdentity(value) {
   return String(value ?? "")
     .toLowerCase()
@@ -270,8 +306,9 @@ function duplicateCandidateMatches(product, current) {
   if (gtin && productGtin && gtin !== productGtin) return false;
   const currentBatch = normalizeIdentity(current.batchNumber);
   const storedBatch = normalizeIdentity(identity?.batchNumber);
-  if (currentBatch && storedBatch && currentBatch !== storedBatch) return false;
-  if (currentBatch && !storedBatch) return false;
+  if (currentBatch || storedBatch) {
+    if (!currentBatch || !storedBatch || currentBatch !== storedBatch) return false;
+  }
   const sameText = (a, b) => normalizeIdentity(a) === normalizeIdentity(b);
   const sameMrp = Number.isFinite(Number(current.mrp)) && product.mrp != null ? Math.abs(Number(current.mrp) - Number(product.mrp)) < 0.01 : sameText(current.mrp, product.mrp);
   return sameText(current.productName, product.productName)
