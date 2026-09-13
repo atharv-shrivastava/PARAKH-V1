@@ -1,0 +1,41 @@
+.app-layout {
+  min-height: 100vh;
+  display: flex;
+  width: 100%;
+}
+
+.sidebar {
+  position: relative;
+  inset: auto;
+  z-index: 40;
+  flex: 0 0 256px;
+  width: 256px;
+  min-height: 100vh;
+}
+
+.main-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 24px;
+  overflow-x: hidden;
+}
+
+@media (max-width: 768px) {
+  .app-layout {
+    display: block;
+  }
+
+  .sidebar {
+    width: 100%;
+    min-height: auto;
+    flex: none;
+  }
+
+  .main-content {
+    width: 100%;
+    padding: 16px;
+  }
+}
