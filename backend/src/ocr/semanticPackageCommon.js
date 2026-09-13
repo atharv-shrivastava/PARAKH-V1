@@ -5,6 +5,33 @@ export const FIELD_KEYS = [
   "consumerCarePhone", "consumerCareEmail", "countryOfOrigin", "fssaiLicenseNumber", "barcode",
 ];
 
+const FIELD_DESCRIPTIONS = {
+  productName: "Exact consumer-facing product name as printed on the package.",
+  brandName: "Brand identity exactly as printed on the package.",
+  manufacturer: "Manufacturer name exactly as printed.",
+  manufacturerAddress: "Complete manufacturer physical postal address exactly as printed.",
+  packer: "Packer name exactly as printed.",
+  packerAddress: "Complete packer physical postal address exactly as printed.",
+  marketer: "Marketer name exactly as printed.",
+  marketerAddress: "Complete marketer physical postal address exactly as printed.",
+  importer: "Importer name exactly as printed.",
+  importerAddress: "Complete importer physical postal address exactly as printed.",
+  netQuantity: "Net quantity declaration including its numeric value and unit as printed.",
+  unit: "Unit exactly as printed, such as g, kg, ml, L, N or units.",
+  mrp: "Numeric maximum retail price value, with raw evidence preserving the complete printed MRP expression.",
+  currency: "Currency symbol or abbreviation exactly as printed, such as ₹, Rs. or INR.",
+  dateOfManufacture: "Exact manufacturing date or month-year declaration.",
+  dateOfPacking: "Exact packing/pre-packing date or month-year declaration.",
+  bestBefore: "Exact best-before declaration, including duration wording where present.",
+  expiryDate: "Exact expiry or use-by declaration.",
+  batchNumber: "Exact batch, lot, production or inkjet batch identifier.",
+  consumerCarePhone: "Consumer-care telephone/mobile number exactly as printed.",
+  consumerCareEmail: "Consumer-care email address exactly as printed.",
+  countryOfOrigin: "Country of origin declaration exactly as printed, including wording such as Made in India.",
+  fssaiLicenseNumber: "FSSAI licence or registration number exactly as printed.",
+  barcode: "Human-readable GTIN/barcode number if digits are printed on the package.",
+};
+
 export function confidence(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : fallback;
@@ -33,7 +60,10 @@ export function buildSemanticSchema(categoryOptions = []) {
   return {
     type: "object",
     properties: {
-      ...Object.fromEntries(FIELD_KEYS.map((key) => [key, FIELD_VALUE_SCHEMA])),
+      ...Object.fromEntries(FIELD_KEYS.map((key) => [key, {
+        ...FIELD_VALUE_SCHEMA,
+        description: FIELD_DESCRIPTIONS[key],
+      }])),
       suggestedCategory: {
         type: "object",
         properties: {
@@ -86,7 +116,7 @@ CRITICAL PRODUCT IDENTITY RULES:
 2. brandName means the brand identity shown on the package. Keep brandName and productName separate when the package clearly distinguishes them.
 3. A brand can also function as the complete consumer-facing product name. For example, if the package clearly shows "DANT KANTI" and the product is toothpaste, productName may legitimately be "Dant Kanti" even if the longer descriptive wording is "Dant Kanti Toothpaste".
 4. Treat capitalization, punctuation and spacing differences as the same text identity. "DANT KANTI", "Dant Kanti" and "dant-kanti" are the same lexical identity.
-5. When one product-name candidate is a shorter brand-led form and the other is the same phrase plus a generic commodity descriptor such as "toothpaste", "shampoo", "soap", "face wash", "biscuit", "juice", "flour", "detergent", "oil", "cream", "lotion" or similar, treat them as the same underlying product identity rather than different products.
+5. When one product-name candidate is a shorter brand-led form and the other is the same phrase plus a generic commodity descriptor such as "toothpaste", "shampoo", "soap", "face wash", "biscuit", "juice", "flour", "detergent", "oil", "cream", "lotion" or similar, treat them as the same underlying product identity rather than different products. Preserve the concise consumer-facing name in productName when that is what is visibly printed.
 6. Do NOT split a single product into different identities merely because one source says the concise marketed name and another source appends the generic commodity type. Preserve the concise consumer-facing name in productName when that is what is visibly printed.
 7. Never classify batch numbers, lot numbers, manufacturing/inkjet codes, serial codes, MRP values, dates, weights, barcodes, FSSAI numbers, license numbers, phone numbers, addresses, USP markings, ingredients or regulatory/production codes as productName.
 8. A compact alphanumeric token containing letters and multiple digits, such as "BAAYZ011", is strongly indicative of a batch/printing code. It MUST NOT be returned as productName.
