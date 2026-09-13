@@ -13,7 +13,7 @@ type Requirement = {
 };
 
 function path(input: unknown, key: string): unknown {
-  return key.split('.').reduce<unknown>((v, p) => v != null && typeof v === 'object' ? (v as Record<string, unknown>)[p] : undefined, input);
+  return key.split('.').reduce((v, p) => v != null && typeof v === 'object' ? (v as Record<string, unknown>)[p] : undefined, input);
 }
 
 function evidenceValue(r: InspectionRequest, fields: string[]): unknown {
@@ -21,14 +21,10 @@ function evidenceValue(r: InspectionRequest, fields: string[]): unknown {
     const direct = path(r, field);
     if (direct !== undefined && direct !== null && String(direct).trim() !== '') return direct;
     const e = r.evidence.find(x => x.field === field || x.field === field.replace(/^declarations\./, ''));
-    if (e?.normalizedValue !== undefined && e.normalizedValue !== null) return e.normalizedValue;
-    if (e?.rawValue !== undefined && e.rawValue !== null) return e.rawValue;
+    if (e?.normalizedValue !== undefined && e.normalizedValue !== null && String(e.normalizedValue).trim() !== '') return e.normalizedValue;
+    if (e?.rawValue !== undefined && e.rawValue !== null && String(e.rawValue).trim() !== '') return e.rawValue;
   }
   return undefined;
-}
-
-function explicitMissing(r: InspectionRequest, fields: string[]): boolean {
-  return fields.some(field => path(r, field) === false || path(r, field) === null);
 }
 
 function finding(code: string, number: string, status: EvaluationStatus, field: string, message: string, reason?: string, missing?: string[]): Finding {
@@ -90,7 +86,7 @@ const REQUIREMENTS: Requirement[] = [
   {
     code: 'PCR-R6-2', number: '6(2)', field: 'declarations.consumerComplaintContact',
     aliases: ['declarations.consumerCare', 'declarations.consumerComplaintNameAddressPhoneEmail'],
-    label: 'name, address, telephone number and email address, if available, for consumer complaints',
+    label: 'consumer complaint contact declaration',
     conditional: r => r.context !== 'ecommerce_listing',
   },
 ];
@@ -98,61 +94,47 @@ const REQUIREMENTS: Requirement[] = [
 function consumerContactFinding(r: InspectionRequest): Finding {
   const explicit = path(r, 'declarations.consumerComplaintContact');
   if (explicit === false || explicit === null) {
-    return finding('PCR-R6-2', '6(2)', 'VIOLATION', 'declarations.consumerComplaintContact', 'The supplied inspection evidence explicitly indicates that the consumer-complaint contact declaration is missing.', 'Rule 6(2) requires the name, address and telephone number of the person/office that can be contacted for consumer complaints, with email address where available.');
+    return finding('PCR-R6-2', '6(2)', 'VIOLATION', 'declarations.consumerComplaintContact', 'The submitted evidence explicitly indicates that the consumer-complaint contact declaration is missing.', 'No consumer-complaint contact declaration was established.');
   }
 
   const name = evidenceValue(r, ['declarations.consumerComplaintName', 'declarations.consumerCareName']);
   const address = evidenceValue(r, ['declarations.consumerComplaintAddress', 'declarations.consumerCareAddress']);
   const phone = evidenceValue(r, ['declarations.consumerComplaintPhone', 'declarations.consumerCarePhone']);
   const email = evidenceValue(r, ['declarations.consumerComplaintEmail', 'declarations.consumerCareEmail']);
+  const combined = evidenceValue(r, ['declarations.consumerComplaintContact', 'declarations.consumerCare', 'declarations.consumerComplaintNameAddressPhoneEmail']);
 
-  const hasName = name !== undefined && String(name).trim() !== '';
-  const hasAddress = address !== undefined && String(address).trim() !== '';
-  const hasPhone = phone !== undefined && String(phone).trim() !== '';
-  const hasEmail = email !== undefined && String(email).trim() !== '';
+  const hasEntity = [name, address].some(v => v !== undefined && String(v).trim() !== '');
+  const hasMethod = [phone, email].some(v => v !== undefined && String(v).trim() !== '') || (combined !== undefined && /@|\+?\d[\d\s().-]{6,}/.test(String(combined)));
 
-  if (hasName && hasAddress && hasPhone) {
-    return finding('PCR-R6-2', '6(2)', 'PASS', 'declarations.consumerComplaintContact', hasEmail
-      ? 'Consumer complaint contact name, address, telephone and email evidence were supplied.'
-      : 'Consumer complaint contact name, address and telephone evidence were supplied; no email address was established as available.');
+  if (hasEntity && hasMethod) {
+    return finding('PCR-R6-2', '6(2)', 'PASS', 'declarations.consumerComplaintContact', 'Consumer-complaint contact evidence establishes a contact entity together with a phone number or email address.');
+  }
+
+  if (!hasEntity && !hasMethod) {
+    return finding('PCR-R6-2', '6(2)', 'VIOLATION', 'declarations.consumerComplaintContact', 'The combined OCR, Gemini and Grok evidence did not establish any consumer-complaint contact declaration.', 'No consumer-complaint contact declaration was established by the inspection providers.');
   }
 
   const missing: string[] = [];
-  if (!hasName) missing.push('declarations.consumerComplaintName');
-  if (!hasAddress) missing.push('declarations.consumerComplaintAddress');
-  if (!hasPhone) missing.push('declarations.consumerComplaintPhone');
-
-  return finding(
-    'PCR-R6-2',
-    '6(2)',
-    'UNABLE_TO_VERIFY',
-    'declarations.consumerComplaintContact',
-    'Consumer-care phone/email evidence alone does not establish the complete Rule 6(2) contact declaration. Inspector verification of the contact name/address/telephone is required; email is checked when available.',
-    undefined,
-    missing,
-  );
+  if (!hasEntity) missing.push('declarations.consumerComplaintNameOrAddress');
+  if (!hasMethod) missing.push('declarations.consumerComplaintPhoneOrEmail');
+  return finding('PCR-R6-2', '6(2)', 'UNABLE_TO_VERIFY', 'declarations.consumerComplaintContact', 'Consumer-complaint contact evidence is incomplete or ambiguous; provider evidence does not establish both a contact entity and a contact method.', undefined, missing);
 }
 
 export function rule6DeclarationsFindings(r: InspectionRequest): Finding[] {
   const findings: Finding[] = [];
   for (const req of REQUIREMENTS) {
+    if (req.conditional && !req.conditional(r)) continue;
     if (req.code === 'PCR-R6-2') {
-      if (req.conditional && !req.conditional(r)) continue;
       findings.push(consumerContactFinding(r));
       continue;
     }
-    if (req.conditional && !req.conditional(r)) continue;
     const fields = [req.field, ...(req.aliases ?? [])];
     const value = evidenceValue(r, fields);
     if (value !== undefined && value !== null && String(value).trim() !== '') {
       findings.push(finding(req.code, req.number, 'PASS', req.field, `Evidence was supplied for the required ${req.label}.`));
       continue;
     }
-    if (explicitMissing(r, fields)) {
-      findings.push(finding(req.code, req.number, 'VIOLATION', req.field, `The supplied inspection evidence explicitly indicates that the required ${req.label} is missing.`, `Rule ${req.number} requires the applicable declaration to be made on the package.`));
-      continue;
-    }
-    findings.push(finding(req.code, req.number, 'UNABLE_TO_VERIFY', req.field, `The required ${req.label} was not supplied as evidence; absence of evidence is not treated as proof that the declaration is absent.`, undefined, fields));
+    findings.push(finding(req.code, req.number, 'VIOLATION', req.field, `The combined OCR, Gemini and Grok evidence did not establish the required ${req.label}.`, `No provider established the required declaration.`, fields));
   }
   return findings;
 }
