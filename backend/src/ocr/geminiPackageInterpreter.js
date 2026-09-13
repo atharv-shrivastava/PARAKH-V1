@@ -106,14 +106,15 @@ export async function interpretPackageWithGemini({ images = [], detections = [],
       responseMimeType: "application/json",
       ...(useResponseSchema ? { responseSchema: buildSemanticSchema(categoryOptions) } : {}),
       thinkingConfig: { thinkingLevel: "low" },
-      maxOutputTokens: 1400,
+      maxOutputTokens: 2600,
+      temperature: 0,
     },
   });
 
   try {
     if (signal?.aborted) throw new DOMException("The request was aborted.", "AbortError");
 
-    console.log(`[ocr:gemini-semantic] START model=${model} responseSchema=${useResponseSchema}`);
+    console.log(`[ocr:gemini-semantic] START model=${model} fields=${Object.keys(buildSemanticSchema(categoryOptions).properties || {}).length}`);
     const startedAt = Date.now();
     const response = await request();
     const elapsedMs = Date.now() - startedAt;
