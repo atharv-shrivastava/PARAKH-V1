@@ -1,9 +1,0 @@
-/* PARAKH V1 layout shell: single source of truth for the fixed sidebar. */
-:root{--parakh-sidebar-width:256px}
-.app-layout{width:100%;min-width:0;min-height:100vh;overflow-x:hidden}
-.sidebar{position:fixed!important;inset:0 auto 0 0!important;width:var(--parakh-sidebar-width)!important;min-width:var(--parakh-sidebar-width)!important;max-width:var(--parakh-sidebar-width)!important;height:100vh!important;box-sizing:border-box;z-index:40;display:flex;flex-direction:column}
-.navigation{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-width:none;-ms-overflow-style:none}
-.navigation::-webkit-scrollbar{display:none;width:0;height:0}
-.main-content{flex:1 1 0%!important;width:auto!important;min-width:0!important;max-width:none!important;margin-left:0!important;box-sizing:border-box;overflow-x:hidden}
-@media(min-width:801px){.main-content{padding-left:var(--parakh-sidebar-width)!important}}
-@media(max-width:800px){.sidebar{position:sticky!important;inset:auto!important;width:100%!important;min-width:0!important;max-width:100%!important;height:auto!important}.main-content{width:100%!important;min-width:0!important;padding-left:0!important}}
