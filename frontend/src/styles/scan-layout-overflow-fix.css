@@ -1,0 +1,18 @@
+/* Final layout constraints for the /scan inspection workflow. */
+:root{--parakh-sidebar-width:240px}
+.app-layout{display:flex;width:100%;min-width:0;min-height:100vh}
+.sidebar{position:fixed;left:0;top:0;bottom:0;width:var(--parakh-sidebar-width);flex:0 0 var(--parakh-sidebar-width);max-width:var(--parakh-sidebar-width);min-width:0}
+.sidebar-spacer{flex:0 0 var(--parakh-sidebar-width);width:var(--parakh-sidebar-width);min-width:var(--parakh-sidebar-width);max-width:var(--parakh-sidebar-width)}
+.main-content{flex:1 1 auto;width:auto;max-width:none;min-width:0;margin-left:0;box-sizing:border-box;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;overflow-x:hidden}
+.main-content>*{width:100%;max-width:1100px;min-width:0;box-sizing:border-box}
+.scan-page,.scan-review,.scan-visual-check,.rule23-assessment,.inspection-submission-review,.rule-23-assessment,.officer-submission-review{width:100%;max-width:100%;min-width:0;box-sizing:border-box;overflow-x:hidden}
+.scan-page *, .scan-review *, .scan-visual-check *, .rule23-assessment *, .inspection-submission-review *, .rule-23-assessment *, .officer-submission-review *{box-sizing:border-box;max-width:100%;min-width:0}
+.rule23-assessment label,.inspection-submission-review label,.rule-23-assessment label,.officer-submission-review label{width:100%;max-width:100%;min-width:0}
+.rule23-assessment select,.inspection-submission-review select,.rule-23-assessment select,.officer-submission-review select,.scan-page select,.scan-page input,.scan-page textarea,.scan-review select,.scan-review input,.scan-review textarea{width:100%;max-width:100%;min-width:0;box-sizing:border-box}
+.rule23-assessment .status-message,.inspection-submission-review .status-message,.rule23-assessment .secondary-button,.inspection-submission-review .secondary-button,.inspection-submission-review .review-required-card{width:100%;max-width:100%;min-width:0;box-sizing:border-box;overflow-wrap:anywhere;word-break:break-word}
+.rule23-assessment .rule23-assessment-fields,.inspection-submission-review .ocr-status-grid{width:100%;max-width:100%;min-width:0}
+.inspection-submission-review .ocr-status-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.inspection-submission-review .ocr-status-grid>div{width:100%;max-width:100%;min-width:0;overflow:hidden}
+@media (min-width:768px){.inspection-submission-review .ocr-status-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:900px) and (min-width:769px){:root{--parakh-sidebar-width:210px}}
+@media (max-width:768px){:root{--parakh-sidebar-width:0px}.app-layout{display:block}.sidebar{position:sticky;width:100%;max-width:100%;flex:0 0 auto}.sidebar-spacer{display:none}.main-content{width:100%;margin-left:0;padding-left:12px;padding-right:12px}.main-content>*{max-width:100%}}
