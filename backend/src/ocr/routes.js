@@ -38,6 +38,52 @@ function addEvidence(evidence, field, item, sourceType = "OCR", explicitField = 
   });
 }
 
+function makeFontSizeEvidence(analysis) {
+  const measurements = Array.isArray(analysis?.measurements) ? analysis.measurements : [];
+  return measurements
+    .filter((item) => item?.physicalMeasurementStatus === "CALIBRATED" && Number.isFinite(Number(item.physicalHeightMm)))
+    .map((item) => ({
+      evidenceId: `opencv-font-size-${crypto.randomUUID()}`,
+      field: "visual.fontSize",
+      rawValue: item.text || null,
+      normalizedValue: Number(item.physicalHeightMm),
+      unit: "mm",
+      confidence: Math.max(0.70, Math.min(0.99, Number(item.ocrConfidence) || 0.70)),
+      source: "OPENCV",
+      sourceImageRef: item.imageIndex != null ? `image-${Number(item.imageIndex) + 1}` : undefined,
+      evidence: {
+        text: item.text || null,
+        pixelHeight: Number(item.pixelHeight),
+        bboxHeight: Number(item.bboxHeight),
+        bbox: item.bbox,
+        pixelsPerMm: Number(item.pixelsPerMm),
+        measurementMethod: item.measurementMethod,
+        physicalMeasurementStatus: item.physicalMeasurementStatus,
+      },
+      timestamp: new Date().toISOString(),
+      reliability: "HIGH",
+    }));
+}
+
+function makeFontSizeVisualFlags(analysis) {
+  const measurements = Array.isArray(analysis?.measurements) ? analysis.measurements : [];
+  const calibrated = measurements.filter((item) => item?.physicalMeasurementStatus === "CALIBRATED");
+  return {
+    provider: "opencv",
+    status: analysis?.status || "UNKNOWN",
+    calibratedMeasurementCount: calibrated.length,
+    uncalibratedMeasurementCount: measurements.length - calibrated.length,
+    measurements: measurements.map((item) => ({
+      field: item.field || null,
+      text: item.text || null,
+      imageIndex: item.imageIndex,
+      physicalHeightMm: item.physicalHeightMm ?? null,
+      pixelHeight: item.pixelHeight ?? null,
+      physicalMeasurementStatus: item.physicalMeasurementStatus || "UNKNOWN",
+    })),
+  };
+}
+
 function makeRulesEvidence(ocr) {
   const declarations = Array.isArray(ocr?.declarationEvidence) ? ocr.declarationEvidence : [];
   const evidence = [];
@@ -98,7 +144,7 @@ function sanitizeRulesInput(source) {
   const input = source && typeof source === "object" ? source : {};
   const clean = {};
   for (const [key, item] of Object.entries(input)) {
-    if (NON_LEGAL_IDENTIFIER_FIELDS.has(key)) continue;
+    if (NON_LEGAL_IDENTIFIER_FIELDS.has(key) || key === "fontSizeAnalysis") continue;
     if (!item || typeof item !== "object") continue;
     const confidence = Number(item.confidence || 0);
     if (item.status !== "found" || confidence < RULES_MIN_CONFIDENCE) {
@@ -120,7 +166,9 @@ function sanitizeRulesInput(source) {
 
 async function evaluateRules(req, ocr) {
   const rulesEngineUrl = process.env.RULES_ENGINE_URL || "http://localhost:8090";
-  const ruleOcr = sanitizeRulesInput(ocr?.ruleEngineInput && typeof ocr.ruleEngineInput === "object" ? ocr.ruleEngineInput : ocr);
+  const ruleOcrSource = ocr?.ruleEngineInput && typeof ocr.ruleEngineInput === "object" ? ocr.ruleEngineInput : ocr;
+  const ruleOcr = sanitizeRulesInput(ruleOcrSource);
+  const fontSizeAnalysis = ocr?.fontSizeAnalysis || req.body?.fontSizeAnalysis || null;
   const body = {
     inspectionId: req.body?.inspectionId || crypto.randomUUID(),
     productId: req.body?.productId || crypto.randomUUID(),
@@ -134,8 +182,11 @@ async function evaluateRules(req, ocr) {
       countryOfOrigin: ruleOcr?.countryOfOrigin?.value || undefined,
       packageType: req.body?.packageType || "retail",
     },
-    evidence: makeRulesEvidence(ruleOcr),
-    visualFlags: req.body?.visualFlags || {},
+    evidence: [...makeRulesEvidence(ruleOcr), ...makeFontSizeEvidence(fontSizeAnalysis)],
+    visualFlags: {
+      ...(req.body?.visualFlags || {}),
+      ...(fontSizeAnalysis ? { fontSize: makeFontSizeVisualFlags(fontSizeAnalysis) } : {}),
+    },
     referenceVerification: null,
   };
 
