@@ -214,10 +214,46 @@ async function localizeOcrFields(payload) {
   return payload;
 }
 
+function showImageMismatchPopup(payload) {
+  if (typeof document === "undefined") return;
+  if (document.querySelector("[data-parakh-image-mismatch-popup]")) return;
+
+  const overlay = document.createElement("div");
+  overlay.dataset.parakhImageMismatchPopup = "true";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(3,7,18,.72);backdrop-filter:blur(8px);";
+
+  const card = document.createElement("div");
+  card.style.cssText = "width:min(520px,100%);border:1px solid rgba(255,255,255,.14);border-radius:20px;background:#111827;color:#fff;box-shadow:0 24px 80px rgba(0,0,0,.45);padding:28px;";
+
+  const title = document.createElement("h2");
+  title.textContent = "Images belong to different products";
+  title.style.cssText = "margin:0 0 10px;font-size:22px;line-height:1.2;";
+
+  const body = document.createElement("p");
+  body.textContent = payload?.error?.message || "The uploaded package images do not appear to show the same product. Analysis has been stopped. Upload images from the same package and try again.";
+  body.style.cssText = "margin:0;color:#cbd5e1;line-height:1.6;font-size:15px;";
+
+  const hint = document.createElement("p");
+  hint.textContent = "Example: front of Kurkure + back of Lays will be rejected.";
+  hint.style.cssText = "margin:14px 0 22px;color:#94a3b8;font-size:13px;";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Close";
+  button.style.cssText = "border:0;border-radius:12px;padding:11px 18px;background:#fff;color:#111827;font-weight:700;cursor:pointer;";
+  button.addEventListener("click", () => overlay.remove());
+
+  card.append(title, body, hint, button);
+  overlay.appendChild(card);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
 async function sanitizeOcrResponse(response) {
   if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) return response;
   try {
     const payload = await response.clone().json();
+    if (payload?.error?.code === "IMAGE_MISMATCH") showImageMismatchPopup(payload);
     if (payload?.result && typeof payload.result === "object") {
       await localizeOcrFields(payload);
       delete payload.result.barcode;
