@@ -48,79 +48,78 @@ function Layout() {
 
   return <>
     <style>{`
-      /* Single source of truth for the application shell geometry. */
-      .app-layout.parakh-grid-shell {
+      /* PARAKH V1 shell: these class names intentionally do not reuse the
+         legacy .main-content geometry rules. Grid owns the horizontal layout. */
+      .parakh-app-shell {
         display: grid !important;
-        grid-template-columns: minmax(256px, 256px) minmax(0, 1fr) !important;
+        grid-template-columns: 256px minmax(0, 1fr) !important;
         grid-template-rows: minmax(0, 1fr) !important;
         width: 100% !important;
         min-width: 0 !important;
         min-height: 100vh !important;
         margin: 0 !important;
         padding: 0 !important;
-        overflow-x: clip !important;
+        overflow-x: hidden !important;
         align-items: stretch !important;
       }
-      .app-layout.parakh-grid-shell > .sidebar {
+
+      .parakh-app-shell > .parakh-sidebar {
         position: sticky !important;
         top: 0 !important;
         left: auto !important;
         right: auto !important;
-        inset: auto !important;
         grid-column: 1 !important;
         grid-row: 1 !important;
         width: 256px !important;
         min-width: 256px !important;
         max-width: 256px !important;
         height: 100vh !important;
+        min-height: 100vh !important;
         margin: 0 !important;
-        box-sizing: border-box !important;
         align-self: start !important;
-        z-index: 40 !important;
+        justify-self: stretch !important;
+        box-sizing: border-box !important;
         overflow-y: auto !important;
+        overflow-x: hidden !important;
       }
-      .app-layout.parakh-grid-shell > .main-content {
+
+      .parakh-app-shell > .parakh-main {
         grid-column: 2 !important;
         grid-row: 1 !important;
-        width: 100% !important;
+        display: block !important;
+        width: auto !important;
         min-width: 0 !important;
         max-width: none !important;
+        min-height: 100vh !important;
         margin: 0 !important;
         padding: 34px !important;
         box-sizing: border-box !important;
         overflow-x: hidden !important;
-        position: relative !important;
-        left: auto !important;
-        right: auto !important;
+        overflow-y: visible !important;
+        justify-self: stretch !important;
+        align-self: stretch !important;
       }
-      .app-layout.parakh-grid-shell > .main-content > * {
+
+      .parakh-app-shell > .parakh-main > * {
+        display: block;
         width: 100% !important;
-        min-width: 0 !important;
         max-width: 1280px !important;
-        margin-left: 0 !important;
-        margin-right: 0 !important;
+        min-width: 0 !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
         box-sizing: border-box !important;
-        position: relative !important;
+        position: relative;
         left: auto !important;
         right: auto !important;
       }
-      .app-layout.parakh-grid-shell > .main-content > .dashboard,
-      .app-layout.parakh-grid-shell > .main-content > .dashboard-modern,
-      .app-layout.parakh-grid-shell > .main-content > .scan-page {
-        width: 100% !important;
-        max-width: 1280px !important;
-        min-width: 0 !important;
-        margin-left: 0 !important;
-        margin-right: 0 !important;
-        left: auto !important;
-        right: auto !important;
-      }
+
       @media (max-width: 768px) {
-        .app-layout.parakh-grid-shell {
+        .parakh-app-shell {
           grid-template-columns: minmax(0, 1fr) !important;
           grid-template-rows: auto minmax(0, 1fr) !important;
         }
-        .app-layout.parakh-grid-shell > .sidebar {
+
+        .parakh-app-shell > .parakh-sidebar {
           grid-column: 1 !important;
           grid-row: 1 !important;
           width: 100% !important;
@@ -128,22 +127,28 @@ function Layout() {
           max-width: none !important;
           height: auto !important;
           min-height: 0 !important;
-          max-height: none !important;
         }
-        .app-layout.parakh-grid-shell > .main-content {
+
+        .parakh-app-shell > .parakh-main {
           grid-column: 1 !important;
           grid-row: 2 !important;
           width: 100% !important;
           min-width: 0 !important;
+          min-height: 0 !important;
           padding: 18px 12px 30px !important;
         }
-        .app-layout.parakh-grid-shell > .main-content > * {
+
+        .parakh-app-shell > .parakh-main > * {
+          width: 100% !important;
           max-width: 100% !important;
+          margin-left: 0 !important;
+          margin-right: 0 !important;
         }
       }
     `}</style>
-    <div className="app-layout parakh-grid-shell">
-      <aside className="sidebar">
+
+    <div className="parakh-app-shell">
+      <aside className="sidebar parakh-sidebar">
         <div className="logo"><h2>PARAKH</h2><span className="logo-full">Packaged Article Regulatory Assessment &amp; Knowledge Hub</span></div>
         <nav className="navigation">
           <div className="sidebar-section-label">Workspace</div>
@@ -163,7 +168,12 @@ function Layout() {
         </nav>
         <div className="sidebar-user"><strong>{user?.name || "User"}</strong><span>{user?.role || "USER"}</span><button type="button" onClick={logout}><span className="nav-icon" aria-hidden="true">↪</span>{t("signOut")}</button></div>
       </aside>
-      <main className="main-content"><BatchWarningStrip /><Outlet />{location.pathname === "/scan" && <ScanVisualCheck />}</main>
+
+      <main className="parakh-main">
+        <BatchWarningStrip />
+        <Outlet />
+        {location.pathname === "/scan" && <ScanVisualCheck />}
+      </main>
     </div>
   </>;
 }
