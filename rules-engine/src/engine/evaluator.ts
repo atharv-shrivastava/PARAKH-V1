@@ -14,12 +14,11 @@ import { RULES, RULESET_VERSION } from '../legal/rules.js';
 import { SOURCES } from '../legal/sources.js';
 import {
   firstScheduleMpe,
-  isSecondScheduleStandard,
   normalizeQuantity,
   toBaseQuantity,
 } from '../legal/schedules.js';
 
-export const ENGINE_VERSION = '0.2.0';
+export const ENGINE_VERSION = '0.2.1';
 
 function getPath(input: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((value, part) => {
@@ -65,9 +64,7 @@ function confidenceOk(items: EvidenceItem[], minimum?: number): boolean {
 function validCurrency(value: unknown): boolean {
   if (typeof value === 'number') return Number.isFinite(value) && value >= 0;
   if (typeof value !== 'string') return false;
-  return /^(?:₹|rs\.?\s*)?\d+(?:\.\d{1,2})?$|^\d+(?:\.\d{1,2})?\s*(?:₹|rs\.?)$/i.test(
-    value.trim(),
-  );
+  return /^(?:₹|rs\.?\s*)?\d+(?:\.\d{1,2})?$|^\d+(?:\.\d{1,2})?\s*(?:₹|rs\.?)$/i.test(value.trim());
 }
 
 function validDate(value: unknown): boolean {
@@ -85,49 +82,17 @@ function applicable(request: InspectionRequest, version: RuleVersion): boolean {
   if (criteria.contexts && !criteria.contexts.includes(request.context)) return false;
 
   const commodity = request.productMetadata.commodityCategory.trim().toLowerCase();
-  if (
-    criteria.includedCommodities &&
-    !criteria.includedCommodities.some((item) => commodity.includes(item.toLowerCase()))
-  ) {
-    return false;
-  }
-  if (
-    criteria.excludedCommodities &&
-    criteria.excludedCommodities.some((item) => commodity.includes(item.toLowerCase()))
-  ) {
-    return false;
-  }
-  if (
-    criteria.packageTypes &&
-    request.productMetadata.packageType &&
-    !criteria.packageTypes.includes(request.productMetadata.packageType)
-  ) {
-    return false;
-  }
-  if (
-    criteria.consumerTypes &&
-    request.productMetadata.consumerType &&
-    !criteria.consumerTypes.includes(request.productMetadata.consumerType)
-  ) {
-    return false;
-  }
-  if (
-    criteria.excludedConsumerTypes &&
-    request.productMetadata.consumerType &&
-    criteria.excludedConsumerTypes.includes(request.productMetadata.consumerType)
-  ) {
-    return false;
-  }
+  if (criteria.includedCommodities && !criteria.includedCommodities.some((item) => commodity.includes(item.toLowerCase()))) return false;
+  if (criteria.excludedCommodities && criteria.excludedCommodities.some((item) => commodity.includes(item.toLowerCase()))) return false;
+  if (criteria.packageTypes && request.productMetadata.packageType && !criteria.packageTypes.includes(request.productMetadata.packageType)) return false;
+  if (criteria.consumerTypes && request.productMetadata.consumerType && !criteria.consumerTypes.includes(request.productMetadata.consumerType)) return false;
+  if (criteria.excludedConsumerTypes && request.productMetadata.consumerType && criteria.excludedConsumerTypes.includes(request.productMetadata.consumerType)) return false;
   return true;
 }
 
 function chooseVersion(rule: RuleDefinition, date: string): RuleVersion | undefined {
   return [...rule.versions]
-    .filter(
-      (version) =>
-        version.effectiveFrom <= date &&
-        (version.effectiveUntil === null || date <= version.effectiveUntil),
-    )
+    .filter((version) => version.effectiveFrom <= date && (version.effectiveUntil === null || date <= version.effectiveUntil))
     .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0];
 }
 
@@ -144,111 +109,31 @@ function conditionResult(request: InspectionRequest, condition: RuleCondition): 
   const evidence = evidenceFor(request, condition.targetField);
   const conflicts = conflictsFor(request, condition.targetField);
 
-  if (conflicts.length > 0) {
-    return {
-      status: 'UNABLE_TO_VERIFY',
-      missing: [],
-      message: condition.errorMessage,
-      evidence,
-      conflicts,
-    };
-  }
-
-  if (!confidenceOk(evidence, condition.minimumConfidence)) {
-    return {
-      status: 'UNABLE_TO_VERIFY',
-      missing: [condition.targetField],
-      message: condition.errorMessage,
-      evidence,
-      conflicts,
-    };
-  }
+  if (conflicts.length > 0) return { status: 'UNABLE_TO_VERIFY', missing: [], message: condition.errorMessage, evidence, conflicts };
+  if (!confidenceOk(evidence, condition.minimumConfidence)) return { status: 'UNABLE_TO_VERIFY', missing: [condition.targetField], message: condition.errorMessage, evidence, conflicts };
 
   const value = sourceValue(request, condition.targetField);
   const missing = value === undefined || value === null || value === '';
-
-  const pass = (): ConditionResult => ({
-    status: 'PASS',
-    missing: [],
-    message: 'Requirement satisfied.',
-    evidence,
-    conflicts,
-  });
-  const unable = (): ConditionResult => ({
-    status: 'UNABLE_TO_VERIFY',
-    missing: [condition.targetField],
-    message: condition.errorMessage,
-    evidence,
-    conflicts,
-  });
-  const fail = (reason = condition.violationReason): ConditionResult => ({
-    status: 'VIOLATION',
-    missing: [],
-    message: condition.errorMessage,
-    reason,
-    evidence,
-    conflicts,
-  });
-  const missingRequiredDeclaration = (): ConditionResult => fail(
-    `${condition.violationReason} The declaration was not established in the submitted evidence; the inspector must verify the complete package before finalizing the finding.`,
-  );
+  const pass = (): ConditionResult => ({ status: 'PASS', missing: [], message: 'Requirement satisfied.', evidence, conflicts });
+  const unable = (): ConditionResult => ({ status: 'UNABLE_TO_VERIFY', missing: [condition.targetField], message: condition.errorMessage, evidence, conflicts });
+  const fail = (reason = condition.violationReason): ConditionResult => ({ status: 'VIOLATION', missing: [], message: condition.errorMessage, reason, evidence, conflicts });
+  const missingRequiredDeclaration = (): ConditionResult => fail(`${condition.violationReason} The declaration was not established in the submitted evidence; the inspector must verify the complete package before finalizing the finding.`);
 
   switch (condition.operator) {
-    case 'EXISTS':
-      return missing ? missingRequiredDeclaration() : pass();
-    case 'NOT_EXISTS':
-      return missing ? pass() : fail();
-    case 'EQUALS':
-      return missing ? unable() : value === condition.expectedValue ? pass() : fail();
-    case 'NOT_EQUALS':
-      return missing ? unable() : value !== condition.expectedValue ? pass() : fail();
-    case 'REGEX_MATCH':
-      if (missing || typeof condition.expectedValue !== 'string' || typeof value !== 'string') return unable();
-      return new RegExp(condition.expectedValue).test(value) ? pass() : fail();
-    case 'GREATER_THAN':
-      return typeof value === 'number' && typeof condition.expectedValue === 'number'
-        ? value > condition.expectedValue ? pass() : fail()
-        : unable();
-    case 'LESS_THAN':
-      return typeof value === 'number' && typeof condition.expectedValue === 'number'
-        ? value < condition.expectedValue ? pass() : fail()
-        : unable();
-    case 'GREATER_THAN_OR_EQUAL':
-      return typeof value === 'number' && typeof condition.expectedValue === 'number'
-        ? value >= condition.expectedValue ? pass() : fail()
-        : unable();
-    case 'LESS_THAN_OR_EQUAL':
-      return typeof value === 'number' && typeof condition.expectedValue === 'number'
-        ? value <= condition.expectedValue ? pass() : fail()
-        : unable();
-    case 'VALID_UNIT':
-      return missing ? missingRequiredDeclaration() : normalizeQuantity(1, String(value)) ? pass() : fail();
-    case 'VALID_CURRENCY':
-      return missing ? missingRequiredDeclaration() : validCurrency(value) ? pass() : fail();
-    case 'VALID_DATE_FORMAT':
-      return missing ? missingRequiredDeclaration() : validDate(value) ? pass() : fail();
-    case 'IN_LIST':
-      return missing || !Array.isArray(condition.expectedValue)
-        ? unable()
-        : condition.expectedValue.includes(value) ? pass() : fail();
-    case 'IN_NUMERIC_RANGE':
-      return typeof value === 'number' && Array.isArray(condition.expectedValue) && condition.expectedValue.length === 2
-        ? value >= Number(condition.expectedValue[0]) && value <= Number(condition.expectedValue[1]) ? pass() : fail()
-        : unable();
-    case 'IN_SCHEDULE_II_STANDARD': {
-      const quantity = getPath(request, 'declarations.netQuantity');
-      const unit = getPath(request, 'declarations.netQuantityUnit');
-      if (typeof quantity !== 'number' || typeof unit !== 'string') return unable();
-      const normalized = normalizeQuantity(quantity, unit);
-      if (!normalized) return unable();
-      const result = isSecondScheduleStandard(
-        request.productMetadata.commodityCategory,
-        normalized.value,
-        normalized.unit,
-      );
-      if (!result.applicable) return unable();
-      return result.compliant ? pass() : fail(`${condition.violationReason} ${result.description ?? ''}`.trim());
-    }
+    case 'EXISTS': return missing ? missingRequiredDeclaration() : pass();
+    case 'NOT_EXISTS': return missing ? pass() : fail();
+    case 'EQUALS': return missing ? unable() : value === condition.expectedValue ? pass() : fail();
+    case 'NOT_EQUALS': return missing ? unable() : value !== condition.expectedValue ? pass() : fail();
+    case 'REGEX_MATCH': if (missing || typeof condition.expectedValue !== 'string' || typeof value !== 'string') return unable(); return new RegExp(condition.expectedValue).test(value) ? pass() : fail();
+    case 'GREATER_THAN': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value > condition.expectedValue ? pass() : fail() : unable();
+    case 'LESS_THAN': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value < condition.expectedValue ? pass() : fail() : unable();
+    case 'GREATER_THAN_OR_EQUAL': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value >= condition.expectedValue ? pass() : fail() : unable();
+    case 'LESS_THAN_OR_EQUAL': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value <= condition.expectedValue ? pass() : fail() : unable();
+    case 'VALID_UNIT': return missing ? missingRequiredDeclaration() : normalizeQuantity(1, String(value)) ? pass() : fail();
+    case 'VALID_CURRENCY': return missing ? missingRequiredDeclaration() : validCurrency(value) ? pass() : fail();
+    case 'VALID_DATE_FORMAT': return missing ? missingRequiredDeclaration() : validDate(value) ? pass() : fail();
+    case 'IN_LIST': return missing || !Array.isArray(condition.expectedValue) ? unable() : condition.expectedValue.includes(value) ? pass() : fail();
+    case 'IN_NUMERIC_RANGE': return typeof value === 'number' && Array.isArray(condition.expectedValue) && condition.expectedValue.length === 2 ? value >= Number(condition.expectedValue[0]) && value <= Number(condition.expectedValue[1]) ? pass() : fail() : unable();
     case 'WITHIN_FIRST_SCHEDULE_MPE': {
       const measurement = request.measurements;
       if (!measurement) return unable();
@@ -260,64 +145,25 @@ function conditionResult(request: InspectionRequest, condition: RuleCondition): 
       if ((declaredBase.unit !== 'g' && declaredBase.unit !== 'mL') || actualBase.unit !== declaredBase.unit) return unable();
       const result = firstScheduleMpe(declaredBase.value, actualBase.value, declaredBase.unit);
       if (!result.applicable) return unable();
-      return result.withinTolerance
-        ? pass()
-        : fail(`${condition.violationReason} Deficiency ${result.deficiency} ${declaredBase.unit}; MPE ${result.tolerance} ${declaredBase.unit}.`);
+      return result.withinTolerance ? pass() : fail(`${condition.violationReason} Deficiency ${result.deficiency} ${declaredBase.unit}; MPE ${result.tolerance} ${declaredBase.unit}.`);
     }
-    case 'VISUAL_CHECK': {
-      return typeof value === 'boolean' ? (value ? pass() : fail()) : unable();
-    }
-    case 'CONFLICT_EXISTS':
-      return conflicts.length > 0 ? fail() : pass();
-    case 'PACKAGE_TYPE':
-      return request.productMetadata.packageType
-        ? request.productMetadata.packageType === condition.expectedValue ? pass() : fail()
-        : unable();
-    case 'COMMODITY_TYPE':
-      return request.productMetadata.commodityCategory
-        ? request.productMetadata.commodityCategory.toLowerCase() === String(condition.expectedValue).toLowerCase() ? pass() : fail()
-        : unable();
-    case 'CONTEXT_TYPE':
-      return request.context === condition.expectedValue ? pass() : fail();
-    case 'DATE_RANGE':
-      return typeof value === 'string' && Array.isArray(condition.expectedValue) && condition.expectedValue.length === 2
-        ? value >= String(condition.expectedValue[0]) && value <= String(condition.expectedValue[1]) ? pass() : fail()
-        : unable();
+    case 'VISUAL_CHECK': return typeof value === 'boolean' ? (value ? pass() : fail()) : unable();
+    case 'CONFLICT_EXISTS': return conflicts.length > 0 ? fail() : pass();
+    case 'PACKAGE_TYPE': return request.productMetadata.packageType ? request.productMetadata.packageType === condition.expectedValue ? pass() : fail() : unable();
+    case 'COMMODITY_TYPE': return request.productMetadata.commodityCategory ? request.productMetadata.commodityCategory.toLowerCase() === String(condition.expectedValue).toLowerCase() ? pass() : fail() : unable();
+    case 'CONTEXT_TYPE': return request.context === condition.expectedValue ? pass() : fail();
+    case 'DATE_RANGE': return typeof value === 'string' && Array.isArray(condition.expectedValue) && condition.expectedValue.length === 2 ? value >= String(condition.expectedValue[0]) && value <= String(condition.expectedValue[1]) ? pass() : fail() : unable();
     case 'EVIDENCE_CONFIDENCE': {
       if (evidence.length === 0) return unable();
       const threshold = Number(condition.expectedValue);
       return Math.max(...evidence.map((item) => item.confidence)) >= threshold ? pass() : unable();
     }
-    default:
-      return unable();
+    default: return unable();
   }
 }
 
-function findingFor(
-  rule: RuleDefinition,
-  version: RuleVersion,
-  condition: RuleCondition,
-  result: ConditionResult,
-  index: number,
-): Finding {
-  return {
-    findingId: `${rule.ruleCode}-${version.version}-${index + 1}`,
-    ruleId: rule.ruleId,
-    ruleCode: rule.ruleCode,
-    ruleNumber: rule.ruleNumber,
-    subclause: rule.subclause,
-    ruleVersion: version.version,
-    status: result.status,
-    field: condition.targetField,
-    message: result.status === 'PASS' ? 'Requirement satisfied.' : result.message,
-    violationReason: result.reason,
-    evidenceUsed: result.evidence,
-    missingEvidence: result.missing,
-    conflicts: result.conflicts,
-    legalReferences: version.legalSources,
-    severity: rule.defaultSeverity,
-    requiresLegalReview: version.legalSources.some((source) => source.verificationStatus !== 'VERIFIED'),
-  };
+function findingFor(rule: RuleDefinition, version: RuleVersion, condition: RuleCondition, result: ConditionResult, index: number): Finding {
+  return { findingId: `${rule.ruleCode}-${version.version}-${index + 1}`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, subclause: rule.subclause, ruleVersion: version.version, status: result.status, field: condition.targetField, message: result.status === 'PASS' ? 'Requirement satisfied.' : result.message, violationReason: result.reason, evidenceUsed: result.evidence, missingEvidence: result.missing, conflicts: result.conflicts, legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: version.legalSources.some((source) => source.verificationStatus !== 'VERIFIED') };
 }
 
 function quantityFindings(request: InspectionRequest): Finding[] {
@@ -328,66 +174,28 @@ function quantityFindings(request: InspectionRequest): Finding[] {
     const measurement = request.measurements;
     const declared = normalizeQuantity(measurement.declaredQuantity, measurement.declaredUnit);
     const actual = normalizeQuantity(measurement.actualQuantity, measurement.actualUnit);
-
     if (!declared || !actual) {
-      findings.push({
-        findingId: 'PCR-SCHED-I-MPE-UNVERIFIED', ruleId: 'PCR-SCHED-I-MPE', ruleCode: 'PCR-SCHED-I-MPE', ruleNumber: 'First Schedule', ruleVersion: 1,
-        status: 'UNABLE_TO_VERIFY', field: 'measurements', message: 'Measurement units could not be normalized for First Schedule MPE evaluation.',
-        missingEvidence: ['measurements.declaredQuantity', 'measurements.actualQuantity'], legalReferences: [source], severity: 'HIGH', requiresLegalReview: false,
-      });
+      findings.push({ findingId: 'PCR-SCHED-I-MPE-UNVERIFIED', ruleId: 'PCR-SCHED-I-MPE', ruleCode: 'PCR-SCHED-I-MPE', ruleNumber: 'First Schedule', ruleVersion: 1, status: 'UNABLE_TO_VERIFY', field: 'measurements', message: 'Measurement units could not be normalized for First Schedule MPE evaluation.', missingEvidence: ['measurements.declaredQuantity', 'measurements.actualQuantity'], legalReferences: [source], severity: 'HIGH', requiresLegalReview: false });
     } else {
       const declaredBase = toBaseQuantity(declared.value, declared.unit);
       const actualBase = toBaseQuantity(actual.value, actual.unit);
       if ((declaredBase.unit === 'g' || declaredBase.unit === 'mL') && actualBase.unit === declaredBase.unit) {
         const result = firstScheduleMpe(declaredBase.value, actualBase.value, declaredBase.unit);
-        findings.push({
-          findingId: 'PCR-SCHED-I-MPE', ruleId: 'PCR-SCHED-I-MPE', ruleCode: 'PCR-SCHED-I-MPE', ruleNumber: 'First Schedule', ruleVersion: 1,
-          status: result.applicable ? result.withinTolerance ? 'PASS' : 'VIOLATION' : 'UNABLE_TO_VERIFY', field: 'measurements',
-          message: result.applicable ? result.withinTolerance ? `Measured deficiency is within MPE ${result.tolerance} ${declaredBase.unit}.` : `Measured deficiency exceeds MPE ${result.tolerance} ${declaredBase.unit}.` : result.reason ?? 'First Schedule MPE could not be evaluated.',
-          violationReason: result.withinTolerance ? undefined : 'Net quantity deficiency exceeds the First Schedule maximum permissible error.', legalReferences: [source], severity: 'CRITICAL', requiresLegalReview: false,
-        });
+        findings.push({ findingId: 'PCR-SCHED-I-MPE', ruleId: 'PCR-SCHED-I-MPE', ruleCode: 'PCR-SCHED-I-MPE', ruleNumber: 'First Schedule', ruleVersion: 1, status: result.applicable ? result.withinTolerance ? 'PASS' : 'VIOLATION' : 'UNABLE_TO_VERIFY', field: 'measurements', message: result.applicable ? result.withinTolerance ? `Measured deficiency is within MPE ${result.tolerance} ${declaredBase.unit}.` : `Measured deficiency exceeds MPE ${result.tolerance} ${declaredBase.unit}.` : result.reason ?? 'First Schedule MPE could not be evaluated.', violationReason: result.withinTolerance ? undefined : 'Net quantity deficiency exceeds the First Schedule maximum permissible error.', legalReferences: [source], severity: 'CRITICAL', requiresLegalReview: false });
       } else {
-        findings.push({
-          findingId: 'PCR-SCHED-I-MPE-NON-WEIGHT', ruleId: 'PCR-SCHED-I-MPE', ruleCode: 'PCR-SCHED-I-MPE', ruleNumber: 'First Schedule Table II', ruleVersion: 1,
-          status: 'UNABLE_TO_VERIFY', field: 'measurements', message: 'Length, area and number require separate First Schedule Table II evaluation.', legalReferences: [source], severity: 'HIGH', requiresLegalReview: false,
-        });
+        findings.push({ findingId: 'PCR-SCHED-I-MPE-NON-WEIGHT', ruleId: 'PCR-SCHED-I-MPE', ruleCode: 'PCR-SCHED-I-MPE', ruleNumber: 'First Schedule Table II', ruleVersion: 1, status: 'UNABLE_TO_VERIFY', field: 'measurements', message: 'Length, area and number require separate First Schedule Table II evaluation.', legalReferences: [source], severity: 'HIGH', requiresLegalReview: false });
       }
     }
   }
 
-  const quantity = getPath(request, 'declarations.netQuantity');
-  const unit = getPath(request, 'declarations.netQuantityUnit');
-  if (typeof quantity === 'number' && typeof unit === 'string') {
-    const normalized = normalizeQuantity(quantity, unit);
-    if (normalized) {
-      const schedule = isSecondScheduleStandard(request.productMetadata.commodityCategory, normalized.value, normalized.unit);
-      if (schedule.applicable) {
-        findings.push({
-          findingId: 'PCR-R5-SCHEDULE-II', ruleId: 'PCR-R5-SCHEDULE-II', ruleCode: 'PCR-R5-SCHEDULE-II', ruleNumber: '5', ruleVersion: 1,
-          status: schedule.compliant ? 'PASS' : 'VIOLATION', field: 'declarations.netQuantity',
-          message: schedule.compliant ? 'Declared quantity matches a Second Schedule standard quantity.' : `Declared quantity does not match the applicable Second Schedule standard quantities. ${schedule.description ?? ''}`.trim(),
-          violationReason: schedule.compliant ? undefined : 'Commodity is covered by the Second Schedule and uses a non-standard package quantity.', legalReferences: [source], severity: 'HIGH', requiresLegalReview: false,
-        });
-      }
-    }
-  }
   return findings;
-}
-
-function canonical(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  const object = value as Record<string, unknown>;
-  return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonical(object[key])}`).join(',')}}`;
 }
 
 export function evaluateInspection(request: InspectionRequest, rules: RuleDefinition[] = RULES): OverallInspectionResult {
   const findings: Finding[] = [];
-
   for (const rule of rules.filter((item) => item.enabled)) {
     const version = chooseVersion(rule, request.inspectionDate.slice(0, 10));
     if (!version) continue;
-
     if (rule.ruleId === 'PCR-R3') {
       const quantity = getPath(request, 'declarations.netQuantity');
       const unit = getPath(request, 'declarations.netQuantityUnit');
@@ -396,34 +204,22 @@ export function evaluateInspection(request: InspectionRequest, rules: RuleDefini
       findings.push({ findingId: `${rule.ruleCode}-${version.version}`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, ruleVersion: version.version, status: excluded ? 'NOT_APPLICABLE' : 'PASS', message: excluded ? 'Chapter II is excluded by the identified Rule 3 applicability condition, subject to commodity-specific exceptions.' : 'Chapter II applicability gate passed.', legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: false });
       continue;
     }
-
     if (!applicable(request, version)) {
       findings.push({ findingId: `${rule.ruleCode}-${version.version}-NA`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, ruleVersion: version.version, status: 'NOT_APPLICABLE', message: 'Rule is outside its structured applicability criteria.', legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: false });
       continue;
     }
-
     if (rule.ruleId === 'PCR-R6-1-F' && request.productMetadata.dimensionsRelevant !== true) {
       findings.push({ findingId: `${rule.ruleCode}-${version.version}-NA`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, ruleVersion: version.version, status: 'NOT_APPLICABLE', field: 'declarations.dimensions', message: 'Dimensions are not identified as relevant to the inspected commodity/package.', legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: false });
       continue;
     }
-
     if (version.status === 'REQUIRES_LEGAL_REVIEW') {
       findings.push({ findingId: `${rule.ruleCode}-${version.version}-LEGAL`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, ruleVersion: version.version, status: 'UNABLE_TO_VERIFY', message: 'Rule version is marked for legal review.', legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: true });
       continue;
     }
-
     version.conditions.forEach((condition, index) => findings.push(findingFor(rule, version, condition, conditionResult(request, condition), index)));
   }
-
   findings.push(...quantityFindings(request));
-
-  const summary = {
-    totalRulesEvaluated: findings.length,
-    passed: findings.filter((finding) => finding.status === 'PASS').length,
-    violations: findings.filter((finding) => finding.status === 'VIOLATION').length,
-    unableToVerify: findings.filter((finding) => finding.status === 'UNABLE_TO_VERIFY').length,
-    notApplicable: findings.filter((finding) => finding.status === 'NOT_APPLICABLE').length,
-  };
+  const summary = { totalRulesEvaluated: findings.length, passed: findings.filter((finding) => finding.status === 'PASS').length, violations: findings.filter((finding) => finding.status === 'VIOLATION').length, unableToVerify: findings.filter((finding) => finding.status === 'UNABLE_TO_VERIFY').length, notApplicable: findings.filter((finding) => finding.status === 'NOT_APPLICABLE').length };
   const overallStatus: EvaluationStatus = summary.violations > 0 ? 'VIOLATION' : summary.unableToVerify > 0 ? 'UNABLE_TO_VERIFY' : summary.passed > 0 ? 'PASS' : 'NOT_APPLICABLE';
   const base = { inspectionId: request.inspectionId, productId: request.productId, inspectionDate: request.inspectionDate, overallStatus, engineVersion: ENGINE_VERSION, ruleSetVersion: RULESET_VERSION, summary, findings };
   return { ...base, auditHash: createHash('sha256').update(canonical(base)).digest('hex') };
