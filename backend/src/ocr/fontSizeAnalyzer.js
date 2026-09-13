@@ -145,6 +145,17 @@ function runPythonJson({ python, script, payload, timeoutMs }) {
   });
 }
 
+async function resolveScript() {
+  const candidates = [
+    path.resolve(process.cwd(), "python", "font_size_measurement.py"),
+    path.resolve(process.cwd(), "backend", "python", "font_size_measurement.py"),
+  ];
+  for (const candidate of candidates) {
+    if (await fs.access(candidate).then(() => true).catch(() => false)) return candidate;
+  }
+  throw new Error(`OpenCV font-size script not found. Checked: ${candidates.join(", ")}`);
+}
+
 export async function analyzeFontSize({ imagePaths, ocr, pixelsPerMm = {} }) {
   const paths = Array.isArray(imagePaths) ? imagePaths.filter(Boolean) : [];
   const detections = buildDetections(ocr);
@@ -159,10 +170,7 @@ export async function analyzeFontSize({ imagePaths, ocr, pixelsPerMm = {} }) {
     };
   }
 
-  const script = path.resolve(process.cwd(), "python", "font_size_measurement.py");
-  const available = await fs.access(script).then(() => true).catch(() => false);
-  if (!available) throw new Error(`OpenCV font-size script not found: ${script}`);
-
+  const script = await resolveScript();
   const payload = {
     images: paths.map((imagePath, imageIndex) => ({ path: imagePath, imageIndex })),
     detections,
