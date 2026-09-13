@@ -4,7 +4,16 @@ import { evaluateInspectionComplete as evaluateSpecializedInspection } from './l
 import { evaluateInspection as evaluateConfiguredRules } from './evaluator.js';
 import { unitSalePriceFinding } from './unit-sale-price-evaluator.js';
 
-const AUTHORITATIVE_SPECIALIZED_RULES = new Set(['PCR-R6-2']);
+const AUTHORITATIVE_SPECIALIZED_RULES = new Set([
+  'PCR-R6-1-A',
+  'PCR-R6-1-B',
+  'PCR-R6-1-C',
+  'PCR-R6-1-D',
+  'PCR-R6-1-E',
+  'PCR-R6-1-F',
+  'PCR-R6-1-G',
+  'PCR-R6-2',
+]);
 
 function canonical(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v);
