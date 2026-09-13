@@ -1,10 +1,6 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-
-const execFileAsync = promisify(execFile);
 
 const FIELD_ALIASES = {
   productName: ["productName", "commonOrGenericName"],
@@ -47,17 +43,8 @@ function firstText(item) {
 }
 
 function collectDetectionArrays(ocr) {
-  const candidates = [
-    ocr?.detections,
-    ocr?.ocrDetections,
-    ocr?.textDetections,
-    ocr?.rawDetections,
-    ocr?.rawResults,
-    ocr?.words,
-    ocr?.ocrEvidence,
-    ocr?.declarationEvidence,
-  ];
-  return candidates.filter(Array.isArray).flat();
+  return [ocr?.detections, ocr?.ocrDetections, ocr?.textDetections, ocr?.rawDetections, ocr?.rawResults, ocr?.words, ocr?.ocrEvidence, ocr?.declarationEvidence]
+    .filter(Array.isArray).flat();
 }
 
 function collectStructuredFieldDetections(ocr) {
@@ -65,16 +52,9 @@ function collectStructuredFieldDetections(ocr) {
   for (const [field, item] of Object.entries(ocr || {})) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const box = firstBox(item);
-    if (!box) continue;
     const text = firstText(item);
-    if (!text) continue;
-    detections.push({
-      field,
-      text,
-      bbox: box,
-      imageIndex: Number.isFinite(Number(item.imageIndex)) ? Number(item.imageIndex) : 0,
-      confidence: Number(item.confidence) || 0,
-    });
+    if (!box || !text) continue;
+    detections.push({ field, text, bbox: box, imageIndex: Number.isFinite(Number(item.imageIndex)) ? Number(item.imageIndex) : 0, confidence: Number(item.confidence) || 0 });
   }
   return detections;
 }
@@ -111,12 +91,10 @@ function buildDetections(ocr) {
       confidence: Number(item?.confidence) || 0,
     }))
     .filter((item) => item.text && item.bbox);
-
   const structured = collectStructuredFieldDetections(ocr);
-  const merged = [...raw, ...structured];
   const seen = new Set();
   const detections = [];
-  for (const item of merged) {
+  for (const item of [...raw, ...structured]) {
     const field = item.field && FIELD_ALIASES[item.field] ? item.field : (item.field || inferField(item.text, ocr));
     const key = JSON.stringify([field, item.text, item.imageIndex, item.bbox.map((n) => Math.round(n))]);
     if (seen.has(key)) continue;
@@ -134,6 +112,37 @@ function normalizePixelsPerMm(raw) {
     if (Number.isFinite(n) && n > 0) output[String(index)] = n;
   }
   return output;
+}
+
+function runPythonJson({ python, script, payload, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(python, [script], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: process.env });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      child.kill();
+      if (!settled) { settled = true; reject(new Error(`OpenCV font-size analysis timed out after ${timeoutMs} ms.`)); }
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+      if (stdout.length > 10 * 1024 * 1024) child.kill();
+    });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      if (!settled) { settled = true; reject(error); }
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      if (code !== 0) return reject(new Error(stderr.trim() || `Python font-size process exited with code ${code}.`));
+      try { resolve(JSON.parse(stdout)); }
+      catch { reject(new Error(`OpenCV returned invalid JSON: ${stderr.trim() || stdout.slice(0, 500)}`)); }
+    });
+    child.stdin.end(JSON.stringify(payload));
+  });
 }
 
 export async function analyzeFontSize({ imagePaths, ocr, pixelsPerMm = {} }) {
@@ -154,54 +163,12 @@ export async function analyzeFontSize({ imagePaths, ocr, pixelsPerMm = {} }) {
   const available = await fs.access(script).then(() => true).catch(() => false);
   if (!available) throw new Error(`OpenCV font-size script not found: ${script}`);
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "parakh-font-size-"));
-  try {
-    const payload = {
-      images: paths.map((imagePath, imageIndex) => ({ path: imagePath, imageIndex })),
-      detections,
-      pixelsPerMm: normalizePixelsPerMm(pixelsPerMm),
-    };
-    const python = process.env.FONT_SIZE_PYTHON || "python3";
-    const timeoutMs = Number(process.env.FONT_SIZE_TIMEOUT_MS || 15000);
-    const { stdout } = await execFileAsync(python, [script], {
-      input: undefined,
-      timeout: timeoutMs,
-      maxBuffer: 10 * 1024 * 1024,
-      env: process.env,
-      windowsHide: true,
-    });
-    // execFile's promisified API does not expose stdin input directly, so use a
-    // temporary JSON file plus the script's stdin contract through shell-free Python
-    // invocation below when needed.
-    void tempDir;
-    return JSON.parse(stdout);
-  } catch (error) {
-    // Retry using the Node child process stdin path. This keeps the Python utility
-    // shell-free and works consistently across Windows/Linux deployments.
-    const inputPath = path.join(tempDir, "input.json");
-    const outputPath = path.join(tempDir, "output.json");
-    const payload = JSON.stringify({
-      images: paths.map((imagePath, imageIndex) => ({ path: imagePath, imageIndex })),
-      detections,
-      pixelsPerMm: normalizePixelsPerMm(pixelsPerMm),
-    });
-    await fs.writeFile(inputPath, payload, "utf8");
-    try {
-      const python = process.env.FONT_SIZE_PYTHON || "python3";
-      const timeoutMs = Number(process.env.FONT_SIZE_TIMEOUT_MS || 15000);
-      const wrapper = `import json,sys; p=${JSON.stringify(inputPath)}; data=json.load(open(p, encoding='utf-8')); import subprocess; r=subprocess.run([sys.executable, ${JSON.stringify(script)}], input=json.dumps(data), text=True, capture_output=True, timeout=${Math.max(1, Math.floor(timeoutMs / 1000))}); sys.stdout.write(r.stdout); sys.stderr.write(r.stderr); sys.exit(r.returncode)`;
-      const result = await execFileAsync(python, ["-c", wrapper], { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024, windowsHide: true });
-      return JSON.parse(result.stdout);
-    } catch (retryError) {
-      return {
-        status: "ERROR",
-        measurements: [],
-        byField: {},
-        errors: [retryError?.stderr || retryError?.message || error?.message || "OpenCV measurement failed."],
-        engineSafe: true,
-      };
-    }
-  } finally {
-    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
-  }
+  const payload = {
+    images: paths.map((imagePath, imageIndex) => ({ path: imagePath, imageIndex })),
+    detections,
+    pixelsPerMm: normalizePixelsPerMm(pixelsPerMm),
+  };
+  const python = process.env.FONT_SIZE_PYTHON || (process.platform === "win32" ? "python" : "python3");
+  const timeoutMs = Number(process.env.FONT_SIZE_TIMEOUT_MS || 15000);
+  return runPythonJson({ python, script, payload, timeoutMs });
 }
