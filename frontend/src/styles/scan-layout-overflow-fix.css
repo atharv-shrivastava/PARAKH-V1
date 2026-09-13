@@ -26,7 +26,7 @@
   width: calc(100% - var(--parakh-sidebar-width));
   max-width: none;
   min-width: 0;
-  margin-left: var(--parakh-sidebar-width);
+  margin-left: 0;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -125,8 +125,6 @@
   min-width: 0;
 }
 
-/* The submission-review metrics are one column on narrow screens and three
-   equal, shrinkable columns when there is room. */
 .inspection-submission-review .ocr-status-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -143,12 +141,6 @@
 @media (min-width: 768px) {
   .inspection-submission-review .ocr-status-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 900px) and (min-width: 769px) {
-  :root {
-    --parakh-sidebar-width: 210px;
   }
 }
 
