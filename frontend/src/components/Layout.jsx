@@ -48,21 +48,24 @@ function Layout() {
 
   return <>
     <style>{`
-      /* The app shell owns its geometry here. The sidebar is in the grid flow,
-         so content cannot slide underneath it or depend on matching margins. */
+      /* Single source of truth for the application shell geometry. */
       .app-layout.parakh-grid-shell {
         display: grid !important;
-        grid-template-columns: 256px minmax(0, 1fr) !important;
+        grid-template-columns: minmax(256px, 256px) minmax(0, 1fr) !important;
+        grid-template-rows: minmax(0, 1fr) !important;
         width: 100% !important;
         min-width: 0 !important;
         min-height: 100vh !important;
         margin: 0 !important;
         padding: 0 !important;
-        overflow-x: hidden !important;
+        overflow-x: clip !important;
+        align-items: stretch !important;
       }
       .app-layout.parakh-grid-shell > .sidebar {
         position: sticky !important;
         top: 0 !important;
+        left: auto !important;
+        right: auto !important;
         inset: auto !important;
         grid-column: 1 !important;
         grid-row: 1 !important;
@@ -70,26 +73,47 @@ function Layout() {
         min-width: 256px !important;
         max-width: 256px !important;
         height: 100vh !important;
-        z-index: 40 !important;
+        margin: 0 !important;
         box-sizing: border-box !important;
-        overflow-y: auto !important;
         align-self: start !important;
+        z-index: 40 !important;
+        overflow-y: auto !important;
       }
       .app-layout.parakh-grid-shell > .main-content {
         grid-column: 2 !important;
         grid-row: 1 !important;
-        width: auto !important;
+        width: 100% !important;
         min-width: 0 !important;
         max-width: none !important;
         margin: 0 !important;
         padding: 34px !important;
         box-sizing: border-box !important;
         overflow-x: hidden !important;
+        position: relative !important;
+        left: auto !important;
+        right: auto !important;
       }
       .app-layout.parakh-grid-shell > .main-content > * {
+        width: 100% !important;
         min-width: 0 !important;
         max-width: 1280px !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
         box-sizing: border-box !important;
+        position: relative !important;
+        left: auto !important;
+        right: auto !important;
+      }
+      .app-layout.parakh-grid-shell > .main-content > .dashboard,
+      .app-layout.parakh-grid-shell > .main-content > .dashboard-modern,
+      .app-layout.parakh-grid-shell > .main-content > .scan-page {
+        width: 100% !important;
+        max-width: 1280px !important;
+        min-width: 0 !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        left: auto !important;
+        right: auto !important;
       }
       @media (max-width: 768px) {
         .app-layout.parakh-grid-shell {
