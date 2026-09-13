@@ -115,16 +115,24 @@ type ConditionResult = {
 function conditionResult(request: InspectionRequest, condition: RuleCondition): ConditionResult {
   const evidence = evidenceFor(request, condition.targetField);
   const conflicts = conflictsFor(request, condition.targetField);
+  const pass = (): ConditionResult => ({ status: 'PASS', missing: [], message: 'Requirement satisfied.', evidence, conflicts });
+  const unable = (): ConditionResult => ({ status: 'UNABLE_TO_VERIFY', missing: [condition.targetField], message: condition.errorMessage, evidence, conflicts });
+  const fail = (reason = condition.violationReason): ConditionResult => ({ status: 'VIOLATION', missing: [], message: condition.errorMessage, reason, evidence, conflicts });
+  const missingRequiredDeclaration = (): ConditionResult => ({
+    status: 'VIOLATION',
+    missing: [condition.targetField],
+    message: condition.errorMessage,
+    reason: `${condition.violationReason} No declaration evidence was produced by the available inspection providers.`,
+    evidence,
+    conflicts,
+  });
 
   if (conflicts.length > 0) return { status: 'UNABLE_TO_VERIFY', missing: [], message: condition.errorMessage, evidence, conflicts };
+  if (evidence.length === 0 && condition.targetField.startsWith('declarations.')) return missingRequiredDeclaration();
   if (!confidenceOk(evidence, condition.minimumConfidence)) return { status: 'UNABLE_TO_VERIFY', missing: [condition.targetField], message: condition.errorMessage, evidence, conflicts };
 
   const value = sourceValue(request, condition.targetField);
   const missing = value === undefined || value === null || value === '';
-  const pass = (): ConditionResult => ({ status: 'PASS', missing: [], message: 'Requirement satisfied.', evidence, conflicts });
-  const unable = (): ConditionResult => ({ status: 'UNABLE_TO_VERIFY', missing: [condition.targetField], message: condition.errorMessage, evidence, conflicts });
-  const fail = (reason = condition.violationReason): ConditionResult => ({ status: 'VIOLATION', missing: [], message: condition.errorMessage, reason, evidence, conflicts });
-  const missingRequiredDeclaration = (): ConditionResult => fail(`${condition.violationReason} The declaration was not established in the submitted evidence; the inspector must verify the complete package before finalizing the finding.`);
 
   switch (condition.operator) {
     case 'EXISTS': return missing ? missingRequiredDeclaration() : pass();
