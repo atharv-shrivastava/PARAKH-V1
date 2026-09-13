@@ -204,3 +204,8 @@ test('POST /api/rules-engine/evaluate rejects invalid JSON', async () => {
     headers: { 'content-type': 'application/json' },
     body: '{not-json'
   });
+
+  assert.equal(response.status, 400);
+  const result = await response.json() as { error: string };
+  assert.equal(result.error, 'Invalid JSON or inspection payload.');
+});
