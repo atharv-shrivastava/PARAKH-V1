@@ -214,11 +214,219 @@ async function localizeOcrFields(payload) {
   return payload;
 }
 
+function normalizeIdentity(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .normalize("NFKC")
+    .replace(/[₹]/g, "rs")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function identityField(ocr, key) {
+  const field = ocr?.[key];
+  if (!field || typeof field !== "object") return "";
+  return String(field.canonicalValue ?? field.value ?? field.displayValue ?? "").trim();
+}
+
+function extractViolationCodes(payload) {
+  const compliance = payload?.ocrData?.compliance || payload?.compliance;
+  const acceptedIds = Array.isArray(payload?.acceptedFindingIds)
+    ? new Set(payload.acceptedFindingIds.map(String))
+    : Array.isArray(payload?.ocrData?.complianceReview?.acceptedFindingIds)
+      ? new Set(payload.ocrData.complianceReview.acceptedFindingIds.map(String))
+      : null;
+  const findings = Array.isArray(compliance?.findings) ? compliance.findings : [];
+  const accepted = findings.filter((finding) => {
+    if (String(finding?.status || "").toUpperCase() !== "VIOLATION") return false;
+    return !acceptedIds || acceptedIds.has(String(finding?.findingId));
+  });
+  const manual = Array.isArray(payload?.ocrData?.manualViolations) ? payload.ocrData.manualViolations : [];
+  return [...accepted, ...manual]
+    .map((finding) => String(finding?.ruleCode || finding?.ruleNumber || finding?.findingId || "").trim())
+    .filter(Boolean)
+    .map(normalizeIdentity)
+    .sort();
+}
+
+function buildParakhMaterial(payload) {
+  const ocr = payload?.ocrData?.ocr || payload?.ocr || {};
+  const batchNumber = identityField(ocr, "batchNumber");
+  const gtin = String(payload?.barcode || identityField(ocr, "barcode") || "").replace(/\D/g, "");
+  const stable = {
+    brand: normalizeIdentity(payload?.brandName || identityField(ocr, "brandName") || identityField(ocr, "manufacturer")),
+    product: normalizeIdentity(payload?.productName || identityField(ocr, "productName")),
+    quantity: normalizeIdentity(payload?.netQuantity || identityField(ocr, "netQuantity")),
+    unit: normalizeIdentity(payload?.unit || identityField(ocr, "unit")),
+    mrp: normalizeIdentity(payload?.mrp || identityField(ocr, "mrp")),
+    batch: normalizeIdentity(batchNumber),
+    gtin,
+  };
+  const stableKey = [stable.gtin ? `gtin:${stable.gtin}` : "gtin:", `brand:${stable.brand}`, `product:${stable.product}`, `qty:${stable.quantity}`, `unit:${stable.unit}`, `mrp:${stable.mrp}`, `batch:${stable.batch}`].join("|");
+  return { stable, stableKey, violationCodes: extractViolationCodes(payload) };
+}
+
+async function sha256Hex(text) {
+  if (typeof crypto !== "undefined" && crypto.subtle) {
+    const bytes = new TextEncoder().encode(text);
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
+  }
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) hash = Math.imul(hash ^ text.charCodeAt(index), 16777619);
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+async function buildParakhIdentity(payload) {
+  const material = buildParakhMaterial(payload);
+  const stableFingerprint = await sha256Hex(material.stableKey);
+  const violationDigest = await sha256Hex(material.violationCodes.join("|") || "no-violations");
+  const parakhDigest = await sha256Hex(`${material.stableKey}|violations:${material.violationCodes.join(",")}`);
+  return {
+    version: 1,
+    parakhId: `PRK-${parakhDigest.slice(0, 4).toUpperCase()}-${parakhDigest.slice(4, 8).toUpperCase()}-${parakhDigest.slice(8, 12).toUpperCase()}`,
+    stableFingerprint,
+    violationDigest: violationDigest.slice(0, 12).toUpperCase(),
+    gtin: material.stable.gtin || null,
+    mrp: material.stable.mrp || null,
+    batchNumber: material.stable.batch || null,
+    violationCodes: material.violationCodes,
+  };
+}
+
+function duplicateCandidateMatches(product, current) {
+  if (!product || !current) return false;
+  const stored = (() => { try { return product.ocrData ? JSON.parse(product.ocrData) : null; } catch { return null; } })();
+  const identity = stored?.parakhIdentity;
+  if (identity?.stableFingerprint && identity.stableFingerprint === current.stableFingerprint) return true;
+  const normalizeDigits = (value) => String(value ?? "").replace(/\D/g, "");
+  const gtin = normalizeDigits(current.gtin);
+  const productGtin = normalizeDigits(product.barcode);
+  if (gtin && productGtin && gtin !== productGtin) return false;
+  const currentBatch = normalizeIdentity(current.batchNumber);
+  const storedBatch = normalizeIdentity(identity?.batchNumber);
+  if (currentBatch || storedBatch) {
+    if (!currentBatch || !storedBatch || currentBatch !== storedBatch) return false;
+  }
+  const sameText = (a, b) => normalizeIdentity(a) === normalizeIdentity(b);
+  const sameMrp = Number.isFinite(Number(current.mrp)) && product.mrp != null ? Math.abs(Number(current.mrp) - Number(product.mrp)) < 0.01 : sameText(current.mrp, product.mrp);
+  return sameText(current.productName, product.productName)
+    && sameText(current.brandName, product.brandName)
+    && sameText(current.netQuantity, product.netQuantity)
+    && sameText(current.unit, product.unit)
+    && sameMrp;
+}
+
+async function checkAlreadyRegistered(payload) {
+  const material = buildParakhMaterial({ ...payload, ocrData: { ...(payload?.ocrData || {}), ocr: payload?.ocr || payload?.ocrData?.ocr || {} } });
+  const productName = String(material.stable.product || "").trim();
+  if (productName.length < 3) return null;
+  const query = encodeURIComponent(String(payload?.productName || identityField(payload?.ocr || payload?.ocrData?.ocr, "productName") || productName).trim());
+  const response = await fetch(`${API_URL}/products/history?query=${query}&limit=50`, { headers: authHeaders(), cache: "no-store" });
+  if (!response.ok) return null;
+  const products = await response.json().catch(() => []);
+  const current = {
+    ...material.stable,
+    productName: payload?.productName || identityField(payload?.ocr || payload?.ocrData?.ocr, "productName"),
+    brandName: payload?.brandName || identityField(payload?.ocr || payload?.ocrData?.ocr, "brandName") || identityField(payload?.ocr || payload?.ocrData?.ocr, "manufacturer"),
+    netQuantity: payload?.netQuantity || identityField(payload?.ocr || payload?.ocrData?.ocr, "netQuantity"),
+    unit: payload?.unit || identityField(payload?.ocr || payload?.ocrData?.ocr, "unit"),
+    mrp: payload?.mrp || identityField(payload?.ocr || payload?.ocrData?.ocr, "mrp"),
+    batchNumber: identityField(payload?.ocr || payload?.ocrData?.ocr, "batchNumber"),
+    gtin: String(payload?.barcode || identityField(payload?.ocr || payload?.ocrData?.ocr, "barcode") || "").replace(/\D/g, ""),
+  };
+  const match = Array.isArray(products) ? products.find((product) => duplicateCandidateMatches(product, current)) : null;
+  if (!match) return null;
+  let parakhId = null;
+  try {
+    const detailResponse = await fetch(`${API_URL}/products/${encodeURIComponent(match.id)}`, { headers: authHeaders(), cache: "no-store" });
+    if (detailResponse.ok) {
+      const detail = await detailResponse.json().catch(() => ({}));
+      const stored = detail?.ocrData ? (typeof detail.ocrData === "string" ? JSON.parse(detail.ocrData) : detail.ocrData) : null;
+      parakhId = stored?.parakhIdentity?.parakhId || null;
+    }
+  } catch {}
+  return { product: match, parakhId };
+}
+
+function showImageMismatchPopup(payload) {
+  if (typeof document === "undefined") return;
+  if (document.querySelector("[data-parakh-image-mismatch-popup]")) return;
+
+  const overlay = document.createElement("div");
+  overlay.dataset.parakhImageMismatchPopup = "true";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(3,7,18,.72);backdrop-filter:blur(8px);";
+
+  const card = document.createElement("div");
+  card.style.cssText = "width:min(520px,100%);border:1px solid rgba(255,255,255,.14);border-radius:20px;background:#111827;color:#fff;box-shadow:0 24px 80px rgba(0,0,0,.45);padding:28px;";
+
+  const title = document.createElement("h2");
+  title.textContent = "Images belong to different products";
+  title.style.cssText = "margin:0 0 10px;font-size:22px;line-height:1.2;";
+
+  const body = document.createElement("p");
+  body.textContent = payload?.error?.message || "The uploaded package images do not appear to show the same product. Analysis has been stopped. Upload images from the same package and try again.";
+  body.style.cssText = "margin:0;color:#cbd5e1;line-height:1.6;font-size:15px;";
+
+  const hint = document.createElement("p");
+  hint.textContent = "Example: front of Kurkure + back of Lays will be rejected.";
+  hint.style.cssText = "margin:14px 0 22px;color:#94a3b8;font-size:13px;";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Close";
+  button.style.cssText = "border:0;border-radius:12px;padding:11px 18px;background:#fff;color:#111827;font-weight:700;cursor:pointer;";
+  button.addEventListener("click", () => overlay.remove());
+
+  card.append(title, body, hint, button);
+  overlay.appendChild(card);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+function showDuplicateProductPopup(payload) {
+  if (typeof document === "undefined") return;
+  if (document.querySelector("[data-parakh-duplicate-product-popup]")) return;
+  const overlay = document.createElement("div");
+  overlay.dataset.parakhDuplicateProductPopup = "true";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(3,7,18,.72);backdrop-filter:blur(8px);";
+  const card = document.createElement("div");
+  card.style.cssText = "width:min(520px,100%);border:1px solid rgba(255,255,255,.14);border-radius:20px;background:#111827;color:#fff;box-shadow:0 24px 80px rgba(0,0,0,.45);padding:28px;";
+  const title = document.createElement("h2");
+  title.textContent = "Product already registered";
+  title.style.cssText = "margin:0 0 10px;font-size:22px;line-height:1.2;";
+  const body = document.createElement("p");
+  body.textContent = payload?.error?.message || "This product is already registered in PARAKH. Rescanning the same registered product has been blocked.";
+  body.style.cssText = "margin:0;color:#cbd5e1;line-height:1.6;font-size:15px;";
+  const hint = document.createElement("p");
+  hint.textContent = payload?.error?.parakhId ? `Existing PARAKH ID: ${payload.error.parakhId}` : "The existing inspection record can be opened from Reports or Products.";
+  hint.style.cssText = "margin:14px 0 22px;color:#94a3b8;font-size:13px;font-weight:600;";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Close";
+  button.style.cssText = "border:0;border-radius:12px;padding:11px 18px;background:#fff;color:#111827;font-weight:700;cursor:pointer;";
+  button.addEventListener("click", () => overlay.remove());
+  card.append(title, body, hint, button);
+  overlay.appendChild(card);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
 async function sanitizeOcrResponse(response) {
   if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) return response;
   try {
     const payload = await response.clone().json();
+    if (payload?.error?.code === "IMAGE_MISMATCH") showImageMismatchPopup(payload);
     if (payload?.result && typeof payload.result === "object") {
+      try {
+        const duplicate = await checkAlreadyRegistered(payload.result);
+        if (duplicate) {
+          const parakhId = duplicate.parakhId || "the existing registration";
+          showDuplicateProductPopup({ error: { code: "PARAKH_DUPLICATE", parakhId, message: `This product is already registered in PARAKH as ${parakhId}. Rescanning the same registered product is blocked.` } });
+          return new Response(JSON.stringify({ error: { code: "PARAKH_DUPLICATE", parakhId, message: `This product is already registered in PARAKH as ${parakhId}. Rescanning the same registered product is blocked.` } }), { status: 409, headers: { "Content-Type": "application/json" } });
+        }
+      } catch {}
       await localizeOcrFields(payload);
       delete payload.result.barcode;
       delete payload.result.gtin;
@@ -252,8 +460,17 @@ export async function apiFetch(url, options = {}) {
   }
   const isRulesEngine = resolvedUrl.includes("/api/ocr/evaluate-structured");
   const isOcrAnalyze = resolvedUrl.includes("/api/ocr/analyze");
+  const isProductRegistration = method === "POST" && resolvedUrl.endsWith("/api/products");
   let body = isOcrAnalyze ? await optimizeOcrBody(options.body) : options.body;
   if (isRulesEngine) body = sanitizeRulesEngineBody(body);
+  if (isProductRegistration && typeof body === "string") {
+    try {
+      const payload = JSON.parse(body);
+      const parsedOcr = payload?.ocrData && typeof payload.ocrData === "object" ? payload.ocrData : payload?.ocrData ? JSON.parse(payload.ocrData) : {};
+      const identity = await buildParakhIdentity({ ...payload, ocrData: parsedOcr });
+      body = JSON.stringify({ ...payload, ocrData: { ...parsedOcr, parakhIdentity: identity } });
+    } catch {}
+  }
   const response = await fetch(resolvedUrl, {
     ...options,
     cache: dataKartLookup ? "no-store" : options.cache,

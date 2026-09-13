@@ -23,6 +23,15 @@ function parseImages(product) {
   return product?.imageUrl?.startsWith("data:image/") ? [product.imageUrl] : [];
 }
 
+function getParakhIdentity(product) {
+  try {
+    const stored = typeof product?.ocrData === "string" ? JSON.parse(product.ocrData) : product?.ocrData;
+    return stored?.parakhIdentity || null;
+  } catch {
+    return null;
+  }
+}
+
 function drawSectionHeader(doc, title, y) {
   doc.setFillColor(245, 247, 250);
   doc.roundedRect(40, y - 15, 515, 28, 4, 4, "F");
@@ -67,6 +76,8 @@ export async function downloadProductPdf({ product, user, violations = [], penal
   const shop = product?.inspections?.[0]?.shop;
   const inspection = product?.inspections?.[0];
   const images = parseImages(product);
+  const parakhIdentity = getParakhIdentity(product);
+  const parakhId = parakhIdentity?.parakhId || "Not assigned";
   const path = [
     product?.category?.parent?.parent?.parent,
     product?.category?.parent?.parent,
@@ -85,6 +96,10 @@ export async function downloadProductPdf({ product, user, violations = [], penal
   doc.setFontSize(10);
   doc.setTextColor(100, 116, 139);
   doc.text("PRODUCT INSPECTION REPORT", left, 69);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(30, 41, 59);
+  doc.text(`PARAKH ID: ${parakhId}`, right, 69, { align: "right" });
   doc.setFont("helvetica", "normal");
   doc.text(`Generated: ${new Date().toLocaleString()}`, right, 52, { align: "right" });
 
@@ -210,6 +225,6 @@ export async function downloadProductPdf({ product, user, violations = [], penal
   doc.text("Official Stamp (optional)", 330, y + 140);
 
   addPageFooter(doc);
-  const filename = `PARAKH-${String(product.productName || "product").replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "") || "product"}.pdf`;
+  const filename = `${parakhId === "Not assigned" ? "PARAKH" : parakhId}-${String(product.productName || "product").replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "") || "product"}.pdf`;
   doc.save(filename);
 }
