@@ -1,5 +1,5 @@
 // domain/types.ts
-export type EvaluationStatus = 'PASS' | 'VIOLATION' | 'UNABLE_TO_VERIFY' | 'NOT_APPLICABLE';
+export type EvaluationStatus = 'PASS' | 'VIOLATION' | 'UNABLE_TO_VERIFY' | 'NOT_APPLICABLE' | 'OUT_OF_SCOPE';
 export type InspectionContextType = 'physical_package' | 'ecommerce_listing' | 'both';
 export type SeverityLevel = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 export type RuleLifecycleStatus = 'ACTIVE' | 'SUPERSEDED' | 'DRAFT' | 'REQUIRES_LEGAL_REVIEW' | 'DISABLED';
@@ -23,5 +23,5 @@ export interface EquipmentEvidence { retailWeighingMachine?:boolean; checkWeighe
 export interface InspectionResults { correctedAverageNetQuantity?:number; declaredNetQuantity?:number; packagesAboveMpeBelowTwiceMpe?:number; maxPackagesAboveMpeBelowTwiceMpe?:number; anyPackageAboveTwiceMpe?:boolean; mandatoryDeclarationsComplete?:boolean; }
 export interface InspectionRequest { inspectionId:string; productId:string; inspectionDate:string; context:InspectionContextType; productMetadata:ProductMetadata; evidence:EvidenceItem[]; measurements?:PhysicalMeasurement; packaging?:PackagingEvidence; transaction?:TransactionEvidence; equipment?:EquipmentEvidence; visualFlags?:Record<string, unknown>; evidenceConflicts?:EvidenceConflict[]; declarations?:Record<string,unknown>; administrative?:Record<string,unknown>; inspectionResults?:InspectionResults; }
 export interface Finding { findingId:string; ruleId:string; ruleCode:string; ruleNumber:string; subclause?:string; ruleVersion:number; status:EvaluationStatus; field?:string; message:string; violationReason?:string; evidenceUsed?:EvidenceItem[]; missingEvidence?:string[]; conflicts?:EvidenceConflict[]; legalReferences:LegalSourceReference[]; severity:SeverityLevel; requiresLegalReview:boolean; }
-export interface InspectionSummary { totalRulesEvaluated:number; passed:number; violations:number; unableToVerify:number; notApplicable:number; }
+export interface InspectionSummary { totalRulesEvaluated:number; passed:number; violations:number; unableToVerify:number; notApplicable:number; outOfScope:number; }
 export interface OverallInspectionResult { inspectionId:string; productId:string; inspectionDate:string; overallStatus:EvaluationStatus; engineVersion:string; ruleSetVersion:string; summary:InspectionSummary; findings:Finding[]; auditHash:string; }
