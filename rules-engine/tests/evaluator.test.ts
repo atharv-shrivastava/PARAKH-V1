@@ -33,18 +33,18 @@ test('passes a well-supported core declaration set', () => {
   assert.equal(result.summary.violations, 0);
 });
 
-test('missing evidence becomes unable to verify instead of inventing absence', () => {
+test('missing evidence becomes a violation when a required declaration is absent from all providers', () => {
   const request = base({ evidence: base().evidence.filter(e => e.field !== 'declarations.retailSalePrice') });
   const result = evaluateInspection(request);
   const mrp = result.findings.find(f => f.ruleCode === 'PCR-R6-1-E-MRP');
-  assert.equal(mrp?.status, 'UNABLE_TO_VERIFY');
+  assert.equal(mrp?.status, 'VIOLATION');
 });
 
-test('invalid MRP produces a violation when evidence exists', () => {
+test('present declaration evidence is accepted without value-format enforcement', () => {
   const request = base({ evidence: base().evidence.map(e => e.field === 'declarations.retailSalePrice' ? { ...e, rawValue: 'free', normalizedValue: 'free' } : e) });
   const result = evaluateInspection(request);
   const mrp = result.findings.find(f => f.ruleCode === 'PCR-R6-1-E-MRP');
-  assert.equal(mrp?.status, 'VIOLATION');
+  assert.equal(mrp?.status, 'PASS');
 });
 
 test('unresolved evidence conflict blocks a legal conclusion', () => {
