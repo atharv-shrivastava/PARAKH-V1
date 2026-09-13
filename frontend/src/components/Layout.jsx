@@ -49,14 +49,14 @@ function Layout() {
 
   useEffect(() => {
     const syncReviewState = () => {
-      setScanReviewReady(
-        location.pathname === "/scan" &&
-        Boolean(window.sessionStorage.getItem("parakhDeclarationEvidence")),
-      );
+      const hasAnalyzedImages = Boolean(document.querySelector(".scan-page .ocr-fields-grid"));
+      setScanReviewReady(location.pathname === "/scan" && hasAnalyzedImages);
     };
+
     syncReviewState();
-    window.addEventListener("parakh:declaration-evidence", syncReviewState);
-    return () => window.removeEventListener("parakh:declaration-evidence", syncReviewState);
+    const observer = new MutationObserver(syncReviewState);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
   }, [location.pathname]);
 
   function logout() { clearSession(); navigate("/login", { replace: true }); }
