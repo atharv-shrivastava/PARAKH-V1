@@ -301,19 +301,16 @@ async function checkAlreadyRegistered(payload) {
   };
   const match = Array.isArray(products) ? products.find((product) => duplicateCandidateMatches(product, current)) : null;
   if (!match) return null;
-  let stored = null;
-  try { stored = match.ocrData ? JSON.parse(match.ocrData) : null; } catch {}
-  return { product: match, parakhId: stored?.parakhIdentity?.parakhId || null };
-}
-
-function prepareProductRegistrationBody(body) {
-  if (typeof body !== "string") return body;
+  let parakhId = null;
   try {
-    const payload = JSON.parse(body);
-    if (!payload || typeof payload !== "object") return body;
-    const methodPayload = { ...payload, ocrData: { ...(payload.ocrData && typeof payload.ocrData === "object" ? payload.ocrData : {}), ...(payload.ocrData && typeof payload.ocrData === "string" ? (() => { try { return JSON.parse(payload.ocrData); } catch { return {}; } })() : {}) } };
-    return methodPayload;
-  } catch { return body; }
+    const detailResponse = await fetch(`${API_URL}/products/${encodeURIComponent(match.id)}`, { headers: authHeaders(), cache: "no-store" });
+    if (detailResponse.ok) {
+      const detail = await detailResponse.json().catch(() => ({}));
+      const stored = detail?.ocrData ? (typeof detail.ocrData === "string" ? JSON.parse(detail.ocrData) : detail.ocrData) : null;
+      parakhId = stored?.parakhIdentity?.parakhId || null;
+    }
+  } catch {}
+  return { product: match, parakhId };
 }
 
 function showImageMismatchPopup(payload) {
@@ -351,6 +348,34 @@ function showImageMismatchPopup(payload) {
   document.body.appendChild(overlay);
 }
 
+function showDuplicateProductPopup(payload) {
+  if (typeof document === "undefined") return;
+  if (document.querySelector("[data-parakh-duplicate-product-popup]")) return;
+  const overlay = document.createElement("div");
+  overlay.dataset.parakhDuplicateProductPopup = "true";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(3,7,18,.72);backdrop-filter:blur(8px);";
+  const card = document.createElement("div");
+  card.style.cssText = "width:min(520px,100%);border:1px solid rgba(255,255,255,.14);border-radius:20px;background:#111827;color:#fff;box-shadow:0 24px 80px rgba(0,0,0,.45);padding:28px;";
+  const title = document.createElement("h2");
+  title.textContent = "Product already registered";
+  title.style.cssText = "margin:0 0 10px;font-size:22px;line-height:1.2;";
+  const body = document.createElement("p");
+  body.textContent = payload?.error?.message || "This product is already registered in PARAKH. Rescanning the same registered product has been blocked.";
+  body.style.cssText = "margin:0;color:#cbd5e1;line-height:1.6;font-size:15px;";
+  const hint = document.createElement("p");
+  hint.textContent = payload?.error?.parakhId ? `Existing PARAKH ID: ${payload.error.parakhId}` : "The existing inspection record can be opened from Reports or Products.";
+  hint.style.cssText = "margin:14px 0 22px;color:#94a3b8;font-size:13px;font-weight:600;";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Close";
+  button.style.cssText = "border:0;border-radius:12px;padding:11px 18px;background:#fff;color:#111827;font-weight:700;cursor:pointer;";
+  button.addEventListener("click", () => overlay.remove());
+  card.append(title, body, hint, button);
+  overlay.appendChild(card);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
 async function sanitizeOcrResponse(response) {
   if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) return response;
   try {
@@ -361,7 +386,7 @@ async function sanitizeOcrResponse(response) {
         const duplicate = await checkAlreadyRegistered(payload.result);
         if (duplicate) {
           const parakhId = duplicate.parakhId || "the existing registration";
-          showImageMismatchPopup({ error: { message: `This product is already registered in PARAKH as ${parakhId}. Rescanning the same registered product is blocked.` } });
+          showDuplicateProductPopup({ error: { code: "PARAKH_DUPLICATE", parakhId, message: `This product is already registered in PARAKH as ${parakhId}. Rescanning the same registered product is blocked.` } });
           return new Response(JSON.stringify({ error: { code: "PARAKH_DUPLICATE", parakhId, message: `This product is already registered in PARAKH as ${parakhId}. Rescanning the same registered product is blocked.` } }), { status: 409, headers: { "Content-Type": "application/json" } });
         }
       } catch {}
