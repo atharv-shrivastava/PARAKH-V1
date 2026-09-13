@@ -8,6 +8,8 @@ import crypto from "node:crypto";
 import { authenticate } from "../middleware/auth.js";
 import { analyzeFontSize } from "./fontSizeAnalyzer.js";
 import { verifyPackageImageConsistency } from "./imageConsistencyVerifier.js";
+import { interpretPackageWithGemini } from "./geminiPackageInterpreter.js";
+import { interpretOcrFields } from "./ocrFieldInterpreter.js";
 
 const router = express.Router();
 router.use(authenticate);
@@ -70,6 +72,50 @@ function attachFontSizeAnalysis(result, fontSizeAnalysis) {
   };
 }
 
+function imagePayload(files) {
+  return (files || []).map((file) => ({
+    base64: file.buffer.toString("base64"),
+    mediaType: file.mimetype || "image/jpeg",
+  }));
+}
+
+async function runSemanticMapping({ files, rapidResult, categoryOptions }) {
+  const detections = Array.isArray(rapidResult?.declarationEvidence) ? rapidResult.declarationEvidence : [];
+  const rawText = String(rapidResult?.rawText || "");
+
+  const startedAt = Date.now();
+  const gemini = await interpretPackageWithGemini({
+    images: imagePayload(files),
+    detections,
+    rawText,
+    categoryOptions,
+    signal: AbortSignal.timeout(Number(process.env.GEMINI_SEMANTIC_TIMEOUT_MS || 30000)),
+  });
+
+  if (gemini.enabled && gemini.fields && typeof gemini.fields === "object") {
+    return {
+      fields: gemini.fields,
+      suggestedCategory: gemini.suggestedCategory || null,
+      enabled: true,
+      provider: gemini.provider || "gemini",
+      model: gemini.model || null,
+      error: null,
+      timingMs: Number(gemini.timingMs) || (Date.now() - startedAt),
+    };
+  }
+
+  const deterministic = interpretOcrFields({ detections, rawText })?.fields || {};
+  return {
+    fields: deterministic,
+    suggestedCategory: null,
+    enabled: false,
+    provider: "deterministic",
+    model: null,
+    error: gemini.reason || "Gemini semantic interpretation was unavailable.",
+    timingMs: Date.now() - startedAt,
+  };
+}
+
 router.post("/analyze", upload.array("images"), async (req, res) => {
   const files = req.files || [];
   let temp = null;
@@ -91,6 +137,17 @@ router.post("/analyze", upload.array("images"), async (req, res) => {
     }
 
     const rapid = await callRapidOcr({ files, categoryOptions });
+    const semantic = await runSemanticMapping({ files, rapidResult: rapid.result, categoryOptions });
+    const semanticResult = {
+      ...(rapid.result || {}),
+      ...(semantic.fields || {}),
+      aiSuggestedCategory: semantic.suggestedCategory,
+      aiSemanticEnabled: semantic.enabled,
+      aiSemanticError: semantic.error,
+      semanticProvider: semantic.provider,
+      semanticModel: semantic.model,
+    };
+
     const tempResult = await writeTempImages(files);
     temp = tempResult;
 
@@ -106,7 +163,7 @@ router.post("/analyze", upload.array("images"), async (req, res) => {
     try {
       fontSizeAnalysis = await analyzeFontSize({
         imagePaths: temp.paths,
-        ocr: rapid.result,
+        ocr: semanticResult,
         pixelsPerMm,
       });
     } catch (error) {
@@ -119,13 +176,24 @@ router.post("/analyze", upload.array("images"), async (req, res) => {
       };
     }
 
-    const result = attachFontSizeAnalysis(rapid.result, fontSizeAnalysis);
+    const result = attachFontSizeAnalysis(semanticResult, fontSizeAnalysis);
+    const timingMs = Number(rapid.timingMs) || Number(rapid.engineTimingMs) || 0;
     res.json({
       ...rapid,
       result,
       imageConsistency,
       fontSizeAnalysis,
       fontSizeProvider: "opencv",
+      aiSemanticEnabled: semantic.enabled,
+      aiSemanticError: semantic.error,
+      aiSuggestedCategory: semantic.suggestedCategory,
+      semanticProvider: semantic.provider,
+      semanticModel: semantic.model,
+      timing: {
+        rapidOcrMs: timingMs,
+        semanticMs: Number(semantic.timingMs) || 0,
+        totalMs: timingMs + (Number(semantic.timingMs) || 0),
+      },
     });
   } catch (error) {
     console.error("[ocr:analyze]", error);
