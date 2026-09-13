@@ -20,6 +20,13 @@ import {
 
 export const ENGINE_VERSION = '0.2.1';
 
+function canonical(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => canonical(item)).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`).join(',')}}`;
+}
+
 function getPath(input: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((value, part) => {
     if (value == null || typeof value !== 'object') return undefined;
