@@ -11,6 +11,7 @@ body,
   min-height: 100vh;
 }
 
+/* Desktop/tablet: sidebar stays fixed while only the page content scrolls. */
 .sidebar {
   position: fixed;
   inset: 0 auto 0 0;
@@ -18,8 +19,7 @@ body,
   width: 240px;
   height: 100vh;
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -30,6 +30,8 @@ body,
   align-items: stretch;
   gap: 6px;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar .navigation a {
@@ -42,6 +44,7 @@ body,
   padding: 16px 8px 0;
   display: grid;
   gap: 6px;
+  flex: 0 0 auto;
 }
 
 .sidebar-user strong,
