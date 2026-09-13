@@ -29,7 +29,9 @@ const upload = multer({
 
 function ext(mediaType) { return mediaType === "image/png" ? "png" : mediaType === "image/webp" ? "webp" : "jpg"; }
 function text(value) { return String(value ?? "").replace(/\s+/g, " ").trim(); }
-function normalizeComparable(value) { return text(value).toLowerCase().replace(/[^a-z0-9@.+-]+/g, " ").replace(/\s+/g, " ").trim(); }
+function normalizeComparable(value) { return text(value).normalize("NFKC").toLowerCase().replace(/[₹$€£]/g, "").replace(/[^\p{L}\p{N}@.+-]+/gu, " ").replace(/\s+/g, " ").trim(); }
+function numberTokens(value) { return (text(value).replace(/,/g, "").match(/\d+(?:\.\d+)?/g) || []); }
+function looksLikeDate(value) { return /^(?:\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}|\d{1,2}[\/-]\d{2,4}|(?:19|20)\d{2}|\d{2}[\/-]\d{2})$/.test(text(value)); }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
 const MOBILE_RE = /(?:\+?91[\s-]?)?[6-9]\d{9}\b/;
@@ -72,23 +74,62 @@ async function runRapid(images) {
   return { provider: "rapidocr", model: "RapidOCR", ...normalizeEvidence(data), timingMs: Date.now() - startedAt };
 }
 
-function candidateEvidence(field, evidence) {
-  const raw = [field?.value, field?.raw, field?.evidence].map(normalizeComparable).filter(Boolean);
-  if (!raw.length) return null;
+function evidenceScore(key, field, item) {
+  const candidate = normalizeComparable(item?.text);
+  const value = normalizeComparable(field?.value);
+  const raw = normalizeComparable(field?.raw);
+  const evidence = normalizeComparable(field?.evidence);
+  if (!candidate) return 0;
+
+  if (["consumerCareEmail"].includes(key)) return EMAIL_RE.test(candidate) && value && candidate.includes(value) ? 1 : EMAIL_RE.test(candidate) && !value ? 0.8 : 0;
+  if (["consumerCarePhone"].includes(key)) {
+    const wanted = value.replace(/\D/g, "");
+    const candidateDigits = candidate.replace(/\D/g, "");
+    return wanted && candidateDigits.includes(wanted) ? 1 : MOBILE_RE.test(candidate) || TOLL_FREE_RE.test(candidate) ? 0.45 : 0;
+  }
+  if (["mrp", "netQuantity"].includes(key)) {
+    const wanted = numberTokens(value)[0];
+    if (!wanted) return 0;
+    const actual = numberTokens(candidate);
+    if (!actual.includes(wanted)) return 0;
+    if (key === "netQuantity") {
+      const hasUnit = /\b(?:mg|mcg|g|gm|kg|ml|l|ltr|cl|oz|lb|pcs?|pieces?|units?|nos)\b/i.test(candidate);
+      return hasUnit ? 1 : 0.55;
+    }
+    if (/\b(?:m\.?r\.?p\.?|maximum\s+retail\s+price|retail\s+price)\b/i.test(candidate) || /(?:₹|rs\.?|inr)/i.test(candidate)) return 1;
+    return 0.45;
+  }
+  if (["dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate"].includes(key)) {
+    if (!looksLikeDate(value)) return 0;
+    const wantedNumbers = numberTokens(value);
+    const actualNumbers = numberTokens(candidate);
+    const matchingNumbers = wantedNumbers.filter((n) => actualNumbers.includes(n));
+    if (matchingNumbers.length >= Math.min(2, wantedNumbers.length)) return 1;
+    return 0;
+  }
+
+  const variants = [value, raw, evidence].filter(Boolean);
+  let best = 0;
+  for (const needle of variants) {
+    if (candidate === needle || candidate.includes(needle) || needle.includes(candidate)) best = Math.max(best, 1);
+    const tokens = new Set(needle.split(" ").filter((token) => token.length > 1));
+    if (tokens.size) {
+      const matches = [...tokens].filter((token) => candidate.includes(token)).length;
+      best = Math.max(best, matches / tokens.size);
+    }
+  }
+  if (["manufacturerAddress", "packerAddress", "marketerAddress", "importerAddress"].includes(key)) best = Math.min(best, 0.92);
+  return best;
+}
+
+function candidateEvidence(key, field, evidence) {
   let best = null;
   for (const item of evidence) {
-    const candidate = normalizeComparable(item.text);
-    if (!candidate) continue;
-    const exact = raw.some((needle) => candidate === needle || candidate.includes(needle) || needle.includes(candidate));
-    const tokenOverlap = raw.reduce((score, needle) => {
-      const tokens = new Set(needle.split(" ").filter((token) => token.length > 1));
-      const matches = [...tokens].filter((token) => candidate.includes(token)).length;
-      return Math.max(score, tokens.size ? matches / tokens.size : 0);
-    }, 0);
-    const score = exact ? 1 : tokenOverlap;
+    const score = evidenceScore(key, field, item);
+    if (score <= 0) continue;
     if (!best || score > best.score || (score === best.score && item.confidence > best.item.confidence)) best = { item, score };
   }
-  return best?.score >= 0.5 ? best.item : null;
+  return best;
 }
 
 function regexEvidence(pattern, evidence) {
@@ -106,31 +147,15 @@ function regexRepairFields(fields, evidence, rawText) {
   const emailCandidate = regexEvidence(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i, evidence) || regexEvidence(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i, fallbackEvidence);
   const currentEmail = text(next.consumerCareEmail?.value);
   if (!EMAIL_RE.test(currentEmail) && emailCandidate) {
-    next.consumerCareEmail = {
-      ...(next.consumerCareEmail || {}), value: emailCandidate.value, displayValue: emailCandidate.value,
-      raw: emailCandidate.item.text, evidence: emailCandidate.item.text,
-      confidence: Math.max(Number(next.consumerCareEmail?.confidence || 0), Number(emailCandidate.item.confidence || 0) * 0.92), status: "found",
-      imageIndex: Number.isInteger(emailCandidate.item.imageIndex) ? emailCandidate.item.imageIndex : 0,
-      evidenceIndex: Number.isInteger(emailCandidate.item.evidenceIndex) ? emailCandidate.item.evidenceIndex : -1,
-      boundingBox: emailCandidate.item.boundingBox || null, imageWidth: emailCandidate.item.imageWidth || null, imageHeight: emailCandidate.item.imageHeight || null,
-      source: "REGEX_OCR_REPAIR", verification: "email-format-validated",
-    };
+    next.consumerCareEmail = { ...(next.consumerCareEmail || {}), value: emailCandidate.value, displayValue: emailCandidate.value, raw: emailCandidate.item.text, evidence: emailCandidate.item.text, confidence: Math.max(Number(next.consumerCareEmail?.confidence || 0), Number(emailCandidate.item.confidence || 0) * 0.92), status: "found", imageIndex: Number.isInteger(emailCandidate.item.imageIndex) ? emailCandidate.item.imageIndex : 0, evidenceIndex: Number.isInteger(emailCandidate.item.evidenceIndex) ? emailCandidate.item.evidenceIndex : -1, boundingBox: emailCandidate.item.boundingBox || null, imageWidth: emailCandidate.item.imageWidth || null, imageHeight: emailCandidate.item.imageHeight || null, source: "REGEX_OCR_REPAIR", verification: "email-format-validated" };
   } else if (currentEmail && !EMAIL_RE.test(currentEmail)) {
     next.consumerCareEmail = { ...(next.consumerCareEmail || {}), value: null, displayValue: "", status: "ambiguous", verification: "rejected-invalid-email" };
   }
 
   const currentPhone = text(next.consumerCarePhone?.value);
   const phoneCandidate = regexEvidence(MOBILE_RE, evidence) || regexEvidence(TOLL_FREE_RE, evidence) || regexEvidence(MOBILE_RE, fallbackEvidence) || regexEvidence(TOLL_FREE_RE, fallbackEvidence);
-  if (currentPhone && !MOBILE_RE.test(currentPhone) && !TOLL_FREE_RE.test(currentPhone) && phoneCandidate) {
-    next.consumerCarePhone = {
-      ...(next.consumerCarePhone || {}), value: phoneCandidate.value, displayValue: phoneCandidate.value,
-      raw: phoneCandidate.item.text, evidence: phoneCandidate.item.text,
-      confidence: Math.max(Number(next.consumerCarePhone?.confidence || 0), Number(phoneCandidate.item.confidence || 0) * 0.92), status: "found",
-      imageIndex: Number.isInteger(phoneCandidate.item.imageIndex) ? phoneCandidate.item.imageIndex : 0,
-      evidenceIndex: Number.isInteger(phoneCandidate.item.evidenceIndex) ? phoneCandidate.item.evidenceIndex : -1,
-      boundingBox: phoneCandidate.item.boundingBox || null, imageWidth: phoneCandidate.item.imageWidth || null, imageHeight: phoneCandidate.item.imageHeight || null,
-      source: "REGEX_OCR_REPAIR", verification: "phone-format-validated",
-    };
+  if ((!currentPhone || (!MOBILE_RE.test(currentPhone) && !TOLL_FREE_RE.test(currentPhone))) && phoneCandidate) {
+    next.consumerCarePhone = { ...(next.consumerCarePhone || {}), value: phoneCandidate.value, displayValue: phoneCandidate.value, raw: phoneCandidate.item.text, evidence: phoneCandidate.item.text, confidence: Math.max(Number(next.consumerCarePhone?.confidence || 0), Number(phoneCandidate.item.confidence || 0) * 0.92), status: "found", imageIndex: Number.isInteger(phoneCandidate.item.imageIndex) ? phoneCandidate.item.imageIndex : 0, evidenceIndex: Number.isInteger(phoneCandidate.item.evidenceIndex) ? phoneCandidate.item.evidenceIndex : -1, boundingBox: phoneCandidate.item.boundingBox || null, imageWidth: phoneCandidate.item.imageWidth || null, imageHeight: phoneCandidate.item.imageHeight || null, source: "REGEX_OCR_REPAIR", verification: "phone-format-validated" };
   }
 
   const numericRepaired = repairNumericFields(next, evidence, rawText);
@@ -143,10 +168,27 @@ function regexRepairFields(fields, evidence, rawText) {
 function resolveEvidenceForFields(fields, evidence) {
   return Object.fromEntries(Object.entries(fields || {}).map(([key, field]) => {
     if (!field || field.status !== "found") return [key, field];
-    const provided = Number.isInteger(field.evidenceIndex) && evidence[field.evidenceIndex] ? evidence[field.evidenceIndex] : null;
-    const item = provided || candidateEvidence(field, evidence);
+    const providedIndex = Number.isInteger(field.evidenceIndex) ? field.evidenceIndex : -1;
+    const provided = providedIndex >= 0 && evidence[providedIndex] ? evidence[providedIndex] : null;
+    const providedScore = provided ? evidenceScore(key, field, provided) : 0;
+    const best = candidateEvidence(key, field, evidence);
+    const item = providedScore >= 0.75 ? provided : best?.item || provided;
+    const matchedScore = item === provided ? providedScore : best?.score || 0;
     if (!item) return [key, field];
-    return [key, { ...field, evidence: item.text, imageIndex: item.imageIndex, evidenceIndex: item.evidenceIndex, boundingBox: item.boundingBox || null, imageWidth: item.imageWidth || null, imageHeight: item.imageHeight || null, rapidOcrConfidence: item.confidence }];
+    const confidenceMultiplier = matchedScore >= 0.9 ? 1 : matchedScore >= 0.75 ? 0.95 : matchedScore >= 0.5 ? 0.82 : 0.65;
+    return [key, {
+      ...field,
+      evidence: item.text,
+      imageIndex: item.imageIndex,
+      evidenceIndex: item.evidenceIndex,
+      boundingBox: item.boundingBox || null,
+      imageWidth: item.imageWidth || null,
+      imageHeight: item.imageHeight || null,
+      rapidOcrConfidence: item.confidence,
+      ocrEvidenceQuality: matchedScore,
+      confidence: Math.round(Math.max(0, Math.min(1, Number(field.confidence || 0) * confidenceMultiplier)) * 1000) / 1000,
+      verification: matchedScore >= 0.75 ? (field.verification || "ocr-evidence-confirmed") : "ocr-evidence-weak",
+    }];
   }));
 }
 
@@ -235,4 +277,5 @@ async function analyze(req, res) {
 }
 
 router.post("/analyze", authenticate, upload.fields([{ name: "images", maxCount: config.maxImages }, { name: "barcodeImage", maxCount: 1 }]), analyze);
+
 export default router;
