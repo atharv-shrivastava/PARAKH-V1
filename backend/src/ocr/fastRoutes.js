@@ -9,6 +9,7 @@ import { authenticate } from "../middleware/auth.js";
 import { analyzeFontSize } from "./fontSizeAnalyzer.js";
 import { verifyPackageImageConsistency } from "./imageConsistencyVerifier.js";
 import { interpretPackageWithGemini } from "./geminiPackageInterpreter.js";
+import { interpretPackageWithGrok } from "./grokPackageInterpreter.js";
 import { interpretOcrFields } from "./ocrFieldInterpreter.js";
 
 const router = express.Router();
@@ -79,39 +80,174 @@ function imagePayload(files) {
   }));
 }
 
+const ORIGINAL_EXTRACTION_INSTRUCTION = "Perform a flawless, granular OCR extraction on this product packet label. Your sole objective is to capture and classify text for an automated Legal Metrology Rule Engine. Do not assess compliance, do not summarize, and do not omit any words. Extract the exact strings verbatim as they appear on the package, preserving all units (g, kg, ml), symbols (₹, Rs.), punctuation, prefixes, and suffixes. If a component is missing from the packaging, leave its string empty. If the label contains a specific block of text like Consumer Care, extract the entire block into the 'full_raw_text' field, and then break down its individual substrings into the nested fields.";
+
+function buildAiRawText(rawText, regexFields) {
+  return [
+    rawText,
+    "",
+    "REGEX / DETERMINISTIC OCR STRUCTURE (supporting evidence only; do not treat as unquestionable truth):",
+    JSON.stringify(regexFields || {}, null, 2),
+    "",
+    "ORIGINAL EXTRACTION INSTRUCTION:",
+    ORIGINAL_EXTRACTION_INSTRUCTION,
+  ].join("\n");
+}
+
+function fieldFound(field) {
+  return field?.status === "found" && String(field?.value ?? "").trim() !== "";
+}
+
+function numericValue(value) {
+  const match = String(value ?? "").replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : null;
+}
+
+const NUMERIC_FIELDS = new Set([
+  "mrp", "netQuantity", "unit", "dateOfManufacture", "dateOfPacking", "bestBefore",
+  "expiryDate", "batchNumber", "consumerCarePhone", "consumerCareEmail", "fssaiLicenseNumber",
+]);
+
+function normalizeComparable(value) {
+  return String(value ?? "").toLowerCase().replace(/[^\p{L}\p{N}.]+/gu, " ").replace(/\s+/g, " ").trim();
+}
+
+function valuesAgree(a, b, key) {
+  if (!fieldFound(a) || !fieldFound(b)) return false;
+  if (key === "mrp" || key === "netQuantity") {
+    const left = numericValue(a.value);
+    const right = numericValue(b.value);
+    return left != null && right != null && left === right;
+  }
+  return normalizeComparable(a.value) === normalizeComparable(b.value);
+}
+
+function cloneField(field) {
+  return field && typeof field === "object" ? { ...field } : null;
+}
+
+function reconcileAiFields({ regexFields, gemini, grok }) {
+  const output = {};
+  const allKeys = new Set([
+    ...Object.keys(regexFields || {}),
+    ...Object.keys(gemini?.fields || {}),
+    ...Object.keys(grok?.fields || {}),
+  ]);
+
+  for (const key of allKeys) {
+    const regex = cloneField(regexFields?.[key]);
+    const g = cloneField(gemini?.fields?.[key]);
+    const x = cloneField(grok?.fields?.[key]);
+    const gf = fieldFound(g);
+    const xf = fieldFound(x);
+    const rf = fieldFound(regex);
+
+    if (gf && xf && valuesAgree(g, x, key)) {
+      const winner = Number(g.confidence || 0) >= Number(x.confidence || 0) ? g : x;
+      output[key] = {
+        ...winner,
+        source: "GEMINI_GROK_AGREEMENT",
+        verification: rf && valuesAgree(winner, regex, key) ? "AI_AGREES_WITH_REGEX_OCR" : "AI_CROSS_MODEL_AGREEMENT",
+        modelAgreement: true,
+      };
+      continue;
+    }
+
+    if (rf && gf && xf && valuesAgree(regex, g, key) && valuesAgree(regex, x, key)) {
+      output[key] = {
+        ...regex,
+        source: "REGEX_GEMINI_GROK_AGREEMENT",
+        verification: "ALL_SOURCES_AGREE",
+        modelAgreement: true,
+      };
+      continue;
+    }
+
+    if (rf) {
+      const aiMatches = (gf && valuesAgree(regex, g, key) ? 1 : 0) + (xf && valuesAgree(regex, x, key) ? 1 : 0);
+      const aiDisagreements = (gf ? (valuesAgree(regex, g, key) ? 0 : 1) : 0) + (xf ? (valuesAgree(regex, x, key) ? 0 : 1) : 0);
+      if (aiMatches > 0 && aiDisagreements === 0) {
+        output[key] = { ...regex, source: "REGEX_CONFIRMED_BY_AI", verification: "REGEX_AND_AI_AGREE", modelAgreement: true };
+        continue;
+      }
+      if (NUMERIC_FIELDS.has(key) || key === "productName" || key === "brandName") {
+        output[key] = { ...regex, source: "REGEX_OCR_PRIORITY", verification: aiDisagreements > 0 ? "AI_CONFLICTS_WITH_REGEX" : "DETERMINISTIC_OCR_FALLBACK", modelAgreement: false };
+        continue;
+      }
+    }
+
+    if (gf && xf) {
+      output[key] = Number(g.confidence || 0) >= Number(x.confidence || 0) ? { ...g, source: "GEMINI_HIGHER_CONFIDENCE" } : { ...x, source: "GROK_HIGHER_CONFIDENCE" };
+      continue;
+    }
+
+    if (gf) {
+      output[key] = { ...g, source: "GEMINI_ONLY" };
+      continue;
+    }
+    if (xf) {
+      output[key] = { ...x, source: "GROK_ONLY" };
+      continue;
+    }
+    if (rf) output[key] = { ...regex, source: "REGEX_OCR_FALLBACK" };
+    else if (g || x || regex) output[key] = g || x || regex;
+  }
+
+  return output;
+}
+
+function chooseSuggestedCategory(geminiSuggestion, grokSuggestion, regexFields) {
+  const geminiId = geminiSuggestion?.categoryId;
+  const grokId = grokSuggestion?.categoryId;
+  if (geminiId && grokId && String(geminiId) === String(grokId)) return geminiSuggestion;
+  if (geminiSuggestion?.confidence >= (grokSuggestion?.confidence || 0)) return geminiSuggestion || grokSuggestion || null;
+  return grokSuggestion || geminiSuggestion || null;
+}
+
 async function runSemanticMapping({ files, rapidResult, categoryOptions }) {
   const detections = Array.isArray(rapidResult?.declarationEvidence) ? rapidResult.declarationEvidence : [];
   const rawText = String(rapidResult?.rawText || "");
-
+  const regexFields = interpretOcrFields({ detections, rawText })?.fields || {};
+  const aiRawText = buildAiRawText(rawText, regexFields);
+  const images = imagePayload(files);
   const startedAt = Date.now();
-  const gemini = await interpretPackageWithGemini({
-    images: imagePayload(files),
-    detections,
-    rawText,
-    categoryOptions,
-    signal: AbortSignal.timeout(Number(process.env.GEMINI_SEMANTIC_TIMEOUT_MS || 30000)),
-  });
 
-  if (gemini.enabled && gemini.fields && typeof gemini.fields === "object") {
-    return {
-      fields: gemini.fields,
-      suggestedCategory: gemini.suggestedCategory || null,
-      enabled: true,
-      provider: gemini.provider || "gemini",
-      model: gemini.model || null,
-      error: null,
-      timingMs: Number(gemini.timingMs) || (Date.now() - startedAt),
-    };
-  }
+  const results = await Promise.allSettled([
+    interpretPackageWithGemini({
+      images,
+      detections,
+      rawText: aiRawText,
+      categoryOptions,
+      signal: AbortSignal.timeout(Number(process.env.GEMINI_SEMANTIC_TIMEOUT_MS || 30000)),
+    }),
+    interpretPackageWithGrok({
+      images,
+      detections,
+      rawText: aiRawText,
+      categoryOptions,
+      signal: AbortSignal.timeout(Number(process.env.GROK_SEMANTIC_TIMEOUT_MS || 30000)),
+    }),
+  ]);
 
-  const deterministic = interpretOcrFields({ detections, rawText })?.fields || {};
+  const gemini = results[0].status === "fulfilled" ? results[0].value : { enabled: false, provider: "gemini", reason: results[0].reason?.message || "Gemini failed." };
+  const grok = results[1].status === "fulfilled" ? results[1].value : { enabled: false, provider: "grok", reason: results[1].reason?.message || "Grok failed." };
+
+  const fields = reconcileAiFields({ regexFields, gemini, grok });
+  const suggestedCategory = chooseSuggestedCategory(gemini.suggestedCategory, grok.suggestedCategory, regexFields);
+  const errors = [gemini, grok].filter((item) => !item?.enabled && item?.reason).map((item) => `${item.provider}: ${item.reason}`);
+
   return {
-    fields: deterministic,
-    suggestedCategory: null,
-    enabled: false,
-    provider: "deterministic",
-    model: null,
-    error: gemini.reason || "Gemini semantic interpretation was unavailable.",
+    fields,
+    suggestedCategory,
+    enabled: Boolean(gemini.enabled || grok.enabled),
+    providers: {
+      gemini: { enabled: Boolean(gemini.enabled), model: gemini.model || null, timingMs: Number(gemini.timingMs) || 0, error: gemini.reason || null },
+      grok: { enabled: Boolean(grok.enabled), model: grok.model || null, timingMs: Number(grok.timingMs) || 0, error: grok.reason || null },
+    },
+    provider: gemini.enabled && grok.enabled ? "gemini+grok" : gemini.enabled ? "gemini" : grok.enabled ? "grok" : "deterministic",
+    error: errors.length ? errors.join(" | ") : null,
+    regexFields,
+    rawTextForAi: aiRawText,
     timingMs: Date.now() - startedAt,
   };
 }
@@ -145,7 +281,8 @@ router.post("/analyze", upload.array("images"), async (req, res) => {
       aiSemanticEnabled: semantic.enabled,
       aiSemanticError: semantic.error,
       semanticProvider: semantic.provider,
-      semanticModel: semantic.model,
+      semanticProviders: semantic.providers,
+      regexMappedFields: semantic.regexFields,
     };
 
     const tempResult = await writeTempImages(files);
@@ -177,7 +314,9 @@ router.post("/analyze", upload.array("images"), async (req, res) => {
     }
 
     const result = attachFontSizeAnalysis(semanticResult, fontSizeAnalysis);
-    const timingMs = Number(rapid.timingMs) || Number(rapid.engineTimingMs) || 0;
+    const rapidMs = Number(rapid.timingMs) || Number(rapid.engineTimingMs) || 0;
+    const geminiMs = Number(semantic.providers?.gemini?.timingMs) || 0;
+    const grokMs = Number(semantic.providers?.grok?.timingMs) || 0;
     res.json({
       ...rapid,
       result,
@@ -188,11 +327,15 @@ router.post("/analyze", upload.array("images"), async (req, res) => {
       aiSemanticError: semantic.error,
       aiSuggestedCategory: semantic.suggestedCategory,
       semanticProvider: semantic.provider,
-      semanticModel: semantic.model,
+      semanticProviders: semantic.providers,
+      regexMappedFields: semantic.regexFields,
       timing: {
-        rapidOcrMs: timingMs,
-        semanticMs: Number(semantic.timingMs) || 0,
-        totalMs: timingMs + (Number(semantic.timingMs) || 0),
+        rapidOcrMs: rapidMs,
+        geminiMs,
+        grokMs,
+        semanticMs: Math.max(geminiMs, grokMs),
+        totalMs: rapidMs + Math.max(geminiMs, grokMs),
+        parallelAi: true,
       },
     });
   } catch (error) {
