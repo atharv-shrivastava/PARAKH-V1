@@ -1,0 +1,119 @@
+:root{--parakh-sidebar-width:256px}
+
+html,body,#root{width:100%;min-width:0}
+#root{min-height:100vh;overflow-x:clip}
+
+/* Final shell geometry owner. This intentionally overrides legacy layout rules. */
+.app-layout,
+.parakh-app-shell{
+  display:grid!important;
+  grid-template-columns:var(--parakh-sidebar-width) minmax(0,1fr)!important;
+  grid-template-rows:minmax(0,1fr)!important;
+  width:100%!important;
+  min-width:0!important;
+  min-height:100vh!important;
+  margin:0!important;
+  padding:0!important;
+  gap:0!important;
+  overflow-x:clip!important;
+  align-items:stretch!important;
+}
+
+.app-layout>.sidebar,
+.parakh-app-shell>.parakh-sidebar,
+.parakh-app-shell>.sidebar{
+  position:sticky!important;
+  top:0!important;
+  left:auto!important;
+  right:auto!important;
+  inset:auto!important;
+  grid-column:1!important;
+  grid-row:1!important;
+  width:var(--parakh-sidebar-width)!important;
+  min-width:var(--parakh-sidebar-width)!important;
+  max-width:var(--parakh-sidebar-width)!important;
+  height:100vh!important;
+  min-height:100vh!important;
+  margin:0!important;
+  box-sizing:border-box!important;
+  align-self:start!important;
+  justify-self:stretch!important;
+  overflow-y:auto!important;
+  overflow-x:hidden!important;
+  transform:none!important;
+}
+
+.app-layout>.main-content,
+.parakh-app-shell>.parakh-main,
+.parakh-app-shell>.main-content{
+  grid-column:2!important;
+  grid-row:1!important;
+  display:block!important;
+  width:auto!important;
+  min-width:0!important;
+  max-width:none!important;
+  min-height:100vh!important;
+  margin:0!important;
+  padding:34px!important;
+  box-sizing:border-box!important;
+  overflow-x:hidden!important;
+  overflow-y:visible!important;
+  align-self:stretch!important;
+  justify-self:stretch!important;
+}
+
+.app-layout>.main-content>*,
+.parakh-main>* ,
+.parakh-app-shell>.main-content>*{
+  display:block;
+  width:100%!important;
+  max-width:1280px!important;
+  min-width:0!important;
+  margin-left:auto!important;
+  margin-right:auto!important;
+  box-sizing:border-box!important;
+  position:relative;
+  left:auto!important;
+  right:auto!important;
+}
+
+@media(max-width:768px){
+  .app-layout,
+  .parakh-app-shell{
+    grid-template-columns:minmax(0,1fr)!important;
+    grid-template-rows:auto minmax(0,1fr)!important;
+  }
+
+  .app-layout>.sidebar,
+  .parakh-app-shell>.parakh-sidebar,
+  .parakh-app-shell>.sidebar{
+    grid-column:1!important;
+    grid-row:1!important;
+    width:100%!important;
+    min-width:0!important;
+    max-width:none!important;
+    height:auto!important;
+    min-height:0!important;
+    max-height:none!important;
+  }
+
+  .app-layout>.main-content,
+  .parakh-app-shell>.parakh-main,
+  .parakh-app-shell>.main-content{
+    grid-column:1!important;
+    grid-row:2!important;
+    width:100%!important;
+    min-width:0!important;
+    min-height:0!important;
+    padding:18px 12px 30px!important;
+  }
+
+  .app-layout>.main-content>*,
+  .parakh-main>* ,
+  .parakh-app-shell>.main-content>*{
+    width:100%!important;
+    max-width:100%!important;
+    margin-left:0!important;
+    margin-right:0!important;
+  }
+}
