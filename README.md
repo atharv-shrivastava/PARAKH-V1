@@ -32,6 +32,55 @@ Final Compliance Report
 
 The system supports multi-image package inspection. OCR provides text and spatial evidence, Gemini performs semantic interpretation, GTIN/DataKart can provide registered-product reference evidence, and the deterministic Rules Engine evaluates configured Legal Metrology requirements. Human review remains part of the intended decision flow.
 
+## Local development services
+
+Run each service in a separate PowerShell terminal.
+
+### 1. Rules Engine
+
+```powershell
+cd C:\parakh-copy\rules-engine
+pnpm install
+pnpm run build
+pnpm start
+```
+
+The Rules Engine runs its TypeScript build first and then starts the compiled server.
+
+### 2. OCR Service
+
+```powershell
+cd C:\parakh-copy\ocr-service
+.\venv\Scripts\Activate.ps1
+python -m uvicorn main:app --host 0.0.0.0 --port 8081
+```
+
+RapidOCR is the primary OCR service used by PARAKH.
+
+### 3. Backend API
+
+```powershell
+cd C:\parakh-copy\backend
+pnpm install
+pnpm run dev
+```
+
+Or for the normal start command:
+
+```powershell
+pnpm start
+```
+
+### 4. Frontend
+
+```powershell
+cd C:\parakh-copy\frontend
+pnpm install
+pnpm run dev
+```
+
+The Vite frontend normally runs on `http://localhost:5173`.
+
 ## Current platform
 
 PARAKH is a responsive web application for mobile, tablet, laptop, and desktop.
