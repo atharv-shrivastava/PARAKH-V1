@@ -2,7 +2,8 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { clearSession, getUser, apiFetch } from "../lib/auth";
 import { useLanguage } from "./LanguageProvider";
-import ScanVisualCheck from "./ScanVisualCheck";
+import Rule23Assessment from "./Rule23Assessment";
+import InspectionSubmissionGate from "./InspectionSubmissionGate";
 
 const API_URL = "http://localhost:5000/api";
 const NAV_ITEMS = [
@@ -44,10 +45,24 @@ function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { t } = useLanguage();
+  const [scanReviewReady, setScanReviewReady] = useState(false);
+
+  useEffect(() => {
+    const syncReviewState = () => {
+      setScanReviewReady(
+        location.pathname === "/scan" &&
+        Boolean(window.sessionStorage.getItem("parakhDeclarationEvidence")),
+      );
+    };
+    syncReviewState();
+    window.addEventListener("parakh:declaration-evidence", syncReviewState);
+    return () => window.removeEventListener("parakh:declaration-evidence", syncReviewState);
+  }, [location.pathname]);
+
   function logout() { clearSession(); navigate("/login", { replace: true }); }
 
-  return <div className="app-layout">
-    <aside className="sidebar">
+  return <div className="app-layout flex min-h-screen w-full bg-background">
+    <aside className="sidebar fixed inset-y-0 left-0 z-40 w-64 border-r bg-card">
       <div className="logo"><h2>PARAKH</h2><span className="logo-full">Packaged Article Regulatory Assessment &amp; Knowledge Hub</span></div>
       <nav className="navigation">
         <div className="sidebar-section-label">Workspace</div>
@@ -68,12 +83,13 @@ function Layout() {
       <div className="sidebar-user"><strong>{user?.name || "User"}</strong><span>{user?.role || "USER"}</span><button type="button" onClick={logout}><span className="nav-icon" aria-hidden="true">↪</span>{t("signOut")}</button></div>
     </aside>
 
-    <div className="sidebar-spacer" aria-hidden="true" />
-
-    <main className="main-content">
+    <main className="main-content flex-1 min-w-0 pl-64 p-6 overflow-x-hidden">
       <BatchWarningStrip />
       <Outlet />
-      {location.pathname === "/scan" && <ScanVisualCheck />}
+      {location.pathname === "/scan" && scanReviewReady && <>
+        <Rule23Assessment />
+        <InspectionSubmissionGate />
+      </>}
     </main>
   </div>;
 }
