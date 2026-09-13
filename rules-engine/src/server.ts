@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { evaluateInspectionCompleteWithCurrentRules } from './engine/complete-evaluator.js';
+import { evaluateInspectionCompleteWithCurrentRulesV2 } from './engine/complete-evaluator-v2.js';
 import type { InspectionRequest } from '../domain/types.js';
 import { loadActiveRules } from './store/rules-store.js';
 
@@ -26,7 +26,7 @@ const server = createServer(async (req, res) => {
 
     const rules = await loadActiveRules();
     return json(res, 200, {
-      ...evaluateInspectionCompleteWithCurrentRules(request, rules),
+      ...evaluateInspectionCompleteWithCurrentRulesV2(request, rules),
       rulesSource: process.env.DATABASE_URL ? 'database' : 'built_in_fallback',
       activeRuleCount: rules.length,
     });
