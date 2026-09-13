@@ -7,6 +7,7 @@ import {
 } from "./semanticPackageCommon.js";
 import { interpretOcrFields } from "./ocrFieldInterpreter.js";
 import { repairNumericFields } from "./numericFieldRepair.js";
+import { preprocessImagesForAI } from "./imagePreprocessor.js";
 
 const OCR_PRIORITY_FIELDS = new Set([
   "mrp",
@@ -92,10 +93,12 @@ export async function interpretPackageWithGemini({ images = [], detections = [],
     console.warn(`[ocr:gemini-semantic] SKIPPED model=${model} reason=GEMINI_API_KEY is not configured.`);
     return { enabled: false, provider: "gemini", model, reason: "GEMINI_API_KEY is not configured." };
   }
+
   const ai = new GoogleGenAI({ apiKey });
   const prompt = buildSemanticPrompt({ detections, rawText, categoryOptions });
+  const preparedImages = await preprocessImagesForAI(images);
   const contents = [
-    ...images.map(({ base64, mediaType }) => ({ inlineData: { mimeType: mediaType, data: base64 } })),
+    ...preparedImages.map(({ base64, mediaType }) => ({ inlineData: { mimeType: mediaType, data: base64 } })),
     { text: prompt },
   ];
 
@@ -114,7 +117,7 @@ export async function interpretPackageWithGemini({ images = [], detections = [],
   try {
     if (signal?.aborted) throw new DOMException("The request was aborted.", "AbortError");
 
-    console.log(`[ocr:gemini-semantic] START model=${model} fields=${Object.keys(buildSemanticSchema(categoryOptions).properties || {}).length}`);
+    console.log(`[ocr:gemini-semantic] START model=${model} preparedImages=${preparedImages.length}`);
     const startedAt = Date.now();
     const response = await request();
     const elapsedMs = Date.now() - startedAt;
