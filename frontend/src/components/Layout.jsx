@@ -67,7 +67,10 @@ function Layout() {
       </nav>
       <div className="sidebar-user"><strong>{user?.name || "User"}</strong><span>{user?.role || "USER"}</span><button type="button" onClick={logout}><span className="nav-icon" aria-hidden="true">↪</span>{t("signOut")}</button></div>
     </aside>
-    <main className="main-content pl-0 md:ml-60 md:pl-0">
+
+    <div className="sidebar-spacer" aria-hidden="true" />
+
+    <main className="main-content">
       <BatchWarningStrip />
       <Outlet />
       {location.pathname === "/scan" && <ScanVisualCheck />}
