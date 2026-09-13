@@ -1,30 +1,43 @@
-/* Layout spacing + mobile navigation polish. Visual only. */
+/* Layout spacing + mobile navigation polish. Keep shell geometry consistent with the fixed sidebar. */
 
 .app-layout {
   min-height: 100vh;
-  display: flex;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
-/* Keep the sidebar in the flex layout and let the main area consume the rest. */
 .sidebar {
+  position: fixed !important;
+  inset: 0 auto 0 0;
   flex: 0 0 240px;
   width: 240px !important;
   min-width: 240px;
+  height: 100vh !important;
+  min-height: 0 !important;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .main-content {
   box-sizing: border-box;
-  flex: 1 1 auto;
-  min-width: 0;
-  width: auto !important;
+  width: calc(100% - 240px) !important;
   max-width: none !important;
-  margin: 0 !important;
+  min-width: 0;
+  margin: 0 0 0 240px !important;
   padding: 26px 24px 40px !important;
-  justify-content: flex-start !important;
+  display: block !important;
   overflow-x: hidden;
 }
 
-/* Scan-only containment. Dashboard pages are intentionally left alone. */
+.main-content > * {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Scan-only containment. */
 .scan-page,
 .scan-review,
 .rule23-assessment,
@@ -72,7 +85,15 @@
 }
 
 @media (max-width: 1100px) and (min-width: 769px) {
+  .sidebar {
+    width: 210px !important;
+    min-width: 210px;
+    flex-basis: 210px;
+  }
+
   .main-content {
+    width: calc(100% - 210px) !important;
+    margin-left: 210px !important;
     padding: 22px 18px 32px !important;
   }
 }
@@ -80,11 +101,15 @@
 @media (max-width: 768px) {
   .app-layout {
     display: block !important;
+    width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
   }
 
   .sidebar {
     position: sticky !important;
     top: 0;
+    inset: auto;
     width: 100% !important;
     min-width: 0 !important;
     flex: none;
@@ -96,6 +121,7 @@
     border-bottom: 1px solid var(--theme-border, rgba(148,163,184,.22));
     box-shadow: 0 8px 24px rgba(15,23,42,.08);
     backdrop-filter: blur(16px);
+    overflow: visible;
   }
 
   .logo {
@@ -161,7 +187,7 @@
     width: 100% !important;
     margin: 0 !important;
     padding: 18px 12px 28px !important;
-    display: block !important;
+    min-width: 0;
     overflow-x: hidden;
   }
 
