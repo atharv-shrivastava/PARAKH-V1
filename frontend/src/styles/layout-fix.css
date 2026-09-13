@@ -1,11 +1,11 @@
-/* Final layout rules for the dashboard shell. */
+/* Final layout owner for the dashboard shell and shared page controls. */
 
 .app-layout {
   min-height: 100vh;
   width: 100%;
 }
 
-/* Desktop: the sidebar stays pinned to the viewport. Only its navigation area scrolls. */
+/* Desktop: viewport-pinned sidebar with its own scrolling navigation. */
 .sidebar {
   position: fixed;
   inset: 0 auto 0 0;
@@ -16,6 +16,7 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
 }
 
 .sidebar .navigation {
@@ -38,6 +39,227 @@
   margin: 0 0 0 240px;
   padding: 24px;
   overflow-x: hidden;
+  box-sizing: border-box;
+}
+
+/* Scan upload controls. */
+.scan-upload-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.scan-file-button,
+.scan-upload-actions .primary-button,
+.scan-upload-actions .secondary-button,
+.scan-upload-actions .secondary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  min-width: 150px;
+  padding: 11px 18px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  box-sizing: border-box;
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform .16s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease;
+}
+
+.scan-file-button {
+  background: var(--modern-accent, var(--theme-primary, #2563eb));
+  color: #fff;
+  border-color: var(--modern-accent, var(--theme-primary, #2563eb));
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--modern-accent, #2563eb) 20%, transparent);
+}
+
+.scan-file-button:hover,
+.scan-upload-actions .primary-button:hover,
+.scan-upload-actions .secondary-button:hover,
+.scan-upload-actions .secondary-action:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 9px 20px rgba(15, 23, 42, .12);
+}
+
+.scan-file-button:focus-visible,
+.scan-upload-actions button:focus-visible,
+.scan-upload-actions a:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--modern-accent, #2563eb) 22%, transparent);
+  outline-offset: 2px;
+}
+
+.scan-upload-actions input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Product/category cards. */
+.products-page {
+  width: 100%;
+  max-width: 1180px;
+  min-width: 0;
+}
+
+.products-page .product-categories {
+  width: 100%;
+  min-width: 0;
+  margin-top: 28px;
+  padding: 22px;
+  border: 1px solid var(--modern-border, var(--theme-border, #e5e7eb));
+  border-radius: 16px;
+  background: var(--modern-surface, var(--theme-surface, #fff));
+  box-shadow: var(--modern-shadow, 0 8px 24px rgba(15,23,42,.06));
+  box-sizing: border-box;
+}
+
+.products-page .category-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+  min-width: 0;
+}
+
+.products-page .category-item {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.products-page .category-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 146px;
+  padding: 18px;
+  border: 1px solid var(--modern-border, #e5e7eb);
+  border-radius: 14px;
+  background: var(--modern-surface, #fff);
+  color: var(--modern-text, #111827);
+  box-sizing: border-box;
+  text-decoration: none;
+  overflow: hidden;
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+
+.products-page .category-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--modern-accent, #2563eb) 42%, var(--modern-border, #e5e7eb));
+  box-shadow: 0 10px 24px rgba(15, 23, 42, .08);
+}
+
+.products-page .category-card:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--modern-accent, #2563eb) 18%, transparent);
+  outline-offset: 2px;
+}
+
+.products-page .category-card h3 {
+  margin: 0 0 8px;
+  color: var(--modern-text, #111827);
+  font-size: 17px;
+  line-height: 1.3;
+  letter-spacing: -.01em;
+  overflow-wrap: anywhere;
+}
+
+.products-page .category-card p {
+  margin: 0;
+  color: var(--modern-muted, #667085);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.products-page .category-item > .delete-category-button {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid #ef4444;
+  border-radius: 9px;
+  background: transparent;
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.products-page .category-item > .delete-category-button:hover {
+  background: #fef2f2;
+}
+
+.products-page .category-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.products-page .category-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid var(--modern-border, #e5e7eb);
+  border-radius: 14px;
+  background: var(--modern-soft, #f8fafc);
+}
+
+.products-page .category-form input:not([type="checkbox"]) {
+  min-width: 0;
+}
+
+.products-page .category-form button {
+  min-height: 42px;
+  padding: 10px 16px;
+  border-radius: 9px;
+  background: var(--modern-accent, #2563eb);
+  color: #fff;
+  border: 0;
+  font-weight: 750;
+}
+
+.products-page .category-form label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: max-content;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.products-page .category-form label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--modern-accent, #2563eb);
+}
+
+/* Keep product rows and filters inside the content column. */
+.products-page .filter-panel,
+.products-page .product-list,
+.products-page .product-row,
+.products-page .bulk-toolbar {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 1100px) {
+  .products-page .category-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
@@ -85,5 +307,42 @@
     width: 100%;
     margin: 0;
     padding: 16px;
+  }
+
+  .scan-upload-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scan-file-button,
+  .scan-upload-actions .primary-button,
+  .scan-upload-actions .secondary-button,
+  .scan-upload-actions .secondary-action {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .products-page .category-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .products-page .category-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .products-page .category-form label {
+    min-width: 0;
+  }
+
+  .products-page .category-form button {
+    width: 100%;
+  }
+}
+
+@media print {
+  .products-page .category-toolbar,
+  .products-page .category-form,
+  .products-page .delete-category-button {
+    display: none !important;
   }
 }
