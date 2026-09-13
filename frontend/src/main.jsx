@@ -25,6 +25,7 @@ import "./styles/scan-theme.css";
 import "./styles/obsidian-contrast-fix.css";
 import "./styles/css-audit.css";
 import "./styles/global-contrast-fix.css";
+import "./styles/scan-layout-overflow-fix.css";
 import "./lib/localBarcodeDetector";
 import { installComplianceStatusDrilldown } from "./lib/complianceStatusDrilldown";
 import { applyTheme, getTheme } from "./lib/theme";
