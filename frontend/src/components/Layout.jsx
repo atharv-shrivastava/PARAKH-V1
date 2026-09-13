@@ -4,6 +4,7 @@ import { clearSession, getUser, apiFetch } from "../lib/auth";
 import { useLanguage } from "./LanguageProvider";
 import Rule23Assessment from "./Rule23Assessment";
 import InspectionSubmissionGate from "./InspectionSubmissionGate";
+import ProductImageConsistencyGuard from "./ProductImageConsistencyGuard";
 
 const API_URL = "http://localhost:5000/api";
 const NAV_ITEMS = [
@@ -86,6 +87,7 @@ function Layout() {
     <main className="main-content flex-1 min-w-0 pl-64 p-6 overflow-x-hidden">
       <BatchWarningStrip />
       <Outlet />
+      {location.pathname === "/scan" && <ProductImageConsistencyGuard />}
       {location.pathname === "/scan" && scanReviewReady && <>
         <Rule23Assessment />
         <InspectionSubmissionGate />
