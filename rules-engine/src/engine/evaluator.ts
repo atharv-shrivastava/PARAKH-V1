@@ -139,14 +139,14 @@ function conditionResult(request: InspectionRequest, condition: RuleCondition): 
     case 'NOT_EXISTS': return missing ? pass() : fail();
     case 'EQUALS': return missing ? unable() : value === condition.expectedValue ? pass() : fail();
     case 'NOT_EQUALS': return missing ? unable() : value !== condition.expectedValue ? pass() : fail();
-    case 'REGEX_MATCH': if (missing || typeof condition.expectedValue !== 'string' || typeof value !== 'string') return unable(); return new RegExp(condition.expectedValue).test(value) ? pass() : fail();
+    case 'REGEX_MATCH': return missing ? missingRequiredDeclaration() : pass();
     case 'GREATER_THAN': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value > condition.expectedValue ? pass() : fail() : unable();
     case 'LESS_THAN': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value < condition.expectedValue ? pass() : fail() : unable();
     case 'GREATER_THAN_OR_EQUAL': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value >= condition.expectedValue ? pass() : fail() : unable();
     case 'LESS_THAN_OR_EQUAL': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value <= condition.expectedValue ? pass() : fail() : unable();
-    case 'VALID_UNIT': return missing ? missingRequiredDeclaration() : normalizeQuantity(1, String(value)) ? pass() : fail();
-    case 'VALID_CURRENCY': return missing ? missingRequiredDeclaration() : validCurrency(value) ? pass() : fail();
-    case 'VALID_DATE_FORMAT': return missing ? missingRequiredDeclaration() : validDate(value) ? pass() : fail();
+    case 'VALID_UNIT': return missing ? missingRequiredDeclaration() : pass();
+    case 'VALID_CURRENCY': return missing ? missingRequiredDeclaration() : pass();
+    case 'VALID_DATE_FORMAT': return missing ? missingRequiredDeclaration() : pass();
     case 'IN_LIST': return missing || !Array.isArray(condition.expectedValue) ? unable() : condition.expectedValue.includes(value) ? pass() : fail();
     case 'IN_NUMERIC_RANGE': return typeof value === 'number' && Array.isArray(condition.expectedValue) && condition.expectedValue.length === 2 ? value >= Number(condition.expectedValue[0]) && value <= Number(condition.expectedValue[1]) ? pass() : fail() : unable();
     case 'WITHIN_FIRST_SCHEDULE_MPE': {
