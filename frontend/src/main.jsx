@@ -3,8 +3,6 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import AutoTranslate from "./components/AutoTranslate";
 import StartupSplash from "./components/StartupSplash";
-import Rule23Assessment from "./components/Rule23Assessment";
-import InspectionSubmissionGate from "./components/InspectionSubmissionGate";
 import "./styles/global.css";
 import "./styles/components.css";
 import "./styles/theme.css";
@@ -41,8 +39,6 @@ createRoot(document.getElementById("root")).render(
       <StartupSplash>
         <AutoTranslate />
         <App />
-        <Rule23Assessment />
-        <InspectionSubmissionGate />
       </StartupSplash>
     </LanguageProvider>
   </StrictMode>
