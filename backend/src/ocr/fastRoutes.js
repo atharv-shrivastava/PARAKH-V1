@@ -6,7 +6,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { authenticate } from "../middleware/auth.js";
 import { getOcrConfig } from "./config.js";
-import { interpretOcrFields } from "./ocrFieldInterpreter.js";
 import { repairNumericFields } from "./numericFieldRepair.js";
 import { interpretPackageWithGemini } from "./geminiPackageInterpreter.js";
 import { interpretPackageWithGrok } from "./grokPackageInterpreter.js";
@@ -28,16 +27,13 @@ const upload = multer({
   limits: { files: config.maxImages + 1, fileSize: config.maxImageSizeBytes },
 });
 
-function ext(mediaType) {
-  return mediaType === "image/png" ? "png" : mediaType === "image/webp" ? "webp" : "jpg";
-}
+function ext(mediaType) { return mediaType === "image/png" ? "png" : mediaType === "image/webp" ? "webp" : "jpg"; }
 function text(value) { return String(value ?? "").replace(/\s+/g, " ").trim(); }
 function normalizeComparable(value) { return text(value).toLowerCase().replace(/[^a-z0-9@.+-]+/g, " ").replace(/\s+/g, " ").trim(); }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
 const MOBILE_RE = /(?:\+?91[\s-]?)?[6-9]\d{9}\b/;
 const TOLL_FREE_RE = /\b1\d{2,3}[\s-]?\d{6,8}\b/;
-const DATE_RE = /\b(?:0?[1-9]|[12]\d|3[01])[\/-](?:0?[1-9]|1[0-2])[\/-](?:\d{2}|\d{4})\b|\b(?:0?[1-9]|1[0-2])[\/-](?:\d{2}|\d{4})\b|\b(?:19|20)\d{2}\b/i;
 
 function normalizeEvidence(data) {
   const raw = Array.isArray(data?.result?.declarationEvidence) ? data.result.declarationEvidence : [];
@@ -64,22 +60,16 @@ async function readImages(files) {
 async function runRapid(images) {
   const form = new FormData();
   const ocrUrl = process.env.NODE_ENV === "production" ? (process.env.RAPID_OCR_URL || "http://localhost:8081") : "http://localhost:8081";
-  images.forEach((image, index) => {
-    form.append("images", new Blob([Buffer.from(image.base64, "base64")], { type: image.mediaType }), `parakh-${index + 1}.${ext(image.mediaType)}`);
-  });
+  images.forEach((image, index) => form.append("images", new Blob([Buffer.from(image.base64, "base64")], { type: image.mediaType }), `parakh-${index + 1}.${ext(image.mediaType)}`));
   const startedAt = Date.now();
   let response;
-  try {
-    response = await fetch(`${ocrUrl}/api/ocr/analyze`, { method: "POST", body: form });
-  } catch (error) {
-    throw Object.assign(new Error(`Could not reach RapidOCR: ${error.message}`), { statusCode: 502 });
-  }
+  try { response = await fetch(`${ocrUrl}/api/ocr/analyze`, { method: "POST", body: form }); }
+  catch (error) { throw Object.assign(new Error(`Could not reach RapidOCR: ${error.message}`), { statusCode: 502 }); }
   const responseText = await response.text();
   let data = {};
   try { data = JSON.parse(responseText); } catch {}
   if (!response.ok) throw Object.assign(new Error(data?.error || data?.detail || `RapidOCR returned HTTP ${response.status}`), { statusCode: 502 });
-  const normalized = normalizeEvidence(data);
-  return { provider: "rapidocr", model: "RapidOCR", ...normalized, timingMs: Date.now() - startedAt };
+  return { provider: "rapidocr", model: "RapidOCR", ...normalizeEvidence(data), timingMs: Date.now() - startedAt };
 }
 
 function candidateEvidence(field, evidence) {
@@ -112,17 +102,18 @@ function regexEvidence(pattern, evidence) {
 function regexRepairFields(fields, evidence, rawText) {
   const next = Object.fromEntries(Object.entries(fields || {}).map(([key, field]) => [key, { ...(field || {}) }]));
   const fallbackEvidence = [{ text: rawText, confidence: 0.65, imageIndex: 0, evidenceIndex: -1 }];
+
   const emailCandidate = regexEvidence(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i, evidence) || regexEvidence(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i, fallbackEvidence);
   const currentEmail = text(next.consumerCareEmail?.value);
   if (!EMAIL_RE.test(currentEmail) && emailCandidate) {
     next.consumerCareEmail = {
       ...(next.consumerCareEmail || {}), value: emailCandidate.value, displayValue: emailCandidate.value,
       raw: emailCandidate.item.text, evidence: emailCandidate.item.text,
-      confidence: Math.max(Number(next.consumerCareEmail?.confidence || 0), Number(emailCandidate.item.confidence || 0) * 0.92),
-      status: "found", imageIndex: Number.isInteger(emailCandidate.item.imageIndex) ? emailCandidate.item.imageIndex : 0,
+      confidence: Math.max(Number(next.consumerCareEmail?.confidence || 0), Number(emailCandidate.item.confidence || 0) * 0.92), status: "found",
+      imageIndex: Number.isInteger(emailCandidate.item.imageIndex) ? emailCandidate.item.imageIndex : 0,
       evidenceIndex: Number.isInteger(emailCandidate.item.evidenceIndex) ? emailCandidate.item.evidenceIndex : -1,
-      boundingBox: emailCandidate.item.boundingBox || null, imageWidth: emailCandidate.item.imageWidth || null,
-      imageHeight: emailCandidate.item.imageHeight || null, source: "REGEX_OCR_REPAIR", verification: "email-format-validated",
+      boundingBox: emailCandidate.item.boundingBox || null, imageWidth: emailCandidate.item.imageWidth || null, imageHeight: emailCandidate.item.imageHeight || null,
+      source: "REGEX_OCR_REPAIR", verification: "email-format-validated",
     };
   } else if (currentEmail && !EMAIL_RE.test(currentEmail)) {
     next.consumerCareEmail = { ...(next.consumerCareEmail || {}), value: null, displayValue: "", status: "ambiguous", verification: "rejected-invalid-email" };
@@ -134,11 +125,11 @@ function regexRepairFields(fields, evidence, rawText) {
     next.consumerCarePhone = {
       ...(next.consumerCarePhone || {}), value: phoneCandidate.value, displayValue: phoneCandidate.value,
       raw: phoneCandidate.item.text, evidence: phoneCandidate.item.text,
-      confidence: Math.max(Number(next.consumerCarePhone?.confidence || 0), Number(phoneCandidate.item.confidence || 0) * 0.92),
-      status: "found", imageIndex: Number.isInteger(phoneCandidate.item.imageIndex) ? phoneCandidate.item.imageIndex : 0,
+      confidence: Math.max(Number(next.consumerCarePhone?.confidence || 0), Number(phoneCandidate.item.confidence || 0) * 0.92), status: "found",
+      imageIndex: Number.isInteger(phoneCandidate.item.imageIndex) ? phoneCandidate.item.imageIndex : 0,
       evidenceIndex: Number.isInteger(phoneCandidate.item.evidenceIndex) ? phoneCandidate.item.evidenceIndex : -1,
-      boundingBox: phoneCandidate.item.boundingBox || null, imageWidth: phoneCandidate.item.imageWidth || null,
-      imageHeight: phoneCandidate.item.imageHeight || null, source: "REGEX_OCR_REPAIR", verification: "phone-format-validated",
+      boundingBox: phoneCandidate.item.boundingBox || null, imageWidth: phoneCandidate.item.imageWidth || null, imageHeight: phoneCandidate.item.imageHeight || null,
+      source: "REGEX_OCR_REPAIR", verification: "phone-format-validated",
     };
   }
 
@@ -146,21 +137,6 @@ function regexRepairFields(fields, evidence, rawText) {
   next.netQuantity = numericRepaired.netQuantity || next.netQuantity;
   next.unit = numericRepaired.unit || next.unit;
   next.mrp = numericRepaired.mrp || next.mrp;
-
-  for (const key of ["dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate"]) {
-    const current = text(next[key]?.value);
-    if (current && DATE_RE.test(current)) continue;
-    const found = regexEvidence(DATE_RE, evidence) || regexEvidence(DATE_RE, fallbackEvidence);
-    if (!found) continue;
-    next[key] = {
-      ...(next[key] || {}), value: found.value, displayValue: found.value, raw: found.item.text, evidence: found.item.text,
-      confidence: Math.max(Number(next[key]?.confidence || 0), Number(found.item.confidence || 0) * 0.86), status: "found",
-      imageIndex: Number.isInteger(found.item.imageIndex) ? found.item.imageIndex : 0,
-      evidenceIndex: Number.isInteger(found.item.evidenceIndex) ? found.item.evidenceIndex : -1,
-      boundingBox: found.item.boundingBox || null, imageWidth: found.item.imageWidth || null, imageHeight: found.item.imageHeight || null,
-      source: "REGEX_OCR_REPAIR", verification: "date-format-validated",
-    };
-  }
   return next;
 }
 
@@ -176,8 +152,7 @@ function resolveEvidenceForFields(fields, evidence) {
 
 function validateFieldFormats(fields) {
   const next = Object.fromEntries(Object.entries(fields || {}).map(([key, field]) => [key, { ...(field || {}) }]));
-  const email = text(next.consumerCareEmail?.value);
-  const phone = text(next.consumerCarePhone?.value);
+  const email = text(next.consumerCareEmail?.value), phone = text(next.consumerCarePhone?.value);
   if (email && !EMAIL_RE.test(email)) next.consumerCareEmail = { ...next.consumerCareEmail, value: null, displayValue: "", status: "ambiguous", verification: "rejected-invalid-email" };
   if (phone && !MOBILE_RE.test(phone) && !TOLL_FREE_RE.test(phone)) next.consumerCarePhone = { ...next.consumerCarePhone, value: null, displayValue: "", status: "ambiguous", verification: "rejected-invalid-phone" };
   const barcode = text(next.barcode?.value).replace(/\D/g, "");
@@ -188,8 +163,7 @@ function validateFieldFormats(fields) {
 function attachEvidence(fields, evidence) {
   const output = {};
   for (const [key, field] of Object.entries(resolveEvidenceForFields(fields, evidence))) {
-    const index = Number.isInteger(field?.evidenceIndex) ? field.evidenceIndex : -1;
-    const item = index >= 0 ? evidence[index] : null;
+    const index = Number.isInteger(field?.evidenceIndex) ? field.evidenceIndex : -1, item = index >= 0 ? evidence[index] : null;
     output[key] = { ...(field || {}), value: field?.value ?? null, raw: field?.raw ?? field?.evidence ?? null, evidence: item?.text || field?.evidence || field?.raw || null, ...(item ? { imageIndex: item.imageIndex, evidenceIndex: item.evidenceIndex, boundingBox: item.boundingBox, imageWidth: item.imageWidth, imageHeight: item.imageHeight, rapidOcrConfidence: item.confidence } : {}) };
   }
   return output;
@@ -236,8 +210,18 @@ async function analyze(req, res) {
     const fields = attachEvidence(validated, rapid.evidence);
     const submittedBarcode = text(req.body?.barcodeGtin).replace(/\D/g, "");
     if (submittedBarcode) fields.barcode = { value: submittedBarcode, displayValue: submittedBarcode, raw: submittedBarcode, evidence: submittedBarcode, confidence: 1, status: "found", source: "BARCODE_SCAN", verification: "scanner-authoritative" };
-    const declarationEvidence = buildDeclarationEvidence(fields);
-    const structured = { ...fields, declarationEvidence, rawText: rapid.rawText, rawOcrEvidence: rapid.evidence, otherDeclarations: rapid.evidence.map((item) => item.text), semanticReconciliation: { providerCount: semantic.providerCount, providers: semantic.providers }, aiSemantic: { providerCount: semantic.providerCount, providers: semantic.providers, suggestedCategory: semantic.suggestedCategory || null }, suggestedCategory: semantic.suggestedCategory || null, warnings: semantic.providerCount < 2 ? ["Only one semantic AI provider was available; review single-provider findings carefully."] : [], needsReview: Object.values(fields).some((field) => field?.status === "ambiguous" || field?.status === "unreadable" || (field?.status === "found" && Number(field?.confidence || 0) < 0.6)) };
+    const structured = {
+      ...fields,
+      declarationEvidence: buildDeclarationEvidence(fields),
+      rawText: rapid.rawText,
+      rawOcrEvidence: rapid.evidence,
+      otherDeclarations: rapid.evidence.map((item) => item.text),
+      semanticReconciliation: { providerCount: semantic.providerCount, providers: semantic.providers },
+      aiSemantic: { providerCount: semantic.providerCount, providers: semantic.providers, suggestedCategory: semantic.suggestedCategory || null },
+      suggestedCategory: semantic.suggestedCategory || null,
+      warnings: semantic.providerCount < 2 ? ["Only one semantic AI provider was available; review single-provider findings carefully."] : [],
+      needsReview: Object.values(fields).some((field) => field?.status === "ambiguous" || field?.status === "unreadable" || (field?.status === "found" && Number(field?.confidence || 0) < 0.6)),
+    };
     const finalResult = await applyEvidenceConfidence(structured, { barcodeImageProvided: Boolean(barcodeFile) });
     const totalMs = Date.now() - startedAt;
     console.log(`[ocr:fast] images=${packageFiles.length} evidence=${rapid.evidence.length} rapid=${rapid.timingMs}ms semantic=${semantic.timingMs}ms gemini=${semantic.timing?.gemini || 0}ms grok=${semantic.timing?.grok || 0}ms providers=${semantic.providerCount} total=${totalMs}ms parallel=true`);
