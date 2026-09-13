@@ -61,8 +61,8 @@ function Layout() {
 
   function logout() { clearSession(); navigate("/login", { replace: true }); }
 
-  return <div className="app-layout flex min-h-screen w-full bg-background">
-    <aside className="sidebar fixed inset-y-0 left-0 z-40 w-64 border-r bg-card">
+  return <div className="app-layout">
+    <aside className="sidebar">
       <div className="logo"><h2>PARAKH</h2><span className="logo-full">Packaged Article Regulatory Assessment &amp; Knowledge Hub</span></div>
       <nav className="navigation">
         <div className="sidebar-section-label">Workspace</div>
@@ -83,7 +83,7 @@ function Layout() {
       <div className="sidebar-user"><strong>{user?.name || "User"}</strong><span>{user?.role || "USER"}</span><button type="button" onClick={logout}><span className="nav-icon" aria-hidden="true">↪</span>{t("signOut")}</button></div>
     </aside>
 
-    <main className="main-content flex-1 min-w-0 pl-64 p-6 overflow-x-hidden">
+    <main className="main-content">
       <BatchWarningStrip />
       <Outlet />
       {location.pathname === "/scan" && scanReviewReady && <>
