@@ -91,6 +91,37 @@ const REQUIREMENTS: Requirement[] = [
   },
 ];
 
+function manufacturerFinding(r: InspectionRequest): Finding {
+  const identity = evidenceValue(r, [
+    'declarations.manufacturerName',
+    'declarations.packerName',
+    'declarations.importerName',
+    'declarations.manufacturerOrPacker',
+  ]);
+  const address = evidenceValue(r, [
+    'declarations.completeAddress',
+    'declarations.manufacturerAddress',
+    'declarations.packerAddress',
+    'declarations.importerAddress',
+  ]);
+
+  const hasIdentity = identity !== undefined && String(identity).trim() !== '';
+  const hasAddress = address !== undefined && String(address).trim() !== '';
+
+  if (hasIdentity && hasAddress) {
+    return finding('PCR-R6-1-A', '6(1)(a)', 'PASS', 'declarations.manufacturerPackerImporter', 'Manufacturer/packer/importer identity and address evidence were established.');
+  }
+
+  if (!hasIdentity && !hasAddress) {
+    return finding('PCR-R6-1-A', '6(1)(a)', 'VIOLATION', 'declarations.manufacturerPackerImporter', 'The combined OCR, Gemini and Grok evidence did not establish the responsible manufacturer, packer or importer name/address declaration.', 'No provider established the required responsible-entity declaration.', ['declarations.manufacturerName', 'declarations.completeAddress']);
+  }
+
+  const missing: string[] = [];
+  if (!hasIdentity) missing.push('declarations.manufacturerName');
+  if (!hasAddress) missing.push('declarations.completeAddress');
+  return finding('PCR-R6-1-A', '6(1)(a)', 'UNABLE_TO_VERIFY', 'declarations.manufacturerPackerImporter', 'The responsible-entity declaration is incomplete or ambiguous: one of the required identity/address components was not reliably established.', undefined, missing);
+}
+
 function consumerContactFinding(r: InspectionRequest): Finding {
   const explicit = path(r, 'declarations.consumerComplaintContact');
   if (explicit === false || explicit === null) {
@@ -103,7 +134,7 @@ function consumerContactFinding(r: InspectionRequest): Finding {
   const email = evidenceValue(r, ['declarations.consumerComplaintEmail', 'declarations.consumerCareEmail']);
   const combined = evidenceValue(r, ['declarations.consumerComplaintContact', 'declarations.consumerCare', 'declarations.consumerComplaintNameAddressPhoneEmail']);
 
-  const hasEntity = [name, address].some(v => v !== undefined && String(v).trim() !== '');
+  const hasEntity = [name, address].some(v => v !== undefined && String(v).trim() !== '') || (combined !== undefined && /consumer|care|complaint|helpline|customer/i.test(String(combined)));
   const hasMethod = [phone, email].some(v => v !== undefined && String(v).trim() !== '') || (combined !== undefined && /@|\+?\d[\d\s().-]{6,}/.test(String(combined)));
 
   if (hasEntity && hasMethod) {
@@ -111,11 +142,11 @@ function consumerContactFinding(r: InspectionRequest): Finding {
   }
 
   if (!hasEntity && !hasMethod) {
-    return finding('PCR-R6-2', '6(2)', 'VIOLATION', 'declarations.consumerComplaintContact', 'The combined OCR, Gemini and Grok evidence did not establish any consumer-complaint contact declaration.', 'No consumer-complaint contact declaration was established by the inspection providers.');
+    return finding('PCR-R6-2', '6(2)', 'VIOLATION', 'declarations.consumerComplaintContact', 'The combined OCR, Gemini and Grok evidence did not establish any consumer-complaint contact declaration.', 'No provider established the required consumer-complaint contact.');
   }
 
   const missing: string[] = [];
-  if (!hasEntity) missing.push('declarations.consumerComplaintNameOrAddress');
+  if (!hasEntity) missing.push('declarations.consumerComplaintNameOrContext');
   if (!hasMethod) missing.push('declarations.consumerComplaintPhoneOrEmail');
   return finding('PCR-R6-2', '6(2)', 'UNABLE_TO_VERIFY', 'declarations.consumerComplaintContact', 'Consumer-complaint contact evidence is incomplete or ambiguous; provider evidence does not establish both a contact entity and a contact method.', undefined, missing);
 }
@@ -124,6 +155,10 @@ export function rule6DeclarationsFindings(r: InspectionRequest): Finding[] {
   const findings: Finding[] = [];
   for (const req of REQUIREMENTS) {
     if (req.conditional && !req.conditional(r)) continue;
+    if (req.code === 'PCR-R6-1-A') {
+      findings.push(manufacturerFinding(r));
+      continue;
+    }
     if (req.code === 'PCR-R6-2') {
       findings.push(consumerContactFinding(r));
       continue;
@@ -134,7 +169,7 @@ export function rule6DeclarationsFindings(r: InspectionRequest): Finding[] {
       findings.push(finding(req.code, req.number, 'PASS', req.field, `Evidence was supplied for the required ${req.label}.`));
       continue;
     }
-    findings.push(finding(req.code, req.number, 'VIOLATION', req.field, `The combined OCR, Gemini and Grok evidence did not establish the required ${req.label}.`, `No provider established the required declaration.`, fields));
+    findings.push(finding(req.code, req.number, 'VIOLATION', req.field, `The combined OCR, Gemini and Grok evidence did not establish the required ${req.label}.`, 'No provider established the required declaration.', fields));
   }
   return findings;
 }
