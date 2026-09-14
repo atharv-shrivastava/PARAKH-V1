@@ -29,7 +29,7 @@ html[data-theme="green"] { --theme-neon-rgb:22,163,74; }
 .sidebar-section-label { color:color-mix(in srgb,#fff 58%,transparent)!important; }
 .sidebar-user { border-top:1px solid rgba(255,255,255,.10); }
 
-/* Global surfaces. Component-specific CSS can refine these, but should not re-introduce light canvases in dark mode. */
+/* Global surfaces */
 html[data-theme^="dark-"] .card,
 html[data-theme^="dark-"] [class*="card"],
 html[data-theme^="dark-"] [class*="panel"],
@@ -57,11 +57,9 @@ html[data-theme^="dark-"] .intel-success,
 html[data-theme^="dark-"] .intel-error,
 html[data-theme^="dark-"] .auth-card,
 html[data-theme^="dark-"] .language-picker { background:var(--theme-surface)!important; color:var(--theme-text)!important; border-color:var(--theme-border)!important; }
-
 html[data-theme^="dark-"] .topbar { background:var(--theme-surface)!important; color:var(--theme-text)!important; border-color:var(--theme-border)!important; }
 html[data-theme^="dark-"] .auth-page { background:radial-gradient(circle at 15% 20%,rgba(var(--theme-neon-rgb),.13),transparent 32%),radial-gradient(circle at 85% 80%,rgba(var(--theme-neon-rgb),.10),transparent 30%),var(--theme-soft)!important; }
 html[data-theme^="dark-"] .auth-card { box-shadow:0 24px 70px rgba(0,0,0,.35),var(--theme-glow)!important; }
-
 html[data-theme^="dark-"] input,
 html[data-theme^="dark-"] select,
 html[data-theme^="dark-"] textarea { background:var(--theme-input)!important; color:var(--theme-input-text)!important; border-color:var(--theme-border)!important; }
@@ -76,6 +74,15 @@ html[data-theme^="dark-"] .secondary-button,
 html[data-theme^="dark-"] .secondary-action { background:var(--theme-soft)!important; color:var(--theme-text)!important; border-color:var(--theme-border)!important; }
 html[data-theme^="dark-"] .status-message { background:color-mix(in srgb,var(--theme-primary) 8%,var(--theme-surface))!important; color:var(--theme-text)!important; border-color:var(--theme-border)!important; }
 
+/* Compliance scope and batch evidence */
+.intel-scope-control{display:flex;flex-direction:column;gap:6px;min-width:240px;position:relative;z-index:2}
+.intel-scope-control span{font-size:10px;font-weight:900;letter-spacing:.12em;color:var(--theme-muted);text-transform:uppercase}
+.intel-scope-control select{border:1px solid var(--theme-border);border-radius:12px;padding:11px 13px;background:var(--theme-input);color:var(--theme-input-text);font:inherit;font-weight:800;outline:none}
+.intel-scope-control select:focus{border-color:var(--theme-primary);box-shadow:0 0 0 3px rgba(var(--theme-neon-rgb),.12),var(--theme-glow)}
+.batch-evidence-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:9px}
+.batch-evidence-grid img{width:96px;height:72px;object-fit:cover;border-radius:10px;border:1px solid var(--theme-border);background:var(--theme-soft);box-shadow:0 4px 12px rgba(0,0,0,.12)}
+.batch-evidence-preview{margin:0 0 12px}.batch-evidence-preview img{width:110px;height:82px}
+
 /* Mobile navigation bar */
 .mobile-navigation { display:none; }
 @media (max-width: 768px) {
@@ -89,10 +96,6 @@ html[data-theme^="dark-"] .status-message { background:color-mix(in srgb,var(--t
   .mobile-navigation .nav-icon { font-size:18px; line-height:1; }
   .mobile-navigation .nav-label { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 }
-@media (max-width: 420px) {
-  .mobile-navigation a { flex-basis:60px; font-size:9px; }
-  .mobile-navigation .nav-icon { font-size:17px; }
-}
+@media (max-width: 420px) { .mobile-navigation a { flex-basis:60px; font-size:9px; } .mobile-navigation .nav-icon { font-size:17px; } }
 
-/* Keep the product/app identity and signed-in username visually untouched. */
-.logo, .logo * , .sidebar-user strong, [data-no-auto-translate="true"] { unicode-bidi:plaintext; }
+.logo, .logo *, .sidebar-user strong, [data-no-auto-translate="true"] { unicode-bidi:plaintext; }
