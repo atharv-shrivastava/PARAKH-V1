@@ -1,0 +1,1 @@
+OCR quantity and MRP recovery now use context-aware candidate scoring. Numeric candidates are ranked by legal-label context, spatial proximity, OCR confidence, units, and negative-context suppression. This is evidence extraction only and does not make legal compliance decisions.
