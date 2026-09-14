@@ -1,14 +1,16 @@
-import io
+﻿import io
 import os
 import asyncio
 import hashlib
 import time
 from typing import Any
 
-os.environ.setdefault("OMP_NUM_THREADS", "1")
+_CPU_COUNT = os.cpu_count() or 4
+_CPU_THREADS = max(2, min(8, _CPU_COUNT - 1))
+os.environ.setdefault("OMP_NUM_THREADS", str(_CPU_THREADS))
 os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
-os.environ.setdefault("ORT_INTRA_OP_NUM_THREADS", "1")
-os.environ.setdefault("ORT_INTER_OP_NUM_THREADS", "1")
+os.environ.setdefault("ORT_INTRA_OP_NUM_THREADS", str(_CPU_THREADS))
+os.environ.setdefault("ORT_INTER_OP_NUM_THREADS", "2")
 
 import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException
@@ -26,26 +28,46 @@ app.add_middleware(
 )
 
 _lang_type = os.getenv("RAPIDOCR_LANG_TYPE", "en")
-_max_ocr_side = max(1024, int(os.getenv("RAPIDOCR_MAX_SIDE", "1280")))
-_cache_ttl = max(30, int(os.getenv("RAPIDOCR_CACHE_TTL_SECONDS", "120")))
-_cache_limit = max(1, int(os.getenv("RAPIDOCR_CACHE_ITEMS", "8")))
+_max_ocr_side = max(0, int(os.getenv("RAPIDOCR_MAX_SIDE", "0")))
+_engine_max_side = max(2000, int(os.getenv("RAPIDOCR_ENGINE_MAX_SIDE", "10000")))
 _use_cls = os.getenv("RAPIDOCR_USE_CLS", "false").lower() == "true"
+_use_cuda = os.getenv("RAPIDOCR_USE_CUDA", "true").lower() == "true"
 _use_dml = os.getenv("RAPIDOCR_USE_DML", "false").lower() == "true"
 _text_score = max(0.0, min(1.0, float(os.getenv("RAPIDOCR_TEXT_SCORE", "0.5"))))
+_cuda_device = max(0, int(os.getenv("RAPIDOCR_CUDA_DEVICE", "0")))
 
 _rapid_ocr = None
 _result_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _inflight: dict[str, asyncio.Task] = {}
+_cache_ttl = max(30, int(os.getenv("RAPIDOCR_CACHE_TTL_SECONDS", "120")))
+_cache_limit = max(1, int(os.getenv("RAPIDOCR_CACHE_ITEMS", "8")))
 
 
 def _get_rapidocr():
     global _rapid_ocr
     if _rapid_ocr is None:
-        params = {"Global.use_cls": _use_cls, "Global.text_score": _text_score, "Rec.lang_type": _lang_type}
+        params = {
+            "Global.use_cls": _use_cls,
+            "Global.text_score": _text_score,
+            "Global.max_side_len": _engine_max_side,
+            "Det.limit_side_len": _engine_max_side,
+            "Det.limit_type": "max",
+            "Rec.lang_type": _lang_type,
+            "EngineConfig.onnxruntime.intra_op_num_threads": _CPU_THREADS,
+            "EngineConfig.onnxruntime.inter_op_num_threads": 2,
+        }
+        if _use_cuda:
+            params["EngineConfig.onnxruntime.use_cuda"] = True
+            params["EngineConfig.onnxruntime.cuda_ep_cfg.device_id"] = _cuda_device
         if _use_dml:
             params["EngineConfig.onnxruntime.use_dml"] = True
         _rapid_ocr = RapidOCR(params=params)
-        print(f"[ocr:rapid] initialized useDML={_use_dml} useCls={_use_cls} textScore={_text_score} maxSide={_max_ocr_side}")
+        providers = "CUDA->CPU" if _use_cuda else "DML->CPU" if _use_dml else "CPU"
+        print(
+            f"[ocr:rapid] initialized providers={providers} cudaDevice={_cuda_device} "
+            f"useCls={_use_cls} textScore={_text_score} inputMaxSide={_max_ocr_side or 'source'} "
+            f"engineMaxSide={_engine_max_side} cpuThreads={_CPU_THREADS}"
+        )
     return _rapid_ocr
 
 
@@ -57,16 +79,10 @@ def to_float(value: Any, default: float = 0.0) -> float:
 
 
 def _preprocess_for_ocr(pil_image: Image.Image):
-    """Prepare a readable OCR image while preserving a deterministic scale map.
-
-    We do not hard-threshold the image because package labels often contain tiny
-    anti-aliased text, colored backgrounds, mixed scripts and fine punctuation.
-    """
+    """Prepare OCR input while preserving source resolution by default."""
     original_width, original_height = pil_image.size
     image = ImageOps.exif_transpose(pil_image.convert("RGB"))
 
-    # Gentle dynamic-range normalization. Skip it when the image already has a
-    # healthy luminance spread so we don't manufacture contrast artifacts.
     gray_stats = ImageStat.Stat(ImageOps.grayscale(image))
     mean = float(gray_stats.mean[0])
     stddev = float(gray_stats.stddev[0])
@@ -74,14 +90,15 @@ def _preprocess_for_ocr(pil_image: Image.Image):
         image = ImageOps.autocontrast(image, cutoff=1)
         image = ImageEnhance.Contrast(image).enhance(1.10)
 
-    # Mild sharpening makes small printed declarations easier for the detector to separate.
     image = image.filter(ImageFilter.UnsharpMask(radius=1.0, percent=110, threshold=3))
 
-    scale = min(1.0, _max_ocr_side / max(image.width, image.height))
-    if scale < 1.0:
-        width = max(1, round(image.width * scale))
-        height = max(1, round(image.height * scale))
-        image = image.resize((width, height), Image.Resampling.LANCZOS)
+    scale = 1.0
+    if _max_ocr_side > 0:
+        scale = min(1.0, _max_ocr_side / max(image.width, image.height))
+        if scale < 1.0:
+            width = max(1, round(image.width * scale))
+            height = max(1, round(image.height * scale))
+            image = image.resize((width, height), Image.Resampling.LANCZOS)
 
     return image, original_width, original_height, scale
 
@@ -186,6 +203,11 @@ async def _analyze_contents(items: list[tuple[bytes, str]]):
         try:
             raw = Image.open(io.BytesIO(content))
             image, original_width, original_height, scale = _preprocess_for_ocr(raw)
+            print(
+                f"[ocr:input] image={image_index + 1} sourceBytes={len(content)} "
+                f"source={original_width}x{original_height} ocr={image.width}x{image.height} "
+                f"scale={scale:.4f} maxSide={_max_ocr_side or 'source'} engineMaxSide={_engine_max_side}"
+            )
             prepared.append((np.asarray(image), original_width, original_height, scale))
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Invalid image {image_index + 1}: {exc}") from exc
@@ -201,6 +223,11 @@ async def _analyze_contents(items: list[tuple[bytes, str]]):
             return extract_result(result, image_index, arr.shape[1], arr.shape[0], scale, original_width, original_height)
 
         entries = await asyncio.to_thread(infer, array)
+        print(
+            f"[ocr:result] image={image_index + 1} detections={len(entries)} "
+            f"elapsedMs={round((time.monotonic() - image_started) * 1000)} "
+            f"ocr={array.shape[1]}x{array.shape[0]}"
+        )
         initial_quality = _ocr_quality(entries)
         used_fallback = False
 
@@ -219,13 +246,7 @@ async def _analyze_contents(items: list[tuple[bytes, str]]):
         print(f"[ocr:rapid] image={image_index + 1} original={original_width}x{original_height} ocr={array.shape[1]}x{array.shape[0]} engine={one_engine_ms}ms entries={len(entries)} fallback={used_fallback} scale={scale:.4f}")
         return image_index, one_engine_ms, entries
 
-    if _use_dml:
-        results = []
-        for image_index, payload in enumerate(prepared):
-            results.append(await run_one(image_index, payload))
-    else:
-        results = list(await asyncio.gather(*(run_one(image_index, payload) for image_index, payload in enumerate(prepared))))
-
+    results = list(await asyncio.gather(*(run_one(image_index, payload) for image_index, payload in enumerate(prepared))))
     results.sort(key=lambda item: item[0])
     all_entries = []
     raw_text_parts = []
@@ -260,7 +281,7 @@ async def warmup():
         warm_image = np.full((192, 192, 3), 255, dtype=np.uint8)
         await asyncio.to_thread(lambda: rapid(warm_image))
         elapsed_ms = round((time.monotonic() - started_at) * 1000)
-        print(f"[ocr:rapid] warmup complete in {elapsed_ms}ms useCls={_use_cls} useDML={_use_dml} textScore={_text_score} maxSide={_max_ocr_side} omp={os.getenv('OMP_NUM_THREADS')}")
+        print(f"[ocr:rapid] warmup complete in {elapsed_ms}ms providers={'CUDA->CPU' if _use_cuda else 'DML->CPU' if _use_dml else 'CPU'} inputMaxSide={_max_ocr_side or 'source'} engineMaxSide={_engine_max_side} cpuThreads={_CPU_THREADS}")
     except Exception as exc:
         print(f"[ocr:rapid] warmup skipped: {exc}")
 

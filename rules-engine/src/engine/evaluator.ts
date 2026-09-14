@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+﻿import { createHash } from 'node:crypto';
 import type { EvidenceConflict, EvidenceItem, EvaluationStatus, Finding, InspectionRequest, OverallInspectionResult, RuleCondition, RuleDefinition, RuleVersion } from '../../domain/types.js';
 import { RULES, RULESET_VERSION } from '../legal/rules.js';
 import { SOURCES } from '../legal/sources.js';
@@ -27,9 +27,9 @@ function conditionResult(request: InspectionRequest, condition: RuleCondition): 
   const pass = (): ConditionResult => ({ status: 'PASS', missing: [], message: 'Requirement satisfied.', evidence, conflicts });
   const unable = (missing = [condition.targetField]): ConditionResult => ({ status: 'UNABLE_TO_VERIFY', missing, message: condition.errorMessage, evidence, conflicts });
   const fail = (reason = condition.violationReason): ConditionResult => ({ status: 'VIOLATION', missing: [], message: condition.errorMessage, reason, evidence, conflicts });
-  const missingDeclaration = (): ConditionResult => ({ status: 'VIOLATION', missing: [condition.targetField], message: condition.errorMessage, reason: `${condition.violationReason} No declaration evidence was established by the available inspection providers.`, evidence, conflicts });
+  const missingDeclaration = (): ConditionResult => ({ status: 'UNABLE_TO_VERIFY', missing: [condition.targetField], message: `${condition.errorMessage} No declaration evidence was established by the available inspection providers; this requires further verification rather than a proven violation.`, evidence, conflicts });
   if (conflicts.length > 0) return { status: 'UNABLE_TO_VERIFY', missing: [], message: condition.errorMessage, evidence, conflicts };
-  if (evidence.length === 0 && condition.targetField.startsWith('declarations.')) return missingDeclaration();
+  if (evidence.length === 0 && condition.targetField.startsWith('declarations.') && condition.operator !== 'VISUAL_CHECK' && condition.operator !== 'NOT_EXISTS') return missingDeclaration();
   if (!confidenceOk(evidence, condition.minimumConfidence)) return unable();
   const value = sourceValue(request, condition.targetField);
   const missing = value === undefined || value === null || value === '';
@@ -38,14 +38,14 @@ function conditionResult(request: InspectionRequest, condition: RuleCondition): 
     case 'NOT_EXISTS': return missing ? pass() : fail();
     case 'EQUALS': return missing ? unable() : value === condition.expectedValue ? pass() : fail();
     case 'NOT_EQUALS': return missing ? unable() : value !== condition.expectedValue ? pass() : fail();
-    case 'REGEX_MATCH': return missing ? missingDeclaration() : pass();
+    case 'REGEX_MATCH': return missing ? unable() : pass();
     case 'GREATER_THAN': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value > condition.expectedValue ? pass() : fail() : unable();
     case 'LESS_THAN': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value < condition.expectedValue ? pass() : fail() : unable();
     case 'GREATER_THAN_OR_EQUAL': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value >= condition.expectedValue ? pass() : fail() : unable();
     case 'LESS_THAN_OR_EQUAL': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value <= condition.expectedValue ? pass() : fail() : unable();
-    case 'VALID_UNIT': return missing ? missingDeclaration() : pass();
-    case 'VALID_CURRENCY': return missing ? missingDeclaration() : pass();
-    case 'VALID_DATE_FORMAT': return missing ? missingDeclaration() : pass();
+    case 'VALID_UNIT': return missing ? unable() : pass();
+    case 'VALID_CURRENCY': return missing ? unable() : pass();
+    case 'VALID_DATE_FORMAT': return missing ? unable() : pass();
     case 'IN_LIST': return missing || !Array.isArray(condition.expectedValue) ? unable() : condition.expectedValue.includes(value) ? pass() : fail();
     case 'IN_NUMERIC_RANGE': return typeof value === 'number' && Array.isArray(condition.expectedValue) && condition.expectedValue.length === 2 ? value >= Number(condition.expectedValue[0]) && value <= Number(condition.expectedValue[1]) ? pass() : fail() : unable();
     case 'WITHIN_FIRST_SCHEDULE_MPE': {

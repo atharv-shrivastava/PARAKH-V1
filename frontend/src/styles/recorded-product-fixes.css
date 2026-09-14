@@ -1,0 +1,195 @@
+/* Recorded-product Rules Engine cards: keep long rule identifiers and messages inside the content column. */
+.products-page .rules-findings {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.products-page .finding-row {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  align-items: start;
+  color: #111827 !important;
+}
+
+.products-page .finding-row > strong,
+.products-page .finding-row > span,
+.products-page .finding-row > small {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.products-page .finding-row > strong {
+  display: block;
+  line-height: 1.35;
+  color: #111827 !important;
+}
+
+.products-page .finding-row > span {
+  white-space: normal;
+  color: #374151 !important;
+}
+
+.products-page .finding-row > small {
+  white-space: normal;
+  color: #6b7280 !important;
+}
+
+/* Product detail and Rules Engine metric cards use intentionally light surfaces. */
+.products-page .ocr-details-grid > div {
+  color: #111827 !important;
+}
+
+.products-page .ocr-details-grid > div > strong {
+  color: #111827 !important;
+}
+
+.products-page .ocr-details-grid > div > span {
+  color: #111827 !important;
+}
+
+.products-page .ocr-details-grid > div > small {
+  color: #6b7280 !important;
+}
+
+.products-page .penalty-review,
+.products-page .penalty-review .rules-findings,
+.products-page .penalty-review .finding-row {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.products-page .penalty-review .ocr-details-grid > * {
+  min-width: 0;
+}
+
+/* Dark themes: Rules Engine finding cards use theme-aware dark surfaces instead of white. */
+@media (prefers-color-scheme: dark) {
+  /* Keep OS dark-mode from leaking into the app's explicit light themes. */
+}
+
+html[data-theme^="dark"] .products-page .rules-findings .finding-row,
+html[data-theme$="-dark"] .products-page .rules-findings .finding-row,
+html[data-theme="crimson"] .products-page .rules-findings .finding-row,
+html[data-theme="plum"] .products-page .rules-findings .finding-row,
+html[data-theme="obsidian"] .products-page .rules-findings .finding-row,
+html[data-theme="graphite"] .products-page .rules-findings .finding-row,
+html[data-theme="black-grey"] .products-page .rules-findings .finding-row,
+html[data-theme="red-black"] .products-page .rules-findings .finding-row,
+html[data-theme="midnight-gradient"] .products-page .rules-findings .finding-row,
+html[data-theme="nebula-gradient"] .products-page .rules-findings .finding-row,
+html[data-theme="ember-gradient"] .products-page .rules-findings .finding-row,
+html[data-theme="ocean-night-gradient"] .products-page .rules-findings .finding-row,
+html[data-theme="cyber-gradient"] .products-page .rules-findings .finding-row {
+  background: var(--theme-soft, #171a20) !important;
+  color: var(--theme-text, #f8fafc) !important;
+  border-color: var(--theme-border, #38404c);
+}
+
+html[data-theme^="dark"] .products-page .rules-findings .finding-row > strong,
+html[data-theme$="-dark"] .products-page .rules-findings .finding-row > strong,
+html[data-theme="crimson"] .products-page .rules-findings .finding-row > strong,
+html[data-theme="plum"] .products-page .rules-findings .finding-row > strong,
+html[data-theme="obsidian"] .products-page .rules-findings .finding-row > strong,
+html[data-theme="graphite"] .products-page .rules-findings .finding-row > strong,
+html[data-theme="black-grey"] .products-page .rules-findings .finding-row > strong,
+html[data-theme="red-black"] .products-page .rules-findings .finding-row > strong,
+html[data-theme="midnight-gradient"] .products-page .rules-findings .finding-row > strong,
+html[data-theme="nebula-gradient"] .products-page .rules-findings .finding-row > strong,
+html[data-theme="ember-gradient"] .products-page .rules-findings .finding-row > strong,
+html[data-theme="ocean-night-gradient"] .products-page .rules-findings .finding-row > strong,
+html[data-theme="cyber-gradient"] .products-page .rules-findings .finding-row > strong {
+  color: var(--theme-text, #f8fafc) !important;
+}
+
+html[data-theme^="dark"] .products-page .rules-findings .finding-row > span,
+html[data-theme$="-dark"] .products-page .rules-findings .finding-row > span,
+html[data-theme="crimson"] .products-page .rules-findings .finding-row > span,
+html[data-theme="plum"] .products-page .rules-findings .finding-row > span,
+html[data-theme="obsidian"] .products-page .rules-findings .finding-row > span,
+html[data-theme="graphite"] .products-page .rules-findings .finding-row > span,
+html[data-theme="black-grey"] .products-page .rules-findings .finding-row > span,
+html[data-theme="red-black"] .products-page .rules-findings .finding-row > span,
+html[data-theme="midnight-gradient"] .products-page .rules-findings .finding-row > span,
+html[data-theme="nebula-gradient"] .products-page .rules-findings .finding-row > span,
+html[data-theme="ember-gradient"] .products-page .rules-findings .finding-row > span,
+html[data-theme="ocean-night-gradient"] .products-page .rules-findings .finding-row > span,
+html[data-theme="cyber-gradient"] .products-page .rules-findings .finding-row > span {
+  color: var(--theme-text, #f8fafc) !important;
+}
+
+html[data-theme^="dark"] .products-page .rules-findings .finding-row > small,
+html[data-theme$="-dark"] .products-page .rules-findings .finding-row > small,
+html[data-theme="crimson"] .products-page .rules-findings .finding-row > small,
+html[data-theme="plum"] .products-page .rules-findings .finding-row > small,
+html[data-theme="obsidian"] .products-page .rules-findings .finding-row > small,
+html[data-theme="graphite"] .products-page .rules-findings .finding-row > small,
+html[data-theme="black-grey"] .products-page .rules-findings .finding-row > small,
+html[data-theme="red-black"] .products-page .rules-findings .finding-row > small,
+html[data-theme="midnight-gradient"] .products-page .rules-findings .finding-row > small,
+html[data-theme="nebula-gradient"] .products-page .rules-findings .finding-row > small,
+html[data-theme="ember-gradient"] .products-page .rules-findings .finding-row > small,
+html[data-theme="ocean-night-gradient"] .products-page .rules-findings .finding-row > small,
+html[data-theme="cyber-gradient"] .products-page .rules-findings .finding-row > small {
+  color: var(--theme-muted, #cbd5e1) !important;
+}
+
+/* Preserve status meaning while keeping every card inside the dark palette. */
+html[data-theme^="dark"] .products-page .rules-findings .finding-row.violation,
+html[data-theme$="-dark"] .products-page .rules-findings .finding-row.violation,
+html[data-theme="crimson"] .products-page .rules-findings .finding-row.violation,
+html[data-theme="plum"] .products-page .rules-findings .finding-row.violation,
+html[data-theme="obsidian"] .products-page .rules-findings .finding-row.violation,
+html[data-theme="graphite"] .products-page .rules-findings .finding-row.violation,
+html[data-theme="black-grey"] .products-page .rules-findings .finding-row.violation,
+html[data-theme="red-black"] .products-page .rules-findings .finding-row.violation,
+html[data-theme="midnight-gradient"] .products-page .rules-findings .finding-row.violation,
+html[data-theme="nebula-gradient"] .products-page .rules-findings .finding-row.violation,
+html[data-theme="ember-gradient"] .products-page .rules-findings .finding-row.violation,
+html[data-theme="ocean-night-gradient"] .products-page .rules-findings .finding-row.violation,
+html[data-theme="cyber-gradient"] .products-page .rules-findings .finding-row.violation {
+  background: color-mix(in srgb, #dc2626 10%, var(--theme-soft, #171a20)) !important;
+}
+
+html[data-theme^="dark"] .products-page .rules-findings .finding-row.pass,
+html[data-theme$="-dark"] .products-page .rules-findings .finding-row.pass,
+html[data-theme="crimson"] .products-page .rules-findings .finding-row.pass,
+html[data-theme="plum"] .products-page .rules-findings .finding-row.pass,
+html[data-theme="obsidian"] .products-page .rules-findings .finding-row.pass,
+html[data-theme="graphite"] .products-page .rules-findings .finding-row.pass,
+html[data-theme="black-grey"] .products-page .rules-findings .finding-row.pass,
+html[data-theme="red-black"] .products-page .rules-findings .finding-row.pass,
+html[data-theme="midnight-gradient"] .products-page .rules-findings .finding-row.pass,
+html[data-theme="nebula-gradient"] .products-page .rules-findings .finding-row.pass,
+html[data-theme="ember-gradient"] .products-page .rules-findings .finding-row.pass,
+html[data-theme="ocean-night-gradient"] .products-page .rules-findings .finding-row.pass,
+html[data-theme="cyber-gradient"] .products-page .rules-findings .finding-row.pass {
+  background: color-mix(in srgb, #16a34a 9%, var(--theme-soft, #171a20)) !important;
+}
+
+html[data-theme^="dark"] .products-page .rules-findings .finding-row.unable_to_verify,
+html[data-theme$="-dark"] .products-page .rules-findings .finding-row.unable_to_verify,
+html[data-theme="crimson"] .products-page .rules-findings .finding-row.unable_to_verify,
+html[data-theme="plum"] .products-page .rules-findings .finding-row.unable_to_verify,
+html[data-theme="obsidian"] .products-page .rules-findings .finding-row.unable_to_verify,
+html[data-theme="graphite"] .products-page .rules-findings .finding-row.unable_to_verify,
+html[data-theme="black-grey"] .products-page .rules-findings .finding-row.unable_to_verify,
+html[data-theme="red-black"] .products-page .rules-findings .finding-row.unable_to_verify,
+html[data-theme="midnight-gradient"] .products-page .rules-findings .finding-row.unable_to_verify,
+html[data-theme="nebula-gradient"] .products-page .rules-findings .finding-row.unable_to_verify,
+html[data-theme="ember-gradient"] .products-page .rules-findings .finding-row.unable_to_verify,
+html[data-theme="ocean-night-gradient"] .products-page .rules-findings .finding-row.unable_to_verify,
+html[data-theme="cyber-gradient"] .products-page .rules-findings .finding-row.unable_to_verify {
+  background: color-mix(in srgb, #d97706 9%, var(--theme-soft, #171a20)) !important;
+}
+
+@media (max-width: 768px) {
+  .products-page .finding-row {
+    padding: 12px;
+  }
+}

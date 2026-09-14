@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+﻿import { createHash } from 'node:crypto';
 import type { EvaluationStatus, InspectionRequest, OverallInspectionResult, RuleDefinition } from '../../domain/types.js';
 import { evaluateInspectionComplete as evaluateSpecializedInspection } from './legal-dealer-rules.js';
 import { evaluateInspection as evaluateConfiguredRules } from './evaluator.js';
@@ -13,6 +13,19 @@ const AUTHORITATIVE_SPECIALIZED_RULES = new Set([
   'PCR-R6-1-F',
   'PCR-R6-1-G',
   'PCR-R6-2',
+  'PCR-R12-6',
+]);
+
+const AUTHORITATIVE_RULE_NUMBERS = new Set([
+  '6(1)(a)',
+  '6(1)(b)',
+  '6(1)(c)',
+  '6(1)(d)',
+  '6(1)(e)',
+  '6(1)(f)',
+  '6(1)(g)',
+  '6(2)',
+  '12(6)',
 ]);
 
 function canonical(v: unknown): string {
@@ -51,16 +64,53 @@ function attachAuditEvidence(request: InspectionRequest, findings: OverallInspec
   });
 }
 
+function canonicalField(field: unknown): string {
+  const value = String(field ?? '').trim();
+  if (!value) return '';
+  if (value === 'declarations.manufactureOrImportDate' || value === 'declarations.dateOfManufacturePackingImport' || value === 'declarations.dateOfPacking' || value === 'declarations.dateOfManufacture') return 'declarations.dateOfManufacturePackingImport';
+  if (value === 'declarations.quantityText' || value === 'declarations.netQuantityText' || value === 'quantityDeclarationText') return 'declarations.quantityText';
+  return value;
+}
+
+function canonicalFindingKey(finding: OverallInspectionResult['findings'][number]): string {
+  return `${String(finding.ruleNumber ?? '').trim().replace(/[- ]+/g, '')}::${canonicalField(finding.field)}`;
+}
+
+function deduplicateEquivalentFindings(findings: OverallInspectionResult['findings']) {
+  const byRule = new Map<string, OverallInspectionResult['findings'][number]>();
+  for (const candidate of findings) {
+    const key = canonicalFindingKey(candidate);
+    const existing = byRule.get(key);
+    if (!existing) {
+      byRule.set(key, candidate);
+      continue;
+    }
+    const existingCanonical = existing.ruleId === 'PCR-R6-1-D' || existing.ruleCode === 'PCR-R6-1-D';
+    const candidateCanonical = candidate.ruleId === 'PCR-R6-1-D' || candidate.ruleCode === 'PCR-R6-1-D';
+    if (candidateCanonical && !existingCanonical) byRule.set(key, candidate);
+  }
+  return [...byRule.values()];
+}
+
 export function evaluateInspectionCompleteWithCurrentRulesV2(r: InspectionRequest, rules?: RuleDefinition[]): OverallInspectionResult {
   const specialized = evaluateSpecializedInspection(r);
-  const configured = rules?.length ? evaluateConfiguredRules(r, rules) : null;
+  const configured = rules?.length
+    ? evaluateConfiguredRules(r, rules.filter(rule => !AUTHORITATIVE_SPECIALIZED_RULES.has(rule.ruleId) && !AUTHORITATIVE_RULE_NUMBERS.has(String(rule.ruleNumber ?? '').trim())))
+    : null;
   const configuredIds = new Set((rules ?? []).map(rule => rule.ruleId));
 
-  const specializedAuthoritative = specialized.findings.filter(f => AUTHORITATIVE_SPECIALIZED_RULES.has(f.ruleId));
-  const specializedOther = specialized.findings.filter(f => !configuredIds.has(f.ruleId) && !AUTHORITATIVE_SPECIALIZED_RULES.has(f.ruleId));
-  const configuredOther = configured?.findings.filter(f => !AUTHORITATIVE_SPECIALIZED_RULES.has(f.ruleId)) ?? [];
+  const isAuthoritative = (finding: { ruleId: string; ruleCode: string; ruleNumber?: string }) =>
+    AUTHORITATIVE_SPECIALIZED_RULES.has(finding.ruleId) ||
+    AUTHORITATIVE_SPECIALIZED_RULES.has(finding.ruleCode) ||
+    AUTHORITATIVE_RULE_NUMBERS.has(String(finding.ruleNumber ?? '').trim());
 
-  const findings = [...specializedOther, ...specializedAuthoritative, ...configuredOther];
+  const specializedAuthoritative = specialized.findings.filter(isAuthoritative);
+  const specializedOther = specialized.findings.filter(
+    f => !configuredIds.has(f.ruleId) && !isAuthoritative(f),
+  );
+  const configuredOther = configured?.findings.filter(f => !isAuthoritative(f)) ?? [];
+
+  const findings = deduplicateEquivalentFindings([...specializedOther, ...specializedAuthoritative, ...configuredOther]);
   const unitSalePrice = unitSalePriceFinding(r);
   if (unitSalePrice && !findings.some(f => f.findingId === unitSalePrice.findingId)) findings.push(unitSalePrice);
 
