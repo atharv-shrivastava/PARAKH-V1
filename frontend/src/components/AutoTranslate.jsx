@@ -2,62 +2,41 @@ import { useEffect, useRef } from "react";
 import { apiFetch, getUser } from "../lib/auth";
 import { useLanguage } from "./LanguageProvider";
 
+const CACHE_VERSION = "v6";
+const ATTRS = ["placeholder", "aria-label", "title"];
 const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT"]);
-const TRANSLATABLE_ATTRIBUTES = ["placeholder", "aria-label", "title"];
-const CACHE_VERSION = "v5";
-const IDENTITY_SELECTOR = ".logo, .sidebar-user strong, [data-no-auto-translate=\"true\"], .language-picker";
+const PROTECTED = ".logo, .sidebar-user strong, [data-no-auto-translate=\"true\"], .language-picker";
 
-function shouldSkip(node) {
+const split = (value) => {
+  const m = String(value).match(/^(\s*)([\s\S]*?)(\s*)$/);
+  return { leading: m?.[1] || "", core: m?.[2] || String(value), trailing: m?.[3] || "" };
+};
+
+const technical = (value) => /^(?:[A-Z]{2,8}[-_\d]+|v?\d+(?:\.\d+){1,3}|\d{8,18})$/i.test(String(value || "").trim());
+
+function skipNode(node) {
   const parent = node.parentElement;
-  if (!parent || SKIP_TAGS.has(parent.tagName)) return true;
-  if (parent.closest(IDENTITY_SELECTOR)) return true;
   const text = node.nodeValue?.trim() || "";
-  if (text.length < 2) return true;
-  if (/^(https?:\/\/|www\.)/i.test(text)) return true;
-  if (/^[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}$/.test(text)) return true;
-  if (/^[\d\s.,:%+\-–—/()#]+$/.test(text)) return true;
-  if (/^(PCR-|SIH|OKAY|VIOLATION|NEEDS_REVIEW|UNABLE_TO_VERIFY)[A-Z0-9_()./-]*$/i.test(text)) return true;
-  return false;
+  return !parent || SKIP_TAGS.has(parent.tagName) || !!parent.closest(PROTECTED) || text.length < 2 ||
+    /^(?:https?:\/\/|www\.)/i.test(text) || /^[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}$/.test(text) ||
+    /^[\d\s.,:%+\-–—/()#]+$/.test(text) || technical(text);
 }
 
-function splitWhitespace(text) {
-  const match = String(text).match(/^(\s*)([\s\S]*?)(\s*)$/);
-  return { leading: match?.[1] || "", core: match?.[2] || String(text), trailing: match?.[3] || "" };
-}
-
-function isProbablyTechnicalText(text) {
-  const value = String(text || "").trim();
-  return /^(?:[A-Z]{2,8}[-_\d]+|v?\d+(?:\.\d+){1,3}|\d{8,18})$/.test(value);
-}
-
-function collectProtectedTerms(user) {
-  return ["PARAKH", user?.name, user?.fullName, user?.displayName, user?.email]
-    .map((value) => String(value || "").trim())
-    .filter((value) => value.length >= 2)
-    .sort((a, b) => b.length - a.length)
-    .filter((value, index, list) => list.indexOf(value) === index);
-}
-
-function protectTerms(text, protectedTerms) {
-  let source = String(text);
-  const protectedValues = [];
-  protectedTerms.forEach((term, index) => {
+function protect(value, user) {
+  const terms = ["PARAKH", user?.name, user?.fullName, user?.displayName, user?.email]
+    .map((v) => String(v || "").trim()).filter((v) => v.length >= 2).sort((a, b) => b.length - a.length)
+    .filter((v, i, a) => a.indexOf(v) === i);
+  const saved = [];
+  let source = String(value);
+  terms.forEach((term, i) => {
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`, "gi");
-    source = source.replace(pattern, (match) => {
-      const token = `PARAKHKEEP${index}TOKEN`;
-      protectedValues.push({ token, value: match });
+    const token = `PARAKH_KEEP_${i}_TOKEN`;
+    source = source.replace(new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`, "gi"), (match) => {
+      saved.push([token, match]);
       return token;
     });
   });
-  return {
-    source,
-    restore(translated) {
-      let restored = String(translated || "");
-      for (const item of protectedValues) restored = restored.split(item.token).join(item.value);
-      return restored;
-    },
-  };
+  return { source, restore: (text) => saved.reduce((out, [token, original]) => out.split(token).join(original), String(text || "")) };
 }
 
 export default function AutoTranslate() {
@@ -65,128 +44,133 @@ export default function AutoTranslate() {
   const originals = useRef(new WeakMap());
   const attributeOriginals = useRef(new WeakMap());
   const cache = useRef(new Map());
-  const busy = useRef(false);
+  const waiting = useRef(new Map());
+  const queue = useRef([]);
+  const flushing = useRef(false);
   const observer = useRef(null);
+  const applying = useRef(new WeakSet());
   const timer = useRef(null);
 
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
-    const cacheKey = `parakh_translation_cache_${CACHE_VERSION}_${language}`;
-    const protectedTerms = collectProtectedTerms(getUser());
-    try {
-      cache.current = new Map(Object.entries(JSON.parse(localStorage.getItem(cacheKey) || "{}")));
-    } catch {
-      cache.current = new Map();
-    }
+    const key = `parakh_translation_cache_${CACHE_VERSION}_${language}`;
+    try { cache.current = new Map(Object.entries(JSON.parse(localStorage.getItem(key) || "{}"))); }
+    catch { cache.current = new Map(); }
     let cancelled = false;
 
-    const restore = () => {
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const apply = (node, value) => {
+      const { leading, trailing } = split(node.original);
+      const translated = cache.current.get(split(node.original).core);
+      if (!translated) return;
+      applying.current.add(node.ref);
+      node.apply(`${leading}${translated}${trailing}`);
+      queueMicrotask(() => applying.current.delete(node.ref));
+    };
+
+    const enqueue = (original, ref, applyValue) => {
+      const { core } = split(original);
+      if (!core || technical(core)) return;
+      const cached = cache.current.get(core);
+      if (cached) { applyValue(cached); return; }
+      let protectedText = protect(core, getUser());
+      if (!waiting.current.has(core)) {
+        waiting.current.set(core, []);
+        queue.current.push({ core, source: protectedText.source, restore: protectedText.restore });
+      }
+      waiting.current.get(core).push({ ref, apply: applyValue });
+    };
+
+    const scan = (root) => {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
       let node;
       while ((node = walker.nextNode())) {
+        if (skipNode(node)) continue;
+        if (!originals.current.has(node)) originals.current.set(node, node.nodeValue || "");
         const original = originals.current.get(node);
-        if (original != null && node.nodeValue !== original) node.nodeValue = original;
+        const { core } = split(original);
+        if (core && language !== "en") enqueue(original, node, (value) => {
+          applying.current.add(node);
+          const { leading, trailing } = split(original);
+          node.nodeValue = `${leading}${value}${trailing}`;
+          queueMicrotask(() => applying.current.delete(node));
+        });
       }
-      for (const element of document.body.querySelectorAll("[placeholder], [aria-label], [title]")) {
-        const saved = attributeOriginals.current.get(element);
-        if (!saved) continue;
-        for (const attribute of TRANSLATABLE_ATTRIBUTES) {
-          if (saved[attribute] != null) element.setAttribute(attribute, saved[attribute]);
-        }
+      if (root.querySelectorAll) {
+        root.querySelectorAll("[placeholder], [aria-label], [title]").forEach((element) => {
+          if (element.closest(PROTECTED)) return;
+          if (!attributeOriginals.current.has(element)) attributeOriginals.current.set(element, {});
+          const saved = attributeOriginals.current.get(element);
+          ATTRS.forEach((attribute) => {
+            const value = element.getAttribute(attribute);
+            if (!value || value.trim().length < 2 || technical(value)) return;
+            if (saved[attribute] == null) saved[attribute] = value;
+            if (language !== "en") enqueue(saved[attribute], element, (translated) => element.setAttribute(attribute, translated));
+          });
+        });
       }
     };
 
-    async function process() {
-      if (cancelled || busy.current) return;
-      restore();
-      const nodes = [];
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      let node;
-      while ((node = walker.nextNode())) {
-        if (shouldSkip(node)) continue;
-        if (!originals.current.has(node)) originals.current.set(node, node.nodeValue || "");
-        const original = originals.current.get(node) || "";
-        const { core } = splitWhitespace(original);
-        if (core && !isProbablyTechnicalText(core)) nodes.push(node);
-      }
-
-      const attributes = [];
-      for (const element of document.body.querySelectorAll("[placeholder], [aria-label], [title]")) {
-        if (element.closest(IDENTITY_SELECTOR)) continue;
-        if (!attributeOriginals.current.has(element)) attributeOriginals.current.set(element, {});
-        const saved = attributeOriginals.current.get(element);
-        for (const attribute of TRANSLATABLE_ATTRIBUTES) {
-          const value = element.getAttribute(attribute);
-          if (!value || value.trim().length < 2 || isProbablyTechnicalText(value)) continue;
-          if (saved[attribute] == null) saved[attribute] = value;
-          attributes.push({ element, attribute, original: saved[attribute] });
-        }
-      }
-
-      if (language === "en") return;
-      const missing = [];
-      const seen = new Set();
-      const add = (value) => {
-        const core = splitWhitespace(value).core;
-        if (!core || seen.has(core) || cache.current.has(core) || isProbablyTechnicalText(core)) return;
-        const protectedText = protectTerms(core, protectedTerms);
-        seen.add(core);
-        missing.push({ original: core, source: protectedText.source, restore: protectedText.restore });
-      };
-      nodes.forEach((item) => add(originals.current.get(item) || ""));
-      attributes.forEach((item) => add(item.original));
-      if (!missing.length) return;
-
-      busy.current = true;
+    const flush = async () => {
+      if (cancelled || flushing.current || language === "en" || !queue.current.length) return;
+      flushing.current = true;
+      const batch = queue.current.splice(0, 80);
+      const active = batch.filter((item) => waiting.current.has(item.core));
       try {
-        for (let offset = 0; offset < missing.length; offset += 40) {
-          const batchItems = missing.slice(offset, offset + 40);
-          const response = await apiFetch("http://localhost:5000/api/translate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ target: language, source: "auto", texts: batchItems.map((item) => item.source) }),
-          });
-          if (!response.ok) continue;
+        const response = await apiFetch("http://localhost:5000/api/translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target: language, source: "auto", texts: active.map((item) => item.source) }),
+        });
+        if (response.ok) {
           const data = await response.json().catch(() => ({}));
-          for (const item of batchItems) {
+          active.forEach((item) => {
             const translated = data?.translations?.[item.source];
-            if (typeof translated !== "string" || !translated.trim()) continue;
-            const restored = item.restore(translated.trim());
-            if (restored && restored.toLowerCase() !== item.original.toLowerCase()) cache.current.set(item.original, restored);
-          }
-        }
-        localStorage.setItem(cacheKey, JSON.stringify(Object.fromEntries([...cache.current.entries()].slice(-1600))));
-        for (const item of nodes) {
-          const original = originals.current.get(item);
-          if (!original) continue;
-          const { leading, core, trailing } = splitWhitespace(original);
-          const translated = cache.current.get(core);
-          if (translated) item.nodeValue = `${leading}${translated}${trailing}`;
-        }
-        for (const item of attributes) {
-          const { leading, core, trailing } = splitWhitespace(item.original);
-          const translated = cache.current.get(core);
-          if (translated) item.element.setAttribute(item.attribute, `${leading}${translated}${trailing}`);
+            if (typeof translated !== "string" || !translated.trim()) return;
+            const value = item.restore(translated.trim());
+            if (!value || value.toLowerCase() === item.core.toLowerCase()) return;
+            cache.current.set(item.core, value);
+            const targets = waiting.current.get(item.core) || [];
+            targets.forEach((target) => target.apply(value));
+            waiting.current.delete(item.core);
+          });
         }
       } finally {
-        busy.current = false;
+        active.forEach((item) => waiting.current.delete(item.core));
+        flushing.current = false;
+        localStorage.setItem(key, JSON.stringify(Object.fromEntries([...cache.current.entries()].slice(-2000))));
+        if (queue.current.length) flush();
       }
-    }
-
-    const schedule = () => {
-      window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(process, 180);
     };
-    schedule();
+
+    const schedule = () => { window.clearTimeout(timer.current); timer.current = window.setTimeout(flush, 30); };
+    if (language !== "en") { scan(document.body); schedule(); }
+
     observer.current = new MutationObserver((mutations) => {
-      if (mutations.some((mutation) => mutation.type === "childList" && mutation.addedNodes.length)) schedule();
+      for (const mutation of mutations) {
+        if (mutation.type === "childList") mutation.addedNodes.forEach((node) => {
+          if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) scan(node);
+          else if (node.nodeType === Node.TEXT_NODE && !skipNode(node)) {
+            if (!originals.current.has(node)) originals.current.set(node, node.nodeValue || "");
+            enqueue(originals.current.get(node), node, (translated) => { node.nodeValue = translated; });
+          }
+        });
+      }
+      schedule();
     });
     observer.current.observe(document.body, { childList: true, subtree: true });
+
     return () => {
       cancelled = true;
       window.clearTimeout(timer.current);
       observer.current?.disconnect();
-      restore();
+      if (language !== "en") {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+          const original = originals.current.get(node);
+          if (original != null && node.nodeValue !== original) node.nodeValue = original;
+        }
+      }
     };
   }, [language]);
 
