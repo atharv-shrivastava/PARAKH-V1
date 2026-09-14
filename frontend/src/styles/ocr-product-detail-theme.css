@@ -1,0 +1,51 @@
+.product-details-page .ocr-details-grid > div {
+  background: var(--theme-soft) !important;
+  color: var(--theme-text) !important;
+  border-color: var(--theme-border) !important;
+  box-shadow: var(--theme-shadow);
+}
+
+.product-details-page .ocr-details-grid > div strong {
+  color: var(--theme-muted) !important;
+}
+
+.product-details-page .ocr-details-grid > div span {
+  color: var(--theme-text) !important;
+}
+
+.product-details-page .ocr-details-grid > div small {
+  color: var(--theme-muted) !important;
+}
+
+.product-details-page .ocr-details-grid > .parakh-id-detail {
+  background: color-mix(in srgb, var(--theme-primary) 10%, var(--theme-surface)) !important;
+  border-color: color-mix(in srgb, var(--theme-primary) 30%, var(--theme-border)) !important;
+}
+
+.product-details-page details {
+  margin-top: 18px;
+  border: 1px solid var(--theme-border);
+  border-radius: 12px;
+  background: var(--theme-surface);
+  color: var(--theme-text);
+  overflow: hidden;
+}
+
+.product-details-page details summary {
+  padding: 12px 14px;
+  cursor: pointer;
+  color: var(--theme-primary);
+  font-weight: 700;
+}
+
+.product-details-page details[open] summary {
+  border-bottom: 1px solid var(--theme-border);
+}
+
+.product-details-page .ocr-raw-text {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--theme-soft) !important;
+  color: var(--theme-text) !important;
+}
