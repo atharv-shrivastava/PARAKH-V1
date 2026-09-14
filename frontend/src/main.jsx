@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import AutoTranslate from "./components/AutoTranslate";
+import UnableToVerifyReview from "./components/UnableToVerifyReview";
 import StartupSplash from "./components/StartupSplash";
 import "./styles/global.css";
 import "./styles/components.css";
@@ -30,6 +31,7 @@ createRoot(document.getElementById("root")).render(
       <StartupSplash>
         <AutoTranslate />
         <App />
+        <UnableToVerifyReview />
       </StartupSplash>
     </LanguageProvider>
   </StrictMode>
