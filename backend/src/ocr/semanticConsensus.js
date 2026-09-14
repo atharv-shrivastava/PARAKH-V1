@@ -2,16 +2,10 @@ import { FIELD_KEYS, confidence, text } from "./semanticPackageCommon.js";
 
 const PROVIDER_WEIGHTS = { gemini: 0.45, grok: 0.45 };
 const DEFAULT_PROVIDER_WEIGHT = 0.10;
-
-function comparable(value) {
-  return text(value).toLocaleLowerCase().replace(/[₹$€£]/g, "").replace(/\s+/g, " ").trim();
-}
+function comparable(value) { return text(value).toLocaleLowerCase().replace(/[₹$€£]/g, "").replace(/\s+/g, " ").trim(); }
 function isFound(field) { return field?.status === "found" && text(field?.value) !== ""; }
 function providerWeight(provider) { return PROVIDER_WEIGHTS[String(provider || "").toLowerCase()] ?? DEFAULT_PROVIDER_WEIGHT; }
-function splitQuantity(value) {
-  const match = text(value).match(/^\s*([-+]?\d+(?:\.\d+)?)\s*([a-zA-Zµμ]+|pcs?|pieces?|units?|nos)\.?\s*$/i);
-  return match ? { quantity: match[1], unit: match[2] } : null;
-}
+function splitQuantity(value) { const match = text(value).match(/^\s*([-+]?\d+(?:\.\d+)?)\s*([a-zA-Zµμ]+|pcs?|pieces?|units?|nos)\.?\s*$/i); return match ? { quantity: match[1], unit: match[2] } : null; }
 function normalizeQuantityUnit(fields) {
   const next = Object.fromEntries(Object.entries(fields || {}).map(([key, field]) => [key, field && typeof field === "object" ? { ...field } : field]));
   const quantity = next.netQuantity, unit = next.unit;
@@ -46,12 +40,7 @@ function voteField(key, providers) {
   }
   const groups = new Map();
   for (const item of found) { if (!item.normalized) continue; if (!groups.has(item.normalized)) groups.set(item.normalized, []); groups.get(item.normalized).push(item); }
-  const scoredGroups = [...groups.values()].map((group) => {
-    const weightedVote = group.reduce((sum, item) => sum + item.weight * Math.max(0.5, confidence(item.field.confidence)), 0);
-    const rawWeight = group.reduce((sum, item) => sum + item.weight, 0);
-    const best = [...group].sort((a, b) => confidence(b.field.confidence) - confidence(a.field.confidence))[0];
-    return { group, weightedVote, rawWeight, best };
-  }).sort((a, b) => b.weightedVote - a.weightedVote || b.rawWeight - a.rawWeight || confidence(b.best?.field?.confidence) - confidence(a.best?.field?.confidence));
+  const scoredGroups = [...groups.values()].map((group) => { const weightedVote = group.reduce((sum, item) => sum + item.weight * Math.max(0.5, confidence(item.field.confidence)), 0); const rawWeight = group.reduce((sum, item) => sum + item.weight, 0); const best = [...group].sort((a, b) => confidence(b.field.confidence) - confidence(a.field.confidence))[0]; return { group, weightedVote, rawWeight, best }; }).sort((a, b) => b.weightedVote - a.weightedVote || b.rawWeight - a.rawWeight || confidence(b.best?.field?.confidence) - confidence(a.best?.field?.confidence));
   const winning = scoredGroups[0];
   if (!winning) return { value: null, raw: null, evidence: null, confidence: 0, status: "ambiguous", verification: "conflict", source: "SEMANTIC_CONSENSUS", votes };
   const totalSemanticWeight = observations.reduce((sum, item) => sum + item.weight, 0) || 1;
@@ -70,11 +59,7 @@ function voteCategory(providers, categoryOptions) {
   if (!observations.length) return null;
   const groups = new Map();
   for (const observation of observations) { if (!groups.has(observation.id)) groups.set(observation.id, []); groups.get(observation.id).push(observation); }
-  const winning = [...groups.values()].sort((a, b) => {
-    const aScore = a.reduce((sum, item) => sum + item.weight * Math.max(0.5, confidence(item.category.confidence)), 0);
-    const bScore = b.reduce((sum, item) => sum + item.weight * Math.max(0.5, confidence(item.category.confidence)), 0);
-    return bScore - aScore || b.length - a.length || confidence(b[0]?.category?.confidence) - confidence(a[0]?.category?.confidence);
-  })[0];
+  const winning = [...groups.values()].sort((a, b) => { const aScore = a.reduce((sum, item) => sum + item.weight * Math.max(0.5, confidence(item.category.confidence)), 0); const bScore = b.reduce((sum, item) => sum + item.weight * Math.max(0.5, confidence(item.category.confidence)), 0); return bScore - aScore || b.length - a.length || confidence(b[0]?.category?.confidence) - confidence(a[0]?.category?.confidence); })[0];
   if (!winning) return null;
   const allowed = categoryOptions.find((item) => String(item.id) === winning[0].id);
   const best = [...winning].sort((a, b) => confidence(b.category.confidence) - confidence(a.category.confidence))[0];
@@ -84,12 +69,11 @@ function voteCategory(providers, categoryOptions) {
   if (winning.length < 2 && ids.size > 1) return { categoryId: null, categoryName: null, categoryPath: null, confidence: 0, reason: "Semantic providers disagreed on category." };
   return { categoryId: allowed ? String(allowed.id) : winning[0].id, categoryName: allowed ? text(allowed.name) : winning[0].category.categoryName || null, categoryPath: allowed ? text(allowed.path) : winning[0].category.categoryPath || null, confidence: Math.min(0.98, confidence(best.category.confidence)), reason: `${winning.length} semantic providers selected the same category.` };
 }
-function richExtractionFromProviders(providers) {
-  return providers.filter((provider) => provider?.enabled && provider?.packageDetails && typeof provider.packageDetails === "object").map((provider) => ({ provider: provider.provider, model: provider.model || null, data: provider.packageDetails }));
-}
+function richExtractionFromProviders(providers) { return providers.filter((provider) => provider?.enabled && provider?.packageDetails && typeof provider.packageDetails === "object").map((provider) => ({ provider: provider.provider, model: provider.model || null, data: provider.packageDetails })); }
 export function reconcileSemanticResults(providers = [], categoryOptions = []) {
   const enabledProviders = providers.filter((provider) => provider?.enabled);
   const fields = {};
   for (const key of FIELD_KEYS) fields[key] = voteField(key, providers);
-  return { enabled: enabledProviders.length > 0, providerCount: enabledProviders.length, providerWeights: PROVIDER_WEIGHTS, providers: providers.map((provider) => ({ provider: provider?.provider || "unknown", model: provider?.model || null, enabled: Boolean(provider?.enabled), reason: provider?.enabled ? null : provider?.reason || "Provider unavailable." })), fields: normalizeQuantityUnit(fields), suggestedCategory: voteCategory(providers, categoryOptions), packageDetailsByProvider: richExtractionFromProviders(providers) };
+  const providerSummary = providers.map((provider) => ({ provider: provider?.provider || "unknown", model: provider?.model || null, enabled: Boolean(provider?.enabled), reason: provider?.enabled ? null : provider?.reason || "Provider unavailable.", packageDetails: provider?.packageDetails || null }));
+  return { enabled: enabledProviders.length > 0, providerCount: enabledProviders.length, providerWeights: PROVIDER_WEIGHTS, providers: providerSummary, fields: normalizeQuantityUnit(fields), suggestedCategory: voteCategory(providers, categoryOptions), packageDetailsByProvider: richExtractionFromProviders(providers) };
 }
