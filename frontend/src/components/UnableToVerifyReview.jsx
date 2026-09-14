@@ -142,6 +142,38 @@ function setDecisionState(next) {
   window.dispatchEvent(new CustomEvent(REVIEW_EVENT, { detail: capturedCompliance }));
 }
 
+function syncRegistrationDom(unresolvedCount, failCount) {
+  const button = Array.from(document.querySelectorAll("button[type=submit]"))
+    .find((candidate) => /Register Offline Product/i.test(candidate.textContent || ""));
+  if (button) {
+    if (unresolvedCount > 0) {
+      button.disabled = true;
+      button.setAttribute("aria-disabled", "true");
+      button.dataset.parakhReviewBlocked = "true";
+    } else if (button.dataset.parakhReviewBlocked === "true") {
+      button.disabled = false;
+      button.removeAttribute("aria-disabled");
+      delete button.dataset.parakhReviewBlocked;
+    }
+  }
+
+  const finalStatusLabel = Array.from(document.querySelectorAll("strong"))
+    .find((candidate) => String(candidate.textContent || "").trim() === "Final status");
+  if (!finalStatusLabel) return;
+  const statusSpan = finalStatusLabel.parentElement?.querySelector("span");
+  if (!statusSpan) return;
+  if (unresolvedCount > 0) {
+    statusSpan.textContent = "NEEDS_REVIEW";
+    return;
+  }
+
+  const grid = finalStatusLabel.closest(".ocr-status-grid");
+  const selectedLabel = Array.from(grid?.querySelectorAll("strong") || [])
+    .find((candidate) => String(candidate.textContent || "").trim() === "Selected violations");
+  const selectedCount = Number.parseInt(selectedLabel?.parentElement?.querySelector("span")?.textContent || "0", 10) || 0;
+  statusSpan.textContent = failCount > 0 || selectedCount > 0 ? "VIOLATION" : "OKAY";
+}
+
 export default function UnableToVerifyReview() {
   const [compliance, setCompliance] = useState(() => capturedCompliance || readJson(CAPTURED_KEY, null));
   const [decisions, setDecisions] = useState(() => ({ ...activeDecisions }));
@@ -163,48 +195,8 @@ export default function UnableToVerifyReview() {
   const passCount = unable.filter((finding) => decisions[finding.findingId] === "PASS").length;
 
   useEffect(() => {
-    const syncRegisterButton = () => {
-      const button = Array.from(document.querySelectorAll("button[type=submit]"))
-        .find((candidate) => /Register Offline Product/i.test(candidate.textContent || ""));
-      if (button) {
-        if (unresolvedCount > 0) {
-          button.disabled = true;
-          button.setAttribute("aria-disabled", "true");
-          button.dataset.parakhReviewBlocked = "true";
-        } else if (button.dataset.parakhReviewBlocked === "true") {
-          button.disabled = false;
-          button.removeAttribute("aria-disabled");
-          delete button.dataset.parakhReviewBlocked;
-        }
-      }
-
-      const finalStatusLabel = Array.from(document.querySelectorAll("strong"))
-        .find((candidate) => String(candidate.textContent || "").trim() === "Final status");
-      if (!finalStatusLabel || unresolvedCount > 0) {
-        if (finalStatusLabel && unresolvedCount > 0) {
-          const statusSpan = finalStatusLabel.parentElement?.querySelector("span");
-          if (statusSpan) statusSpan.textContent = "NEEDS_REVIEW";
-        }
-        return;
-      }
-
-      const grid = finalStatusLabel.closest(".ocr-status-grid");
-      const selectedLabel = Array.from(grid?.querySelectorAll("strong") || [])
-        .find((candidate) => String(candidate.textContent || "").trim() === "Selected violations");
-      const selectedCount = Number.parseInt(selectedLabel?.parentElement?.querySelector("span")?.textContent || "0", 10) || 0;
-      const statusSpan = finalStatusLabel.parentElement?.querySelector("span");
-      if (statusSpan) statusSpan.textContent = failCount > 0 || selectedCount > 0 ? "VIOLATION" : "OKAY";
-    };
-
-    syncRegisterButton();
-    const observer = new MutationObserver(syncRegisterButton);
-    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["disabled"] });
-    const timer = window.setInterval(syncRegisterButton, 300);
-    return () => {
-      observer.disconnect();
-      window.clearInterval(timer);
-    };
-  }, [failCount, unresolvedCount]);
+    syncRegistrationDom(unresolvedCount, failCount);
+  }, [unresolvedCount, failCount, compliance]);
 
   if (!unable.length) return null;
 
@@ -212,6 +204,10 @@ export default function UnableToVerifyReview() {
     const next = { ...decisions, [findingId]: decision };
     setDecisions(next);
     setDecisionState(next);
+    window.requestAnimationFrame(() => syncRegistrationDom(
+      unable.filter((finding) => !next[finding.findingId]).length,
+      unable.filter((finding) => next[finding.findingId] === "FAIL").length,
+    ));
   };
 
   return (
