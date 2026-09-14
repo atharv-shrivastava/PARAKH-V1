@@ -4,13 +4,14 @@ import { useLanguage } from "./LanguageProvider";
 
 const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT"]);
 const SKIP_SELECTOR = "[data-no-auto-translate=\"true\"], .language-picker";
+const IDENTITY_SELECTOR = "[data-no-auto-translate=\"true\"], .product-identity, .category-identity, .shop-identity, .product-name, .shop-name, .username, .user-name, .inspector-name";
 const TRANSLATABLE_ATTRIBUTES = ["placeholder", "aria-label", "title"];
-const CACHE_VERSION = "v4";
+const CACHE_VERSION = "v5";
 
 function shouldSkip(node) {
   const parent = node.parentElement;
   if (!parent || SKIP_TAGS.has(parent.tagName)) return true;
-  if (parent.closest(SKIP_SELECTOR)) return true;
+  if (parent.closest(IDENTITY_SELECTOR) || parent.closest(SKIP_SELECTOR)) return true;
   const text = node.nodeValue?.trim() || "";
   if (text.length < 2) return true;
   if (/^(https?:\/\/|www\.)/i.test(text)) return true;
@@ -27,7 +28,7 @@ function splitWhitespace(text) {
 
 function isDynamicIdentityElement(element) {
   if (!(element instanceof Element)) return false;
-  return Boolean(element.closest('[data-no-auto-translate="true"], .product-identity, .category-identity'));
+  return Boolean(element.closest(IDENTITY_SELECTOR));
 }
 
 function isProbablyTechnicalText(text) {
