@@ -1,0 +1,51 @@
+/* Recorded-product Rules Engine cards: keep long rule identifiers and messages inside the content column. */
+.products-page .rules-findings {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.products-page .finding-row {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  align-items: start;
+}
+
+.products-page .finding-row > strong,
+.products-page .finding-row > span,
+.products-page .finding-row > small {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.products-page .finding-row > strong {
+  display: block;
+  line-height: 1.35;
+}
+
+.products-page .finding-row > span,
+.products-page .finding-row > small {
+  white-space: normal;
+}
+
+.products-page .penalty-review,
+.products-page .penalty-review .rules-findings,
+.products-page .penalty-review .finding-row {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.products-page .penalty-review .ocr-details-grid > * {
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .products-page .finding-row {
+    padding: 12px;
+  }
+}
