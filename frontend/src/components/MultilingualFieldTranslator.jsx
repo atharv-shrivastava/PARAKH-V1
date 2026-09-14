@@ -23,6 +23,14 @@ function isSignupIdentity(element) {
   return /(^|\W)(name|email|username)(\W|$)/.test(text) && element.closest("form") && !element.closest(".registration-form");
 }
 
+function setControlledValue(element, value) {
+  const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+  if (setter) setter.call(element, value); else element.value = value;
+  element.dispatchEvent(new Event("input", { bubbles: true }));
+  element.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
 export default function MultilingualFieldTranslator() {
   const originals = useRef(new WeakMap());
   const translating = useRef(false);
@@ -64,9 +72,8 @@ export default function MultilingualFieldTranslator() {
           if (typeof translated !== "string" || !translated.trim() || translated.trim() === original.trim()) continue;
           if (document.activeElement === element && element.dataset.parakhTranslated !== "true") continue;
           const next = translated.trim();
-          element.value = next;
+          setControlledValue(element, next);
           element.dataset.parakhTranslated = "true";
-          element.dispatchEvent(new Event("input", { bubbles: true }));
         }
       } finally {
         translating.current = false;
