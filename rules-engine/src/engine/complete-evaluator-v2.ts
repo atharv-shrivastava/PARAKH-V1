@@ -52,6 +52,24 @@ function attachAuditEvidence(request: InspectionRequest, findings: OverallInspec
   });
 }
 
+function deduplicateEquivalentFindings(findings: OverallInspectionResult['findings']) {
+  const byRule = new Map<string, OverallInspectionResult['findings'][number]>();
+  for (const candidate of findings) {
+    const normalizedRule = String(candidate.ruleNumber ?? '').trim().replace(/[- ]+/g, '');
+    const field = String(candidate.field ?? '').trim();
+    const key = `${normalizedRule}::${field}`;
+    const existing = byRule.get(key);
+    if (!existing) {
+      byRule.set(key, candidate);
+      continue;
+    }
+    const existingCanonical = existing.ruleId === 'PCR-R6-1-D';
+    const candidateCanonical = candidate.ruleId === 'PCR-R6-1-D';
+    if (candidateCanonical && !existingCanonical) byRule.set(key, candidate);
+  }
+  return [...byRule.values()];
+}
+
 export function evaluateInspectionCompleteWithCurrentRulesV2(r: InspectionRequest, rules?: RuleDefinition[]): OverallInspectionResult {
   const specialized = evaluateSpecializedInspection(r);
   const configured = rules?.length ? evaluateConfiguredRules(r, rules) : null;
@@ -67,7 +85,7 @@ export function evaluateInspectionCompleteWithCurrentRulesV2(r: InspectionReques
   );
   const configuredOther = configured?.findings.filter(f => !isAuthoritative(f)) ?? [];
 
-  const findings = [...specializedOther, ...specializedAuthoritative, ...configuredOther];
+  const findings = deduplicateEquivalentFindings([...specializedOther, ...specializedAuthoritative, ...configuredOther]);
   const unitSalePrice = unitSalePriceFinding(r);
   if (unitSalePrice && !findings.some(f => f.findingId === unitSalePrice.findingId)) findings.push(unitSalePrice);
 
