@@ -1,5 +1,11 @@
 import { FIELD_KEYS, confidence, text } from "./semanticPackageCommon.js";
 
+const PROVIDER_WEIGHTS = {
+  gemini: 0.45,
+  grok: 0.45,
+};
+const DEFAULT_PROVIDER_WEIGHT = 0.10;
+
 function comparable(value) {
   return text(value)
     .toLocaleLowerCase()
@@ -10,6 +16,10 @@ function comparable(value) {
 
 function isFound(field) {
   return field?.status === "found" && text(field?.value) !== "";
+}
+
+function providerWeight(provider) {
+  return PROVIDER_WEIGHTS[String(provider || "").toLowerCase()] ?? DEFAULT_PROVIDER_WEIGHT;
 }
 
 // Manufacturing/batch/inkjet codes are frequently short alphanumeric strings.
@@ -47,12 +57,19 @@ function voteField(key, providers) {
     .filter((provider) => provider?.enabled && provider?.fields?.[key])
     .map((provider) => ({
       provider: provider.provider,
+      weight: providerWeight(provider.provider),
       field: sanitizeField(key, provider.fields[key]),
       normalized: comparable(provider.fields[key].value),
     }));
 
   const found = observations.filter((item) => isFound(item.field));
-  const votes = observations.map((item) => ({ provider: item.provider, status: item.field.status, value: item.field.value ?? null }));
+  const votes = observations.map((item) => ({
+    provider: item.provider,
+    weight: item.weight,
+    status: item.field.status,
+    value: item.field.value ?? null,
+    confidence: confidence(item.field.confidence),
+  }));
 
   if (!found.length) {
     const statuses = observations.map((item) => item.field.status);
@@ -68,26 +85,59 @@ function voteField(key, providers) {
     groups.get(item.normalized).push(item);
   }
 
-  let winningGroup = null;
-  for (const group of groups.values()) if (!winningGroup || group.length > winningGroup.length) winningGroup = group;
+  // Score each candidate by provider authority first, then model confidence.
+  // Gemini and Grok therefore carry 90% of the total semantic vote, while any
+  // future low-authority semantic provider can only contribute a small tie-break.
+  const scoredGroups = [...groups.values()].map((group) => {
+    const weightedVote = group.reduce((sum, item) => sum + item.weight * Math.max(0.5, confidence(item.field.confidence)), 0);
+    const rawWeight = group.reduce((sum, item) => sum + item.weight, 0);
+    const best = [...group].sort((a, b) => confidence(b.field.confidence) - confidence(a.field.confidence))[0];
+    return { group, weightedVote, rawWeight, best };
+  }).sort((a, b) => b.weightedVote - a.weightedVote || b.rawWeight - a.rawWeight || confidence(b.best?.field?.confidence) - confidence(a.best?.field?.confidence));
 
-  if (winningGroup?.length >= 2) {
-    const best = [...winningGroup].sort((a, b) => confidence(b.field.confidence) - confidence(a.field.confidence))[0];
-    return { ...best.field, raw: best.field.raw ?? best.field.value, evidence: best.field.evidence ?? best.field.raw ?? best.field.value, verification: `majority-${winningGroup.length}/${providers.filter((item) => item?.enabled).length}`, source: "SEMANTIC_CONSENSUS", votes };
+  const winning = scoredGroups[0];
+  if (!winning) {
+    return { value: null, raw: null, evidence: null, confidence: 0, status: "ambiguous", verification: "conflict", source: "SEMANTIC_CONSENSUS", votes };
   }
 
-  if (found.length === 1) {
-    const only = found[0];
-    return { ...only.field, verification: "single-model", confidence: Math.min(confidence(only.field.confidence), 0.74), source: "SEMANTIC_CONSENSUS", votes };
+  const totalSemanticWeight = observations.reduce((sum, item) => sum + item.weight, 0) || 1;
+  const normalizedWinningVote = winning.weightedVote / totalSemanticWeight;
+  const secondVote = scoredGroups[1]?.weightedVote || 0;
+  const margin = winning.weightedVote - secondVote;
+
+  // Strong single-provider agreement can still win when both models are not
+  // available, but a genuine Gemini/Grok split remains ambiguous when neither
+  // side has enough weighted authority to justify overriding the other.
+  if (winning.group.length >= 2 || normalizedWinningVote >= 0.55 || margin >= 0.20) {
+    const best = winning.best;
+    const winningProviders = winning.group.map((item) => item.provider).join("+");
+    return {
+      ...best.field,
+      raw: best.field.raw ?? best.field.value,
+      evidence: best.field.evidence ?? best.field.raw ?? best.field.value,
+      verification: `weighted-${winningProviders}`,
+      confidence: Math.max(confidence(best.field.confidence), Math.min(0.98, normalizedWinningVote)),
+      source: "SEMANTIC_CONSENSUS",
+      votes,
+    };
   }
 
-  return { value: null, raw: found.map((item) => item.field.raw || item.field.value).filter(Boolean).join(" | ") || null, evidence: found.map((item) => `${item.provider}: ${item.field.evidence || item.field.value}`).join(" | "), confidence: 0, status: "ambiguous", verification: "conflict", source: "SEMANTIC_CONSENSUS", votes };
+  return {
+    value: null,
+    raw: found.map((item) => item.field.raw || item.field.value).filter(Boolean).join(" | ") || null,
+    evidence: found.map((item) => `${item.provider}: ${item.field.evidence || item.field.value}`).join(" | "),
+    confidence: 0,
+    status: "ambiguous",
+    verification: "weighted-conflict",
+    source: "SEMANTIC_CONSENSUS",
+    votes,
+  };
 }
 
 function voteCategory(providers, categoryOptions) {
   const observations = providers
     .filter((provider) => provider?.enabled && provider?.suggestedCategory?.categoryId)
-    .map((provider) => ({ provider: provider.provider, category: provider.suggestedCategory, id: String(provider.suggestedCategory.categoryId) }));
+    .map((provider) => ({ provider: provider.provider, category: provider.suggestedCategory, id: String(provider.suggestedCategory.categoryId), weight: providerWeight(provider.provider) }));
   if (!observations.length) return null;
 
   const groups = new Map();
@@ -96,7 +146,11 @@ function voteCategory(providers, categoryOptions) {
     groups.get(observation.id).push(observation);
   }
 
-  const winning = [...groups.values()].sort((a, b) => b.length - a.length || confidence(b[0]?.category?.confidence) - confidence(a[0]?.category?.confidence))[0];
+  const winning = [...groups.values()].sort((a, b) => {
+    const aScore = a.reduce((sum, item) => sum + item.weight * Math.max(0.5, confidence(item.category.confidence)), 0);
+    const bScore = b.reduce((sum, item) => sum + item.weight * Math.max(0.5, confidence(item.category.confidence)), 0);
+    return bScore - aScore || b.length - a.length || confidence(b[0]?.category?.confidence) - confidence(a[0]?.category?.confidence);
+  })[0];
   if (!winning) return null;
 
   const allowed = categoryOptions.find((item) => String(item.id) === winning[0].id);
@@ -113,7 +167,8 @@ function voteCategory(providers, categoryOptions) {
     };
   }
 
-  if (winning.length < 2) {
+  const ids = new Set(observations.map((item) => item.id));
+  if (winning.length < 2 && ids.size > 1) {
     return { categoryId: null, categoryName: null, categoryPath: null, confidence: 0, reason: "Semantic providers disagreed on category." };
   }
 
@@ -121,8 +176,8 @@ function voteCategory(providers, categoryOptions) {
     categoryId: allowed ? String(allowed.id) : winning[0].id,
     categoryName: allowed ? text(allowed.name) : winning[0].category.categoryName || null,
     categoryPath: allowed ? text(allowed.path) : winning[0].category.categoryPath || null,
-    confidence: confidence(best.category.confidence),
-    reason: `${winning.length} semantic providers selected the same category.`,
+    confidence: Math.min(0.98, confidence(best.category.confidence)),
+    reason: `${winning.length} semantic providers selected the same category.` ,
   };
 }
 
@@ -133,6 +188,7 @@ export function reconcileSemanticResults(providers = [], categoryOptions = []) {
   return {
     enabled: enabledProviders.length > 0,
     providerCount: enabledProviders.length,
+    providerWeights: PROVIDER_WEIGHTS,
     providers: providers.map((provider) => ({ provider: provider?.provider || "unknown", model: provider?.model || null, enabled: Boolean(provider?.enabled), reason: provider?.enabled ? null : provider?.reason || "Provider unavailable." })),
     fields,
     suggestedCategory: voteCategory(providers, categoryOptions),
