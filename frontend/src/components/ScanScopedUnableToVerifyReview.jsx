@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import UnableToVerifyReview from "./UnableToVerifyReview";
+import ScanUnableToVerifyReview from "./ScanUnableToVerifyReview";
 import "../styles/unable-to-verify-review.css";
 
 export default function ScanScopedUnableToVerifyReview() {
@@ -22,7 +22,7 @@ export default function ScanScopedUnableToVerifyReview() {
 
   return createPortal(
     <div className="parakh-unable-review-host">
-      <UnableToVerifyReview />
+      <ScanUnableToVerifyReview />
     </div>,
     host,
   );
