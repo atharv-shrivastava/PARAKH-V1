@@ -7,9 +7,8 @@ import { useLanguage } from "../components/LanguageProvider";
 import "../styles/profile.css";
 
 const THEME_GROUPS = [
-  { id: "light", label: "Light", icon: "☀", ids: ["royal-blue", "emerald", "violet", "rose", "orange", "cyan", "indigo", "teal", "amber", "slate", "crimson", "plum"] },
-  { id: "dark", label: "Dark", icon: "◐", ids: ["dark", "dark-emerald", "dark-violet", "ruby-dark", "purple-dark", "obsidian", "graphite", "black-grey", "red-black"] },
-  { id: "gradient", label: "Gradient", icon: "✦", ids: ["rainbow", "sunset-gradient", "ocean-gradient", "aurora-gradient", "candy-gradient", "midnight-gradient", "nebula-gradient", "ember-gradient", "ocean-night-gradient", "cyber-gradient"] },
+  { id: "light", label: "Light", icon: "☀", ids: ["red", "blue", "green"] },
+  { id: "dark", label: "Dark", icon: "◐", ids: ["dark-red", "dark-blue", "dark-green"] },
 ];
 
 function ThemeIcon({ kind }) {
@@ -28,8 +27,7 @@ function Profile() {
   }
 
   function changeTheme(event) {
-    const next = applyTheme(event.target.value);
-    setTheme(next);
+    setTheme(applyTheme(event.target.value));
   }
 
   function changeLanguage(event) {
