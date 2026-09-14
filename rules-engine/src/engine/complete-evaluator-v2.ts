@@ -16,6 +16,18 @@ const AUTHORITATIVE_SPECIALIZED_RULES = new Set([
   'PCR-R12-6',
 ]);
 
+const AUTHORITATIVE_RULE_NUMBERS = new Set([
+  '6(1)(a)',
+  '6(1)(b)',
+  '6(1)(c)',
+  '6(1)(d)',
+  '6(1)(e)',
+  '6(1)(f)',
+  '6(1)(g)',
+  '6(2)',
+  '12(6)',
+]);
+
 function canonical(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v);
   if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
@@ -63,8 +75,8 @@ function deduplicateEquivalentFindings(findings: OverallInspectionResult['findin
       byRule.set(key, candidate);
       continue;
     }
-    const existingCanonical = existing.ruleId === 'PCR-R6-1-D';
-    const candidateCanonical = candidate.ruleId === 'PCR-R6-1-D';
+    const existingCanonical = existing.ruleId === 'PCR-R6-1-D' || existing.ruleCode === 'PCR-R6-1-D';
+    const candidateCanonical = candidate.ruleId === 'PCR-R6-1-D' || candidate.ruleCode === 'PCR-R6-1-D';
     if (candidateCanonical && !existingCanonical) byRule.set(key, candidate);
   }
   return [...byRule.values()];
@@ -75,9 +87,10 @@ export function evaluateInspectionCompleteWithCurrentRulesV2(r: InspectionReques
   const configured = rules?.length ? evaluateConfiguredRules(r, rules) : null;
   const configuredIds = new Set((rules ?? []).map(rule => rule.ruleId));
 
-  const isAuthoritative = (finding: { ruleId: string; ruleCode: string }) =>
+  const isAuthoritative = (finding: { ruleId: string; ruleCode: string; ruleNumber?: string }) =>
     AUTHORITATIVE_SPECIALIZED_RULES.has(finding.ruleId) ||
-    AUTHORITATIVE_SPECIALIZED_RULES.has(finding.ruleCode);
+    AUTHORITATIVE_SPECIALIZED_RULES.has(finding.ruleCode) ||
+    AUTHORITATIVE_RULE_NUMBERS.has(String(finding.ruleNumber ?? '').trim());
 
   const specializedAuthoritative = specialized.findings.filter(isAuthoritative);
   const specializedOther = specialized.findings.filter(
