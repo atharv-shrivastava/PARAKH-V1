@@ -56,9 +56,15 @@ export function evaluateInspectionCompleteWithCurrentRulesV2(r: InspectionReques
   const configured = rules?.length ? evaluateConfiguredRules(r, rules) : null;
   const configuredIds = new Set((rules ?? []).map(rule => rule.ruleId));
 
-  const specializedAuthoritative = specialized.findings.filter(f => AUTHORITATIVE_SPECIALIZED_RULES.has(f.ruleId));
-  const specializedOther = specialized.findings.filter(f => !configuredIds.has(f.ruleId) && !AUTHORITATIVE_SPECIALIZED_RULES.has(f.ruleId));
-  const configuredOther = configured?.findings.filter(f => !AUTHORITATIVE_SPECIALIZED_RULES.has(f.ruleId)) ?? [];
+  const isAuthoritative = (finding: { ruleId: string; ruleCode: string }) =>
+    AUTHORITATIVE_SPECIALIZED_RULES.has(finding.ruleId) ||
+    AUTHORITATIVE_SPECIALIZED_RULES.has(finding.ruleCode);
+
+  const specializedAuthoritative = specialized.findings.filter(isAuthoritative);
+  const specializedOther = specialized.findings.filter(
+    f => !configuredIds.has(f.ruleId) && !isAuthoritative(f),
+  );
+  const configuredOther = configured?.findings.filter(f => !isAuthoritative(f)) ?? [];
 
   const findings = [...specializedOther, ...specializedAuthoritative, ...configuredOther];
   const unitSalePrice = unitSalePriceFinding(r);
