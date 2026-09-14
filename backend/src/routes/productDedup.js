@@ -9,12 +9,18 @@ function normalizeText(value) {
   return String(value || "")
     .normalize("NFKC")
     .trim()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(/\s+/g, " ")
     .toLocaleLowerCase("en-IN");
 }
 
 function normalizeBarcode(value) {
   return String(value || "").replace(/\D/g, "");
+}
+
+function normalizeQuantity(value) {
+  const match = String(value || "").replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+  return match ? match[0] : normalizeText(value);
 }
 
 function displayParakhId(product) {
@@ -27,7 +33,7 @@ router.post("/", async (req, res, next) => {
     const barcode = normalizeBarcode(body.barcode);
     const productName = normalizeText(body.productName);
     const brandName = normalizeText(body.brandName);
-    const netQuantity = normalizeText(body.netQuantity);
+    const netQuantity = normalizeQuantity(body.netQuantity);
     const unit = normalizeText(body.unit);
 
     let existing = null;
@@ -45,7 +51,6 @@ router.post("/", async (req, res, next) => {
       const candidates = await prisma.product.findMany({
         where: {
           productName: { equals: productName, mode: "insensitive" },
-          netQuantity: { equals: netQuantity, mode: "insensitive" },
           unit: { equals: unit, mode: "insensitive" },
           ...(brandName ? { brandName: { equals: brandName, mode: "insensitive" } } : {}),
         },
@@ -54,7 +59,7 @@ router.post("/", async (req, res, next) => {
       });
       existing = candidates.find((product) => (
         normalizeText(product.productName) === productName &&
-        normalizeText(product.netQuantity) === netQuantity &&
+        normalizeQuantity(product.netQuantity) === netQuantity &&
         normalizeText(product.unit) === unit &&
         (!brandName || normalizeText(product.brandName) === brandName)
       )) || null;
