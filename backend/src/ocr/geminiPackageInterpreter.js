@@ -9,27 +9,8 @@ import { interpretOcrFields } from "./ocrFieldInterpreter.js";
 import { repairNumericFields } from "./numericFieldRepair.js";
 import { preprocessImagesForAI } from "./imagePreprocessor.js";
 
-const OCR_PRIORITY_FIELDS = new Set([
-  "mrp",
-  "netQuantity",
-  "unit",
-  "dateOfManufacture",
-  "dateOfPacking",
-  "bestBefore",
-  "expiryDate",
-  "batchNumber",
-  "consumerCarePhone",
-  "consumerCareEmail",
-  "fssaiLicenseNumber",
-  "barcode",
-]);
-
 function hasValue(field) {
   return field?.status === "found" && String(field?.value ?? "").trim() !== "";
-}
-
-function normalizeText(value) {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function mergeDeterministicEvidence(geminiFields, detections, rawText) {
@@ -56,20 +37,10 @@ function mergeDeterministicEvidence(geminiFields, detections, rawText) {
       continue;
     }
 
-    const localHasGeometry = Boolean(localField?.evidence?.length && localField?.evidence?.some?.((item) => item?.boundingBox));
-    const localConfidence = Number(localField?.confidence || 0);
-    const aiConfidence = Number(geminiField?.confidence || 0);
-
-    if (OCR_PRIORITY_FIELDS.has(key) && localHasGeometry && localConfidence >= aiConfidence) {
-      merged[key] = {
-        ...localField,
-        displayValue: geminiField?.displayValue || localField?.value || "",
-        verification: "deterministic-ocr-priority",
-        source: "GEMINI_SEMANTIC_PLUS_LOCAL_OCR",
-      };
-      continue;
-    }
-
+    // Gemini is the semantic interpreter. Local OCR supplies geometry and raw
+    // evidence only; it must not replace a Gemini reading just because OCR has
+    // a higher character confidence. This is especially important for numbers
+    // such as 500 g vs 250, where OCR may confidently read the wrong token.
     merged[key] = {
       ...geminiField,
       displayValue: geminiField?.displayValue || geminiField?.value || localField?.value || "",
