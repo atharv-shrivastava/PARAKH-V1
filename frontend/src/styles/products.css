@@ -95,19 +95,23 @@
 
 /* PARAKH registered-product detail theme */
 .product-details-page .product-title-row { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; }
-.product-details-page .product-title-row > div:first-child { min-width:0; }
 .product-details-page .product-actions,
-.product-details-page .product-categories { background:linear-gradient(135deg,#f8fbff 0%,#eef5ff 100%); border:1px solid #d7e3f3; box-shadow:0 6px 20px rgba(31,75,153,.06); }
+.product-details-page .product-categories { background:linear-gradient(135deg,var(--theme-surface) 0%,var(--theme-soft) 100%); border:1px solid var(--theme-border); box-shadow:var(--theme-shadow); }
 .product-details-page .product-actions { padding:22px; border-radius:16px; }
 .product-details-page .product-categories { padding:22px; border-radius:16px; }
-.product-details-page .ocr-details-grid > div { background:#f7faff; border-color:#d8e3f0; }
-.product-details-page .ocr-details-grid > .parakh-id-detail { background:linear-gradient(135deg,#eaf1ff,#f5f9ff); border-color:#b9cdf0; }
-.parakh-id-card { flex:0 0 auto; min-width:220px; padding:14px 16px; border:1px solid #b9cdf0; border-radius:14px; background:linear-gradient(135deg,#eaf1ff,#f5f9ff); box-shadow:0 4px 14px rgba(31,75,153,.08); }
-.parakh-id-card span { display:block; margin-bottom:6px; color:#536985; font-size:11px; font-weight:800; letter-spacing:.1em; }
-.parakh-id-card strong { display:block; color:#173b79; font-size:14px; line-height:1.4; overflow-wrap:anywhere; }
-.parakh-id-detail span { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-weight:800; color:#173b79; overflow-wrap:anywhere; }
-.product-details-page .rules-findings .finding-row { background:#f8fbff; border-color:#dbe5f2; }
-.product-details-page .rules-findings .finding-row.violation { background:#fff7f7; }
-.product-details-page .rules-findings .finding-row.unable_to_verify { background:#fffbeb; }
-.product-details-page .ocr-raw-text { background:#eef4fb; border:1px solid #d7e3ef; }
+.product-details-page .ocr-details-grid > div { background:var(--theme-soft); border-color:var(--theme-border); color:var(--theme-text); }
+.product-details-page .ocr-details-grid > .parakh-id-detail { background:color-mix(in srgb,var(--theme-primary) 10%,var(--theme-surface)); border-color:color-mix(in srgb,var(--theme-primary) 30%,var(--theme-border)); }
+.parakh-id-card { flex:0 0 auto; min-width:220px; padding:14px 16px; border:1px solid color-mix(in srgb,var(--theme-primary) 30%,var(--theme-border)); border-radius:14px; background:color-mix(in srgb,var(--theme-primary) 9%,var(--theme-surface)); box-shadow:var(--theme-shadow); }
+.parakh-id-card span { display:block; margin-bottom:6px; color:var(--theme-muted); font-size:11px; font-weight:800; letter-spacing:.1em; }
+.parakh-id-card strong { display:block; color:var(--theme-primary); font-size:14px; line-height:1.4; overflow-wrap:anywhere; }
+.parakh-id-detail span { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-weight:800; color:var(--theme-primary); overflow-wrap:anywhere; }
+.product-details-page .rules-findings .finding-row { background:var(--theme-soft); border-color:var(--theme-border); color:var(--theme-text); }
+.product-details-page .rules-findings .finding-row.violation { background:color-mix(in srgb,#dc2626 9%,var(--theme-surface)); }
+.product-details-page .rules-findings .finding-row.unable_to_verify { background:color-mix(in srgb,#d97706 10%,var(--theme-surface)); }
+.product-details-page .finding-row span { color:var(--theme-muted); }
+.product-details-page .finding-row small { color:var(--theme-muted); }
+.product-details-page .ocr-raw-text { background:var(--theme-soft); border:1px solid var(--theme-border); color:var(--theme-text); }
+.product-details-page .secondary-action { background:var(--theme-primary); color:#fff; }
+.product-details-page .delete-category-button { background:transparent; border-color:#dc2626; color:#dc2626; }
+.product-details-page .back-link { color:var(--theme-primary); }
 @media(max-width:760px){.product-details-page .product-title-row{flex-direction:column}.parakh-id-card{width:100%;min-width:0}}
