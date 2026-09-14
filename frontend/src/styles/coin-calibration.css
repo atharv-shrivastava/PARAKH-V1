@@ -1,0 +1,25 @@
+.visual-check-calibration > .visual-calibration-card:not(.coin-reference-calibration) {
+  display: none !important;
+}
+
+.coin-reference-calibration {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.coin-reference-calibration > strong {
+  display: block;
+}
+
+.coin-reference-calibration > span {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.coin-reference-calibration > small {
+  display: block;
+  line-height: 1.45;
+}
