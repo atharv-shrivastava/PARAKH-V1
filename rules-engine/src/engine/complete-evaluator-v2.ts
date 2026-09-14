@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+﻿import { createHash } from 'node:crypto';
 import type { EvaluationStatus, InspectionRequest, OverallInspectionResult, RuleDefinition } from '../../domain/types.js';
 import { evaluateInspectionComplete as evaluateSpecializedInspection } from './legal-dealer-rules.js';
 import { evaluateInspection as evaluateConfiguredRules } from './evaluator.js';
@@ -64,12 +64,22 @@ function attachAuditEvidence(request: InspectionRequest, findings: OverallInspec
   });
 }
 
+function canonicalField(field: unknown): string {
+  const value = String(field ?? '').trim();
+  if (!value) return '';
+  if (value === 'declarations.manufactureOrImportDate' || value === 'declarations.dateOfManufacturePackingImport' || value === 'declarations.dateOfPacking' || value === 'declarations.dateOfManufacture') return 'declarations.dateOfManufacturePackingImport';
+  if (value === 'declarations.quantityText' || value === 'declarations.netQuantityText' || value === 'quantityDeclarationText') return 'declarations.quantityText';
+  return value;
+}
+
+function canonicalFindingKey(finding: OverallInspectionResult['findings'][number]): string {
+  return `${String(finding.ruleNumber ?? '').trim().replace(/[- ]+/g, '')}::${canonicalField(finding.field)}`;
+}
+
 function deduplicateEquivalentFindings(findings: OverallInspectionResult['findings']) {
   const byRule = new Map<string, OverallInspectionResult['findings'][number]>();
   for (const candidate of findings) {
-    const normalizedRule = String(candidate.ruleNumber ?? '').trim().replace(/[- ]+/g, '');
-    const field = String(candidate.field ?? '').trim();
-    const key = `${normalizedRule}::${field}`;
+    const key = canonicalFindingKey(candidate);
     const existing = byRule.get(key);
     if (!existing) {
       byRule.set(key, candidate);
@@ -84,7 +94,9 @@ function deduplicateEquivalentFindings(findings: OverallInspectionResult['findin
 
 export function evaluateInspectionCompleteWithCurrentRulesV2(r: InspectionRequest, rules?: RuleDefinition[]): OverallInspectionResult {
   const specialized = evaluateSpecializedInspection(r);
-  const configured = rules?.length ? evaluateConfiguredRules(r, rules) : null;
+  const configured = rules?.length
+    ? evaluateConfiguredRules(r, rules.filter(rule => !AUTHORITATIVE_SPECIALIZED_RULES.has(rule.ruleId) && !AUTHORITATIVE_RULE_NUMBERS.has(String(rule.ruleNumber ?? '').trim())))
+    : null;
   const configuredIds = new Set((rules ?? []).map(rule => rule.ruleId));
 
   const isAuthoritative = (finding: { ruleId: string; ruleCode: string; ruleNumber?: string }) =>

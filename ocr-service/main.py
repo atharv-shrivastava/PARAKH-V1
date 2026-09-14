@@ -1,4 +1,4 @@
-import io
+﻿import io
 import os
 import asyncio
 import hashlib
@@ -203,6 +203,11 @@ async def _analyze_contents(items: list[tuple[bytes, str]]):
         try:
             raw = Image.open(io.BytesIO(content))
             image, original_width, original_height, scale = _preprocess_for_ocr(raw)
+            print(
+                f"[ocr:input] image={image_index + 1} sourceBytes={len(content)} "
+                f"source={original_width}x{original_height} ocr={image.width}x{image.height} "
+                f"scale={scale:.4f} maxSide={_max_ocr_side or 'source'} engineMaxSide={_engine_max_side}"
+            )
             prepared.append((np.asarray(image), original_width, original_height, scale))
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Invalid image {image_index + 1}: {exc}") from exc
@@ -218,6 +223,11 @@ async def _analyze_contents(items: list[tuple[bytes, str]]):
             return extract_result(result, image_index, arr.shape[1], arr.shape[0], scale, original_width, original_height)
 
         entries = await asyncio.to_thread(infer, array)
+        print(
+            f"[ocr:result] image={image_index + 1} detections={len(entries)} "
+            f"elapsedMs={round((time.monotonic() - image_started) * 1000)} "
+            f"ocr={array.shape[1]}x{array.shape[0]}"
+        )
         initial_quality = _ocr_quality(entries)
         used_fallback = False
 

@@ -1,4 +1,4 @@
-export const FIELD_KEYS = [
+﻿export const FIELD_KEYS = [
   "productName", "brandName", "manufacturer", "manufacturerAddress", "packer", "packerAddress",
   "marketer", "marketerAddress", "importer", "importerAddress", "netQuantity", "unit", "mrp",
   "currency", "dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate", "batchNumber",
@@ -51,7 +51,9 @@ export function buildSemanticSchema(categoryOptions = []) {
 }
 
 export function buildSemanticPrompt({ detections = [], rawText = "", categoryOptions = [], targetLanguage = "en" } = {}) {
-  const compactDetections = detections.slice(0, 220).map((item, index) => ({
+  const maxDetections = Math.max(220, Number(process.env.PARAKH_SEMANTIC_MAX_DETECTIONS || 800));
+  const compactDetections = detections.slice(0, maxDetections).map((item, index) => ({
+    evidenceId: String(item.id ?? `rapid-evidence-${index}`),
     evidenceIndex: index,
     imageIndex: item.imageIndex,
     text: item.text,
@@ -85,8 +87,8 @@ A. Inspect the package image for the exact candidate.
 B. Search the OCR detections for matching text and nearby supporting text.
 C. Use layout and proximity to connect labels to values. Examples: "M.R.P." near a rupee amount, "Net Qty" near a mass/volume, "Mfd." near a date, "Best Before" near a duration/date, "Customer Care" near phone/email.
 D. Compare competing candidates. Prefer the candidate directly supported by the image and the strongest nearby OCR evidence.
-E. Preserve the exact printed value in `raw` and `value` whenever it is safe to do so.
-F. Put the OCR detection index containing the ACTUAL VALUE in `evidenceIndex`, not merely a label such as "MRP" or "Mfg".
+E. Preserve the exact printed value in raw and value whenever it is safe to do so.
+F. Put the OCR detection index containing the ACTUAL VALUE in evidenceIndex, not merely a label such as "MRP" or "Mfg".
 G. If the correct candidate cannot be distinguished confidently, use status=ambiguous rather than choosing a random candidate.
 H. Confidence is evidence confidence, not legal certainty. Do not output 0.90+ merely because the field is commonly expected.
 
@@ -96,7 +98,7 @@ CRITICAL ANTI-HALLUCINATION RULES
 - Never treat one OCR token as authoritative when the image contradicts it.
 - Never merge text from unrelated package faces into one declaration merely because the words are semantically related.
 - Never combine multiple possible manufacturers, addresses, phone numbers, emails, dates, MRPs, quantities, or batch codes into one field.
-- When multiple candidates exist and the image does not establish which is authoritative, return ambiguous with the competing evidence described in `raw`/`evidence`.
+- When multiple candidates exist and the image does not establish which is authoritative, return ambiguous with the competing evidence described in raw/evidence.
 - Do not infer statutory applicability or violations. Return declarations only.
 
 FIELD-SPECIFIC RULES
@@ -181,8 +183,8 @@ Use these as evidence-confidence anchors, not mathematical probabilities:
 Do not assign high confidence simply because two fields look semantically related.
 
 MULTILINGUAL DISPLAY RULES
-- `value` is the canonical value used by downstream systems.
-- `displayValue` is the human-readable value for the selected display language.
+- value is the canonical value used by downstream systems.
+- displayValue is the human-readable value for the selected display language.
 - Preserve legal names, addresses, phone numbers, emails, GTIN/barcodes, license IDs, batch codes, dates, MRP and quantity numerics exactly.
 - Translate generic product descriptions only when safe. If localization could alter identity, keep displayValue equal to value.
 - When target language is English, displayValue should normally equal value.
@@ -208,6 +210,9 @@ ${JSON.stringify(compactDetections)}
 
 RAW RAPIDOCR TEXT:
 ${text(rawText)}
+
+DETECTION COVERAGE:
+Included ${compactDetections.length} of ${detections.length} RapidOCR detections. evidenceId is stable for each detection; evidenceIndex is the position in the compact list supplied above.
 
 SUPPLIED FINAL CATEGORIES:
 ${JSON.stringify(categories)}

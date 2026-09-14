@@ -1,4 +1,4 @@
-import "dotenv/config";
+﻿import "dotenv/config";
 import express from "express";
 import crypto from "node:crypto";
 import { authenticate } from "../middleware/auth.js";
@@ -71,6 +71,27 @@ function makeRulesEvidence(ocr) {
   addEvidence(evidence, "importerAddress", ocr.importerAddress, "OCR", "declarations.completeAddress");
   addEvidence(evidence, "dateOfManufacture", ocr.dateOfManufacture, "OCR", "declarations.manufactureOrImportDate");
   addEvidence(evidence, "dateOfPacking", ocr.dateOfPacking, "OCR", "declarations.manufactureOrImportDate");
+
+  const quantity = ocr.netQuantity;
+  const unit = ocr.unit;
+  if (quantity?.status === "found" && unit?.status === "found") {
+    const quantityConfidence = Number(quantity.confidence || 0);
+    const unitConfidence = Number(unit.confidence || 0);
+    const quantityText = `${String(quantity.value).trim()} ${String(unit.value).trim()}`.trim();
+    if (quantityText && Math.min(quantityConfidence, unitConfidence) >= RULES_MIN_CONFIDENCE) {
+      evidence.push({
+        evidenceId: `ocr-quantity-text-${crypto.randomUUID()}`,
+        field: "declarations.quantityText",
+        rawValue: [quantity.raw ?? quantity.evidence ?? quantity.value, unit.raw ?? unit.evidence ?? unit.value].filter(Boolean).join(" "),
+        normalizedValue: quantityText,
+        unit: String(unit.value).trim(),
+        confidence: Math.min(quantityConfidence, unitConfidence),
+        source: "OCR",
+        timestamp: new Date().toISOString(),
+        reliability: Math.min(quantityConfidence, unitConfidence) >= 0.70 ? "HIGH" : "REVIEW",
+      });
+    }
+  }
 
   const consumerContactEvidence = ocr.consumerCarePhone?.status === "found" || ocr.consumerCareEmail?.status === "found";
   if (consumerContactEvidence) {

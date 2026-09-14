@@ -1,4 +1,4 @@
-import "dotenv/config";
+﻿import "dotenv/config";
 import express from "express";
 import multer from "multer";
 import crypto from "node:crypto";
@@ -39,7 +39,8 @@ const TOLL_FREE_RE = /\b1\d{2,3}[\s-]?\d{6,8}\b/;
 
 function normalizeEvidence(data) {
   const raw = Array.isArray(data?.result?.declarationEvidence) ? data.result.declarationEvidence : [];
-  const evidence = raw.map((item, index) => {
+  const nonEmpty = raw.filter((item) => text(item?.text));
+  const evidence = nonEmpty.map((item, index) => {
     const serviceIndex = Number(item?.imageIndex);
     return {
       id: String(item?.id ?? `rapid-evidence-${index}`),
@@ -51,7 +52,7 @@ function normalizeEvidence(data) {
       imageWidth: Number(item?.imageWidth || 0) || null,
       imageHeight: Number(item?.imageHeight || 0) || null,
     };
-  }).filter((item) => item.text);
+  });
   return { evidence, rawText: text(data?.result?.rawText) || evidence.map((item) => item.text).join("\n") };
 }
 

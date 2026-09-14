@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+﻿import { createHash } from 'node:crypto';
 import type {
   EvaluationStatus,
   Finding,
@@ -6,6 +6,7 @@ import type {
   OverallInspectionResult,
 } from '../../domain/types.js';
 import { evaluateInspection as evaluateBase } from './evaluator.js';
+import { RULES } from '../legal/rules.js';
 import { SOURCES } from '../legal/sources.js';
 import { secondScheduleAppliesOn } from '../legal/second-schedule.js';
 import { tableIIFinding } from './table-ii-evaluator.js';
@@ -21,6 +22,17 @@ import { unverifiedRuleFindings } from '../legal/rule-review-status.js';
 import { rule20Findings } from './rule-20-evaluator.js';
 
 const SOURCE = SOURCES.PRINCIPAL_2011;
+
+const SPECIALIZED_RULE_IDS = new Set([
+  'PCR-R6-1-A', 'PCR-R6-1-B', 'PCR-R6-1-C', 'PCR-R6-1-D',
+  'PCR-R6-1-E', 'PCR-R6-1-F', 'PCR-R6-1-G', 'PCR-R6-2', 'PCR-R12-6',
+]);
+const SPECIALIZED_RULE_NUMBERS = new Set([
+  '6(1)(a)', '6(1)(b)', '6(1)(c)', '6(1)(d)', '6(1)(e)', '6(1)(f)', '6(1)(g)', '6(2)', '12(6)',
+]);
+const CONFIGURED_RULES_WITHOUT_SPECIALIZED_DUPLICATES = RULES.filter(rule =>
+  !SPECIALIZED_RULE_IDS.has(rule.ruleId) && !SPECIALIZED_RULE_NUMBERS.has(String(rule.ruleNumber ?? '').trim()),
+);
 
 function path(input: unknown, key: string): unknown {
   return key.split('.').reduce<unknown>((value, part) => {
@@ -440,7 +452,7 @@ function canonical(value: unknown): string {
 }
 
 export function evaluateInspectionComplete(request: InspectionRequest): OverallInspectionResult {
-  const base = evaluateBase(request);
+  const base = evaluateBase(request, CONFIGURED_RULES_WITHOUT_SPECIALIZED_DUPLICATES);
 
   const historicalFindings = secondScheduleAppliesOn(request.inspectionDate)
     ? base.findings
