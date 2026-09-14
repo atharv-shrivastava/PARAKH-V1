@@ -20,6 +20,7 @@ import "./styles/recorded-product-fixes.css";
 import "./styles/ocr-product-detail-theme.css";
 import "./styles/theme-overrides.css";
 import "./styles/theme-final-overrides.css";
+import "./styles/feature-overrides.css";
 import "./lib/localBarcodeDetector";
 import { installComplianceStatusDrilldown } from "./lib/complianceStatusDrilldown";
 import { applyTheme, getTheme } from "./lib/theme";
