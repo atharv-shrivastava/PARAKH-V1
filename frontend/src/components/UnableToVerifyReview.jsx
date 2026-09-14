@@ -166,16 +166,34 @@ export default function UnableToVerifyReview() {
     const syncRegisterButton = () => {
       const button = Array.from(document.querySelectorAll("button[type=submit]"))
         .find((candidate) => /Register Offline Product/i.test(candidate.textContent || ""));
-      if (!button) return;
-      if (unresolvedCount > 0) {
-        button.disabled = true;
-        button.setAttribute("aria-disabled", "true");
-        button.dataset.parakhReviewBlocked = "true";
-      } else if (button.dataset.parakhReviewBlocked === "true") {
-        button.disabled = false;
-        button.removeAttribute("aria-disabled");
-        delete button.dataset.parakhReviewBlocked;
+      if (button) {
+        if (unresolvedCount > 0) {
+          button.disabled = true;
+          button.setAttribute("aria-disabled", "true");
+          button.dataset.parakhReviewBlocked = "true";
+        } else if (button.dataset.parakhReviewBlocked === "true") {
+          button.disabled = false;
+          button.removeAttribute("aria-disabled");
+          delete button.dataset.parakhReviewBlocked;
+        }
       }
+
+      const finalStatusLabel = Array.from(document.querySelectorAll("strong"))
+        .find((candidate) => String(candidate.textContent || "").trim() === "Final status");
+      if (!finalStatusLabel || unresolvedCount > 0) {
+        if (finalStatusLabel && unresolvedCount > 0) {
+          const statusSpan = finalStatusLabel.parentElement?.querySelector("span");
+          if (statusSpan) statusSpan.textContent = "NEEDS_REVIEW";
+        }
+        return;
+      }
+
+      const grid = finalStatusLabel.closest(".ocr-status-grid");
+      const selectedLabel = Array.from(grid?.querySelectorAll("strong") || [])
+        .find((candidate) => String(candidate.textContent || "").trim() === "Selected violations");
+      const selectedCount = Number.parseInt(selectedLabel?.parentElement?.querySelector("span")?.textContent || "0", 10) || 0;
+      const statusSpan = finalStatusLabel.parentElement?.querySelector("span");
+      if (statusSpan) statusSpan.textContent = failCount > 0 || selectedCount > 0 ? "VIOLATION" : "OKAY";
     };
 
     syncRegisterButton();
@@ -186,16 +204,7 @@ export default function UnableToVerifyReview() {
       observer.disconnect();
       window.clearInterval(timer);
     };
-  }, [unresolvedCount]);
-
-  useEffect(() => {
-    if (!unable.length) return;
-    const details = Array.from(document.querySelectorAll(".rule-review-dropdown"));
-    details.forEach((item) => {
-      const summaryText = item.textContent || "";
-      item.hidden = summaryText.includes("Unable to verify") && unresolvedCount > 0 ? false : item.hidden;
-    });
-  }, [unable.length, unresolvedCount]);
+  }, [failCount, unresolvedCount]);
 
   if (!unable.length) return null;
 
