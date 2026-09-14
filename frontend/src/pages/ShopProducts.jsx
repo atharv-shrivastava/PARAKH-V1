@@ -39,7 +39,7 @@ function ShopProducts() {
     <Link to={`/shops/${shop.id}`} className="back-link">← Back to Shop</Link>
     <div className="page-header">
       <p className="eyebrow">SHOP PRODUCTS</p>
-      <h1>{shop.name}</h1>
+      <h1 data-no-auto-translate="true" className="shop-identity">{shop.name}</h1>
       <p>{products.length} registered product record(s).</p>
     </div>
     <input className="shop-product-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search product or brand..." />
@@ -47,7 +47,7 @@ function ShopProducts() {
       {shown.map((product) => (
         <Link key={product.id} to={`/products/item/${product.id}`} className="shop-product-item">
           <div>
-            <h2>{product.productName}</h2>
+            <h2 data-no-auto-translate="true" className="product-identity">{product.productName}</h2>
             <p>{product.brandName || "Brand not recorded"} · {product.netQuantity || "-"} {product.unit || ""} · {product.category?.name || "No category"}</p>
           </div>
           <span className={`product-status ${product.inspection?.status === "VIOLATION" ? "non-compliant" : product.inspection?.status === "NEEDS_REVIEW" ? "review" : "compliant"}`}>
