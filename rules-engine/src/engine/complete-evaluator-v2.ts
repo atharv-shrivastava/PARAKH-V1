@@ -13,6 +13,7 @@ const AUTHORITATIVE_SPECIALIZED_RULES = new Set([
   'PCR-R6-1-F',
   'PCR-R6-1-G',
   'PCR-R6-2',
+  'PCR-R12-6',
 ]);
 
 function canonical(v: unknown): string {
