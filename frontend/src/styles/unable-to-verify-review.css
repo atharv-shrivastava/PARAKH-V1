@@ -1,0 +1,30 @@
+.parakh-unable-review-host {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.parakh-unable-review-host .rule-review-panel,
+.parakh-unable-review-host .rule-review-dropdown,
+.parakh-unable-review-host .rule-review-dropdown-body {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.parakh-unable-review-host .rule-review-dropdown-body,
+.parakh-unable-review-host p,
+.parakh-unable-review-host small,
+.parakh-unable-review-host span,
+.parakh-unable-review-host strong {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.parakh-unable-review-host .scan-upload-actions {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
