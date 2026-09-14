@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch, getUser } from "../lib/auth";
 import { useLanguage } from "../components/LanguageProvider";
@@ -6,6 +6,7 @@ import "../styles/dashboard.css";
 
 const API_URL = "http://localhost:5000/api";
 const ANALYTICS_CACHE_KEY = "parakh_dashboard_analytics";
+const DASHBOARD_REFRESH_MS = 5000;
 
 function StatCard({ label, value, tone = "neutral", detail }) {
   return <div className={`user-stat-card ${tone}`}>
@@ -86,38 +87,89 @@ export default function Dashboard() {
   const user = getUser();
   const { t } = useLanguage();
 
+  const refreshDashboard = useCallback(async ({ initial = false } = {}) => {
+    if (initial) {
+      setLoading(true);
+      setInspectionIntelLoading(true);
+    }
+
+    const results = await Promise.allSettled([
+      apiFetch(`${API_URL}/products?limit=6`),
+      apiFetch(`${API_URL}/products/analytics/summary`),
+      apiFetch(`${API_URL}/analytics/dashboard`),
+    ]);
+
+    const [historyResult, analyticsResult, inspectionResult] = results;
+
+    if (historyResult.status === "fulfilled") {
+      try {
+        const data = await historyResult.value.json();
+        if (historyResult.value.ok) setHistory(Array.isArray(data) ? data.slice(0, 6) : []);
+        else if (initial) setError(data?.error || "Could not load recent products");
+      } catch (e) {
+        if (initial) setError(e?.message || "Could not load recent products");
+      }
+    } else if (initial) {
+      setError(historyResult.reason?.message || "Could not load recent products");
+    }
+
+    if (analyticsResult.status === "fulfilled") {
+      try {
+        const data = await analyticsResult.value.json().catch(() => ({}));
+        if (analyticsResult.value.ok) {
+          setAnalytics(data);
+          try { sessionStorage.setItem(ANALYTICS_CACHE_KEY, JSON.stringify(data)); } catch {}
+        } else if (initial) {
+          setError(data?.error || "Could not load analytics");
+        }
+      } catch (e) {
+        if (initial) setError(e?.message || "Could not load analytics");
+      }
+    } else if (initial) {
+      setError(analyticsResult.reason?.message || "Could not load analytics");
+    }
+
+    if (inspectionResult.status === "fulfilled") {
+      try {
+        const data = await inspectionResult.value.json().catch(() => ({}));
+        if (inspectionResult.value.ok) {
+          setInspectionIntel(data);
+        } else if (initial) {
+          setError((current) => current || data?.error || "Could not load inspection intelligence");
+        }
+      } catch (e) {
+        if (initial) setError((current) => current || e?.message || "Could not load inspection intelligence");
+      }
+    } else if (initial) {
+      setError((current) => current || inspectionResult.reason?.message || "Could not load inspection intelligence");
+    }
+
+    if (initial) {
+      setLoading(false);
+      setInspectionIntelLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
-    apiFetch(`${API_URL}/products?limit=6`)
-      .then(async (response) => {
-        const data = await response.json().catch(() => []);
-        if (!response.ok) throw new Error(data?.error || "Could not load recent products");
-        if (active) setHistory(Array.isArray(data) ? data.slice(0, 6) : []);
-      })
-      .catch((e) => { if (active) setError(e?.message || "Could not load recent products"); })
-      .finally(() => { if (active) setLoading(false); });
+    const refresh = () => { if (active) refreshDashboard({ initial: false }); };
 
-    apiFetch(`${API_URL}/products/analytics/summary`)
-      .then(async (response) => {
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data?.error || "Could not load analytics");
-        if (!active) return;
-        setAnalytics(data);
-        try { sessionStorage.setItem(ANALYTICS_CACHE_KEY, JSON.stringify(data)); } catch {}
-      })
-      .catch(() => {});
+    refreshDashboard({ initial: true });
 
-    apiFetch(`${API_URL}/analytics/dashboard`)
-      .then(async (response) => {
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data?.error || "Could not load inspection intelligence");
-        if (active) setInspectionIntel(data);
-      })
-      .catch((e) => { if (active) setError((current) => current || e?.message || "Could not load inspection intelligence"); })
-      .finally(() => { if (active) setInspectionIntelLoading(false); });
+    const interval = window.setInterval(refresh, DASHBOARD_REFRESH_MS);
+    const onVisibilityChange = () => { if (document.visibilityState === "visible") refresh(); };
+    const onDataUpdated = () => refresh();
 
-    return () => { active = false; };
-  }, []);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("parakh:data-updated", onDataUpdated);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("parakh:data-updated", onDataUpdated);
+    };
+  }, [refreshDashboard]);
 
   const counts = analytics?.counts || {};
   const total = Number(counts.products ?? 0);
