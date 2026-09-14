@@ -12,6 +12,7 @@
   box-sizing: border-box;
   overflow: hidden;
   align-items: start;
+  color: #111827 !important;
 }
 
 .products-page .finding-row > strong,
@@ -26,11 +27,34 @@
 .products-page .finding-row > strong {
   display: block;
   line-height: 1.35;
+  color: #111827 !important;
 }
 
-.products-page .finding-row > span,
+.products-page .finding-row > span {
+  white-space: normal;
+  color: #374151 !important;
+}
+
 .products-page .finding-row > small {
   white-space: normal;
+  color: #6b7280 !important;
+}
+
+/* Product detail and Rules Engine metric cards use intentionally light surfaces. */
+.products-page .ocr-details-grid > div {
+  color: #111827 !important;
+}
+
+.products-page .ocr-details-grid > div > strong {
+  color: #111827 !important;
+}
+
+.products-page .ocr-details-grid > div > span {
+  color: #111827 !important;
+}
+
+.products-page .ocr-details-grid > div > small {
+  color: #6b7280 !important;
 }
 
 .products-page .penalty-review,
