@@ -22,11 +22,44 @@ function providerWeight(provider) {
   return PROVIDER_WEIGHTS[String(provider || "").toLowerCase()] ?? DEFAULT_PROVIDER_WEIGHT;
 }
 
-// Manufacturing/batch/inkjet codes are frequently short alphanumeric strings.
-// Do not let them become product names simply because a semantic model selected them.
-// Keep common consumer-facing names such as 7UP or 5 STAR valid by requiring a
-// stronger code signature: either an explicit # numeric code or a compact run of
-// letters followed by at least two digits.
+function splitQuantity(value) {
+  const match = text(value).match(/^\s*([-+]?\d+(?:\.\d+)?)\s*([a-zA-Zµμ]+|pcs?|pieces?|units?|nos)\.?\s*$/i);
+  return match ? { quantity: match[1], unit: match[2] } : null;
+}
+
+function normalizeQuantityUnit(fields) {
+  const next = Object.fromEntries(Object.entries(fields || {}).map(([key, field]) => [key, field && typeof field === "object" ? { ...field } : field]));
+  const quantity = next.netQuantity;
+  const unit = next.unit;
+  if (!quantity) return next;
+
+  const split = splitQuantity(quantity.value || quantity.raw || quantity.evidence);
+  if (!split) return next;
+
+  next.netQuantity = {
+    ...quantity,
+    value: split.quantity,
+    displayValue: split.quantity,
+    raw: quantity.raw || `${split.quantity} ${split.unit}`,
+    evidence: quantity.evidence || quantity.raw || `${split.quantity} ${split.unit}`,
+  };
+
+  if (!unit || !isFound(unit) || !text(unit.value)) {
+    next.unit = {
+      ...(unit || {}),
+      value: split.unit,
+      displayValue: split.unit,
+      raw: unit?.raw || `${split.quantity} ${split.unit}`,
+      evidence: unit?.evidence || quantity.evidence || quantity.raw || `${split.quantity} ${split.unit}`,
+      confidence: confidence(unit?.confidence ?? quantity.confidence),
+      status: quantity.status || "found",
+      imageIndex: Number.isInteger(unit?.imageIndex) ? unit.imageIndex : (Number.isInteger(quantity.imageIndex) ? quantity.imageIndex : -1),
+      evidenceIndex: Number.isInteger(unit?.evidenceIndex) ? unit.evidenceIndex : (Number.isInteger(quantity.evidenceIndex) ? quantity.evidenceIndex : -1),
+    };
+  }
+  return next;
+}
+
 function looksLikeProductCode(value) {
   const source = text(value).toUpperCase().replace(/\s+/g, "");
   if (!source) return false;
@@ -55,12 +88,16 @@ function sanitizeField(key, field) {
 function voteField(key, providers) {
   const observations = providers
     .filter((provider) => provider?.enabled && provider?.fields?.[key])
-    .map((provider) => ({
-      provider: provider.provider,
-      weight: providerWeight(provider.provider),
-      field: sanitizeField(key, provider.fields[key]),
-      normalized: comparable(provider.fields[key].value),
-    }));
+    .map((provider) => {
+      const fields = normalizeQuantityUnit(provider.fields);
+      const field = sanitizeField(key, fields[key]);
+      return {
+        provider: provider.provider,
+        weight: providerWeight(provider.provider),
+        field,
+        normalized: comparable(field?.value),
+      };
+    });
 
   const found = observations.filter((item) => isFound(item.field));
   const votes = observations.map((item) => ({
@@ -85,9 +122,6 @@ function voteField(key, providers) {
     groups.get(item.normalized).push(item);
   }
 
-  // Score each candidate by provider authority first, then model confidence.
-  // Gemini and Grok therefore carry 90% of the total semantic vote, while any
-  // future low-authority semantic provider can only contribute a small tie-break.
   const scoredGroups = [...groups.values()].map((group) => {
     const weightedVote = group.reduce((sum, item) => sum + item.weight * Math.max(0.5, confidence(item.field.confidence)), 0);
     const rawWeight = group.reduce((sum, item) => sum + item.weight, 0);
@@ -105,9 +139,6 @@ function voteField(key, providers) {
   const secondVote = scoredGroups[1]?.weightedVote || 0;
   const margin = winning.weightedVote - secondVote;
 
-  // Strong single-provider agreement can still win when both models are not
-  // available, but a genuine Gemini/Grok split remains ambiguous when neither
-  // side has enough weighted authority to justify overriding the other.
   if (winning.group.length >= 2 || normalizedWinningVote >= 0.55 || margin >= 0.20) {
     const best = winning.best;
     const winningProviders = winning.group.map((item) => item.provider).join("+");
@@ -177,7 +208,7 @@ function voteCategory(providers, categoryOptions) {
     categoryName: allowed ? text(allowed.name) : winning[0].category.categoryName || null,
     categoryPath: allowed ? text(allowed.path) : winning[0].category.categoryPath || null,
     confidence: Math.min(0.98, confidence(best.category.confidence)),
-    reason: `${winning.length} semantic providers selected the same category.` ,
+    reason: `${winning.length} semantic providers selected the same category.`,
   };
 }
 
@@ -190,7 +221,7 @@ export function reconcileSemanticResults(providers = [], categoryOptions = []) {
     providerCount: enabledProviders.length,
     providerWeights: PROVIDER_WEIGHTS,
     providers: providers.map((provider) => ({ provider: provider?.provider || "unknown", model: provider?.model || null, enabled: Boolean(provider?.enabled), reason: provider?.enabled ? null : provider?.reason || "Provider unavailable." })),
-    fields,
+    fields: normalizeQuantityUnit(fields),
     suggestedCategory: voteCategory(providers, categoryOptions),
   };
 }
