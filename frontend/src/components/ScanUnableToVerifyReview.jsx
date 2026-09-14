@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "../styles/unable-to-verify-review.css";
 
-const REVIEW_EVENT = "parakh:unable-to-verify-review";
 const DECISIONS_KEY = "parakhUnableToVerifyDecisions";
 const CAPTURED_KEY = "parakhCapturedCompliance";
 
@@ -60,31 +59,16 @@ function syncRegistrationDom(unresolvedCount, failCount) {
 export default function ScanUnableToVerifyReview() {
   const [compliance, setCompliance] = useState(null);
   const [decisions, setDecisions] = useState({});
+  const decisionsRef = useRef(decisions);
+
+  useEffect(() => {
+    decisionsRef.current = decisions;
+  }, [decisions]);
 
   useEffect(() => {
     clearReviewStorage();
 
     const nativeFetch = window.fetch.bind(window);
-
-    const handleEvaluateResponse = async (response) => {
-      try {
-        const payload = await response.clone().json();
-        const nextCompliance = payload?.compliance || null;
-        clearReviewStorage();
-        if (!nextCompliance) {
-          setCompliance(null);
-          setDecisions({});
-          return;
-        }
-        setCompliance(nextCompliance);
-        setDecisions({});
-        window.sessionStorage.setItem(CAPTURED_KEY, JSON.stringify(nextCompliance));
-        window.sessionStorage.removeItem(DECISIONS_KEY);
-      } catch {
-        setCompliance(null);
-        setDecisions({});
-      }
-    };
 
     window.fetch = async (input, init = {}) => {
       const url = typeof input === "string" ? input : input?.url || "";
@@ -92,7 +76,22 @@ export default function ScanUnableToVerifyReview() {
 
       if (method === "POST" && /\/api\/ocr\/evaluate-structured(?:\?|$)/.test(url)) {
         const response = await nativeFetch(input, init);
-        await handleEvaluateResponse(response);
+        try {
+          const payload = await response.clone().json();
+          const nextCompliance = payload?.compliance || null;
+          clearReviewStorage();
+          if (nextCompliance) {
+            setCompliance(nextCompliance);
+            setDecisions({});
+            window.sessionStorage.setItem(CAPTURED_KEY, JSON.stringify(nextCompliance));
+          } else {
+            setCompliance(null);
+            setDecisions({});
+          }
+        } catch {
+          setCompliance(null);
+          setDecisions({});
+        }
         return response;
       }
 
@@ -112,7 +111,8 @@ export default function ScanUnableToVerifyReview() {
         const unable = findings.filter((finding) => findingStatus(finding) === "UNABLE_TO_VERIFY");
         if (!unable.length) return nativeFetch(input, init);
 
-        const unresolved = unable.filter((finding) => !decisions[finding.findingId]);
+        const activeDecisions = decisionsRef.current;
+        const unresolved = unable.filter((finding) => !activeDecisions[finding.findingId]);
         if (unresolved.length) {
           return new Response(JSON.stringify({
             error: `Resolve ${unresolved.length} unable-to-verify rule${unresolved.length === 1 ? "" : "s"} as Pass or Fail before registering the product.`,
@@ -125,10 +125,10 @@ export default function ScanUnableToVerifyReview() {
         }
 
         const failIds = unable
-          .filter((finding) => decisions[finding.findingId] === "FAIL")
+          .filter((finding) => activeDecisions[finding.findingId] === "FAIL")
           .map((finding) => finding.findingId);
         const passIds = unable
-          .filter((finding) => decisions[finding.findingId] === "PASS")
+          .filter((finding) => activeDecisions[finding.findingId] === "PASS")
           .map((finding) => finding.findingId);
         const failSet = new Set(failIds);
         const passSet = new Set(passIds);
@@ -136,7 +136,7 @@ export default function ScanUnableToVerifyReview() {
 
         const transformedFindings = findings.map((finding) => {
           if (!failSet.has(finding.findingId) && !passSet.has(finding.findingId)) return finding;
-          const decision = decisions[finding.findingId];
+          const decision = activeDecisions[finding.findingId];
           return {
             ...finding,
             status: decision === "FAIL" ? "VIOLATION" : "PASS",
@@ -164,7 +164,7 @@ export default function ScanUnableToVerifyReview() {
         body.ocrData = {
           ...(body.ocrData || {}),
           compliance: transformedCompliance,
-          unableVerificationDecisions: { ...decisions },
+          unableVerificationDecisions: { ...activeDecisions },
         };
         body.acceptedFindingIds = [...new Set([
           ...(Array.isArray(body.acceptedFindingIds) ? body.acceptedFindingIds : []),
@@ -189,13 +189,13 @@ export default function ScanUnableToVerifyReview() {
     };
 
     document.addEventListener("click", handleResetClick, true);
-    window.addEventListener(REVIEW_EVENT, () => {});
 
     return () => {
       window.fetch = nativeFetch;
       document.removeEventListener("click", handleResetClick, true);
+      clearReviewStorage();
     };
-  }, [decisions]);
+  }, []);
 
   const unable = useMemo(() => unableFindings(compliance), [compliance]);
   const unresolvedCount = unable.filter((finding) => !decisions[finding.findingId]).length;
