@@ -4,9 +4,9 @@ import { useLanguage } from "./LanguageProvider";
 
 const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT"]);
 const SKIP_SELECTOR = "[data-no-auto-translate=\"true\"], .language-picker";
-const IDENTITY_SELECTOR = "[data-no-auto-translate=\"true\"], .product-identity, .category-identity, .shop-identity, .product-name, .shop-name, .username, .user-name, .inspector-name";
+const IDENTITY_SELECTOR = "[data-no-auto-translate=\"true\"], .product-identity, .shop-identity, .product-name, .shop-name, .username, .user-name, .inspector-name";
 const TRANSLATABLE_ATTRIBUTES = ["placeholder", "aria-label", "title"];
-const CACHE_VERSION = "v5";
+const CACHE_VERSION = "v6";
 
 function shouldSkip(node) {
   const parent = node.parentElement;
@@ -36,26 +36,17 @@ function isProbablyTechnicalText(text) {
 }
 
 function collectProtectedTerms(user) {
-  const values = [
-    "PARAKH",
-    user?.name,
-    user?.fullName,
-    user?.displayName,
-    user?.email,
-  ]
+  const values = ["PARAKH", user?.name, user?.fullName, user?.displayName, user?.email]
     .map((value) => String(value || "").trim())
     .filter((value) => value.length >= 2);
-
   return [...new Set(values)].sort((a, b) => b.length - a.length);
 }
 
 function protectTerms(text, protectedTerms) {
   if (!protectedTerms.length) return { source: text, restore: (translated) => translated };
-
   let source = String(text);
   const protectedValues = [];
   let tokenIndex = 0;
-
   for (const term of protectedTerms) {
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const pattern = new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`, "gi");
@@ -66,14 +57,11 @@ function protectTerms(text, protectedTerms) {
       return token;
     });
   }
-
   return {
     source,
     restore(translated) {
       let restored = String(translated || "");
-      for (const { token, value } of protectedValues) {
-        restored = restored.split(token).join(value);
-      }
+      for (const { token, value } of protectedValues) restored = restored.split(token).join(value);
       return restored;
     },
   };
@@ -100,32 +88,24 @@ export default function AutoTranslate() {
     if (typeof document === "undefined") return undefined;
     const cacheKey = `parakh_translation_cache_${CACHE_VERSION}_${language}`;
     const protectedTerms = collectProtectedTerms(getUser());
-
     try {
       const stored = JSON.parse(localStorage.getItem(cacheKey) || "{}");
       cache.current = new Map(Object.entries(stored));
-    } catch {
-      cache.current = new Map();
-    }
-
+    } catch { cache.current = new Map(); }
     let cancelled = false;
 
     function restoreTrackedEnglish() {
-      if (typeof document === "undefined") return;
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       let node;
       while ((node = walker.nextNode())) {
         const original = originals.current.get(node);
         if (original != null && node.nodeValue !== original) node.nodeValue = original;
       }
-
       for (const element of document.body.querySelectorAll("[placeholder], [aria-label], [title]")) {
         const originalsForElement = attributeOriginals.current.get(element);
         if (!originalsForElement) continue;
         for (const attribute of TRANSLATABLE_ATTRIBUTES) {
-          if (originalsForElement[attribute] != null && element.getAttribute(attribute) !== originalsForElement[attribute]) {
-            element.setAttribute(attribute, originalsForElement[attribute]);
-          }
+          if (originalsForElement[attribute] != null && element.getAttribute(attribute) !== originalsForElement[attribute]) element.setAttribute(attribute, originalsForElement[attribute]);
         }
       }
     }
@@ -134,9 +114,7 @@ export default function AutoTranslate() {
       if (cancelled || busy.current) return;
       const root = document.body;
       if (!root) return;
-
       restoreTrackedEnglish();
-
       const nodes = [];
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
       let node;
@@ -164,18 +142,15 @@ export default function AutoTranslate() {
       }
 
       if (language === "en") return;
-
       const missing = [];
       const missingSet = new Set();
       const addMissing = (value) => {
         const core = splitWhitespace(value).core;
         if (!core || isProbablyTechnicalText(core) || missingSet.has(core) || cache.current.has(core)) return;
-
         const protectedText = protectTerms(core, protectedTerms);
         missingSet.add(core);
         missing.push({ original: core, source: protectedText.source, restore: protectedText.restore });
       };
-
       for (const item of nodes) addMissing(originals.current.get(item) || "");
       for (const item of elements) addMissing(item.original);
 
@@ -183,30 +158,24 @@ export default function AutoTranslate() {
       try {
         for (let offset = 0; offset < missing.length; offset += 40) {
           const batchItems = missing.slice(offset, offset + 40);
-          const batch = batchItems.map((item) => item.source);
           const response = await apiFetch("http://localhost:5000/api/translate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ target: language, texts: batch }),
+            body: JSON.stringify({ target: language, texts: batchItems.map((item) => item.source) }),
           });
           if (!response.ok) throw new Error(`Translation request failed (${response.status}).`);
           const data = await response.json().catch(() => null);
           const failedTexts = new Set(Array.isArray(data?.failures) ? data.failures.map((item) => String(item?.text || "")) : []);
-
           for (const item of batchItems) {
             if (failedTexts.has(item.source)) continue;
             const translated = data?.translations?.[item.source];
             if (typeof translated !== "string") continue;
-            const restored = item.restore(translated);
-            const displayValue = normalizeTranslationForDisplay(restored, item.original);
+            const displayValue = normalizeTranslationForDisplay(item.restore(translated), item.original);
             if (displayValue) cache.current.set(item.original, displayValue);
           }
           if (cancelled) return;
         }
-
-        const compact = Object.fromEntries([...cache.current.entries()].slice(-1200));
-        localStorage.setItem(cacheKey, JSON.stringify(compact));
-
+        localStorage.setItem(cacheKey, JSON.stringify(Object.fromEntries([...cache.current.entries()].slice(-1200))));
         for (const item of nodes) {
           const original = originals.current.get(item);
           if (!original) continue;
@@ -220,7 +189,7 @@ export default function AutoTranslate() {
           if (translated) item.element.setAttribute(item.attribute, `${leading}${translated}${trailing}`);
         }
       } catch {
-        // Keep English source text when translation is unavailable or malformed.
+        // Keep source text when translation is unavailable.
       } finally {
         busy.current = false;
       }
@@ -230,13 +199,11 @@ export default function AutoTranslate() {
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(process, 180);
     };
-
     schedule();
     observer.current = new MutationObserver((mutations) => {
       if (mutations.some((mutation) => mutation.type === "childList" && mutation.addedNodes.length)) schedule();
     });
     observer.current.observe(document.body, { childList: true, subtree: true });
-
     return () => {
       cancelled = true;
       window.clearTimeout(timer.current);
