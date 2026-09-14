@@ -6,12 +6,6 @@ import { parakhIdFor, productFingerprint } from "../lib/productIdentity.js";
 const router = express.Router();
 router.use(authenticate);
 
-function parseStoredOcr(value) {
-  if (!value) return {};
-  if (typeof value === "object") return value;
-  try { return JSON.parse(value); } catch { return {}; }
-}
-
 function identityInput(product) {
   return {
     ...product,
