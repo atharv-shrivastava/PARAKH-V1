@@ -1,4 +1,5 @@
 import { searchMrpRange } from "./marketPriceSearch.js";
+import { normalizeLegalMetrologyFields } from "./legalMetrologyRegex.js";
 
 const FIELD_MAP = {
   productName: "product_name", brandName: "brand_name", manufacturer: "manufacturer", manufacturerAddress: "manufacturer_address",
@@ -57,7 +58,7 @@ function confidenceState(value) { return value >= 0.85 ? "high" : value >= HIGH_
 
 export async function applyEvidenceConfidence(result, options = {}) {
   const barcodeImageProvided = Boolean(options?.barcodeImageProvided);
-  const next = { ...result };
+  const next = normalizeLegalMetrologyFields({ ...result });
   const scannedBarcode = String(next.barcode?.source === "BARCODE_IMAGE_DECODER" ? next.barcode?.value : "").replace(/\D/g, "");
   const barcode = scannedBarcode || null;
   let dataKart = null, dataKartMatchedGtin = null, dataKartError = null, webMrpRange = null;
@@ -66,12 +67,12 @@ export async function applyEvidenceConfidence(result, options = {}) {
     catch (error) { dataKartError = error?.message || "DataKart lookup failed."; }
   }
   if (barcode && !dataKart && !dataKartError) {
-    try { webMrpRange = await searchMrpRange({ productName: result?.productName?.value, brandName: result?.brandName?.value, netQuantity: result?.netQuantity?.value, unit: result?.unit?.value }); }
+    try { webMrpRange = await searchMrpRange({ productName: next?.productName?.value, brandName: next?.brandName?.value, netQuantity: next?.netQuantity?.value, unit: next?.unit?.value }); }
     catch (error) { webMrpRange = { status: "UNAVAILABLE", error: error?.message || "Web MRP search failed." }; }
   }
 
   const details = {};
-  for (const [fieldKey, fieldValue] of Object.entries(result || {})) {
+  for (const [fieldKey, fieldValue] of Object.entries(next || {})) {
     if (!fieldValue || typeof fieldValue !== "object" || !FIELD_MAP[fieldKey]) continue;
     const semanticAI = clamp01(fieldValue.confidence) ?? 0;
     const gemini = voteConfidence(fieldValue, "gemini");
@@ -85,7 +86,7 @@ export async function applyEvidenceConfidence(result, options = {}) {
       ...fieldValue,
       confidence: Math.round(fused * 1000) / 1000,
       evidenceConfidence: Math.round(fused * 1000) / 1000,
-      confidenceSources: { gemini, grok, semanticAI, rapidocr, weights: { ...CONFIDENCE_WEIGHTS }, dataKart: null },
+      confidenceSources: { gemini, grok, semanticAI, rapidocr, weights: { ...CONFIDENCE_WEIGHTS }, dataKart: null, regex: fieldValue?.source === "REGEX_LEGAL_METROLOGY" ? fieldValue?.regexEvidence ?? null : null },
       verification,
       verificationIcon: verification === "MATCH" ? "✓" : verification === "MISMATCH" ? "✕" : "?",
       confidenceLabel: "AI-weighted evidence confidence",
@@ -104,8 +105,8 @@ export async function applyEvidenceConfidence(result, options = {}) {
     weights: { ...CONFIDENCE_WEIGHTS },
     highConfidenceThreshold: HIGH_CONFIDENCE_THRESHOLD,
     ruleEngineMinimumConfidence: RULE_ENGINE_MIN_CONFIDENCE,
-    method: "Gemini (45%) + Grok (45%) semantic consensus with RapidOCR evidence quality (10%). DataKart is reference verification only and never contributes to compliance scoring.",
-    dataKartAvailable: Boolean(dataKart), dataKartError, dataKartMatchedGtin, webMrpRange, fields: details,
+    method: "Gemini (45%) + Grok (45%) semantic consensus with RapidOCR evidence quality (10%). Regex normalization repairs/validates raw Legal Metrology formats but does not replace semantic consensus. DataKart is reference verification only and never contributes to compliance scoring.",
+    dataKartAvailable: Boolean(dataKart), dataKartError, dataKartMatchedGtin, webMrpRange, regexNormalization: next.regexNormalization ?? null, fields: details,
   };
 
   const dataKartStatus = dataKart ? "REGISTERED" : dataKartError ? "UNAVAILABLE" : barcodeImageProvided && !barcode ? "BARCODE_UNREADABLE" : barcode ? "NOT_FOUND" : "NO_GTIN";
