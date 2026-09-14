@@ -2,15 +2,15 @@ import { useEffect, useRef } from "react";
 import { apiFetch, getUser } from "../lib/auth";
 import { useLanguage } from "./LanguageProvider";
 
-const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT"]);
-const SKIP_SELECTOR = "[data-no-auto-translate=\"true\"], .language-picker";
+const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT"]);
 const TRANSLATABLE_ATTRIBUTES = ["placeholder", "aria-label", "title"];
-const CACHE_VERSION = "v4";
+const CACHE_VERSION = "v5";
+const IDENTITY_SELECTOR = ".logo, .sidebar-user strong, [data-no-auto-translate=\"true\"], .language-picker";
 
 function shouldSkip(node) {
   const parent = node.parentElement;
   if (!parent || SKIP_TAGS.has(parent.tagName)) return true;
-  if (parent.closest(SKIP_SELECTOR)) return true;
+  if (parent.closest(IDENTITY_SELECTOR)) return true;
   const text = node.nodeValue?.trim() || "";
   if (text.length < 2) return true;
   if (/^(https?:\/\/|www\.)/i.test(text)) return true;
@@ -25,65 +25,39 @@ function splitWhitespace(text) {
   return { leading: match?.[1] || "", core: match?.[2] || String(text), trailing: match?.[3] || "" };
 }
 
-function isDynamicIdentityElement(element) {
-  if (!(element instanceof Element)) return false;
-  return Boolean(element.closest('[data-no-auto-translate="true"], .product-identity, .category-identity'));
-}
-
 function isProbablyTechnicalText(text) {
-  return /^(?:[A-Z]{2,8}[-_\d]+|v?\d+(?:\.\d+){1,3}|\d{8,18})$/.test(text.trim());
+  const value = String(text || "").trim();
+  return /^(?:[A-Z]{2,8}[-_\d]+|v?\d+(?:\.\d+){1,3}|\d{8,18})$/.test(value);
 }
 
 function collectProtectedTerms(user) {
-  const values = [
-    "PARAKH",
-    user?.name,
-    user?.fullName,
-    user?.displayName,
-    user?.email,
-  ]
+  return ["PARAKH", user?.name, user?.fullName, user?.displayName, user?.email]
     .map((value) => String(value || "").trim())
-    .filter((value) => value.length >= 2);
-
-  return [...new Set(values)].sort((a, b) => b.length - a.length);
+    .filter((value) => value.length >= 2)
+    .sort((a, b) => b.length - a.length)
+    .filter((value, index, list) => list.indexOf(value) === index);
 }
 
 function protectTerms(text, protectedTerms) {
-  if (!protectedTerms.length) return { source: text, restore: (translated) => translated };
-
   let source = String(text);
   const protectedValues = [];
-  let tokenIndex = 0;
-
-  for (const term of protectedTerms) {
+  protectedTerms.forEach((term, index) => {
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const pattern = new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`, "gi");
     source = source.replace(pattern, (match) => {
-      const token = `PARAKHKEEP${tokenIndex}TOKEN`;
+      const token = `PARAKHKEEP${index}TOKEN`;
       protectedValues.push({ token, value: match });
-      tokenIndex += 1;
       return token;
     });
-  }
-
+  });
   return {
     source,
     restore(translated) {
       let restored = String(translated || "");
-      for (const { token, value } of protectedValues) {
-        restored = restored.split(token).join(value);
-      }
+      for (const item of protectedValues) restored = restored.split(item.token).join(item.value);
       return restored;
     },
   };
-}
-
-function normalizeTranslationForDisplay(translated, original) {
-  const value = String(translated || "").trim();
-  const source = String(original || "").trim();
-  if (!value || !source) return "";
-  if (value.toLowerCase() === source.toLowerCase()) return "";
-  return value;
 }
 
 export default function AutoTranslate() {
@@ -99,113 +73,89 @@ export default function AutoTranslate() {
     if (typeof document === "undefined") return undefined;
     const cacheKey = `parakh_translation_cache_${CACHE_VERSION}_${language}`;
     const protectedTerms = collectProtectedTerms(getUser());
-
     try {
-      const stored = JSON.parse(localStorage.getItem(cacheKey) || "{}");
-      cache.current = new Map(Object.entries(stored));
+      cache.current = new Map(Object.entries(JSON.parse(localStorage.getItem(cacheKey) || "{}")));
     } catch {
       cache.current = new Map();
     }
-
     let cancelled = false;
 
-    function restoreTrackedEnglish() {
-      if (typeof document === "undefined") return;
+    const restore = () => {
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       let node;
       while ((node = walker.nextNode())) {
         const original = originals.current.get(node);
         if (original != null && node.nodeValue !== original) node.nodeValue = original;
       }
-
       for (const element of document.body.querySelectorAll("[placeholder], [aria-label], [title]")) {
-        const originalsForElement = attributeOriginals.current.get(element);
-        if (!originalsForElement) continue;
+        const saved = attributeOriginals.current.get(element);
+        if (!saved) continue;
         for (const attribute of TRANSLATABLE_ATTRIBUTES) {
-          if (originalsForElement[attribute] != null && element.getAttribute(attribute) !== originalsForElement[attribute]) {
-            element.setAttribute(attribute, originalsForElement[attribute]);
-          }
+          if (saved[attribute] != null) element.setAttribute(attribute, saved[attribute]);
         }
       }
-    }
+    };
 
     async function process() {
       if (cancelled || busy.current) return;
-      const root = document.body;
-      if (!root) return;
-
-      restoreTrackedEnglish();
-
+      restore();
       const nodes = [];
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       let node;
       while ((node = walker.nextNode())) {
         if (shouldSkip(node)) continue;
         if (!originals.current.has(node)) originals.current.set(node, node.nodeValue || "");
         const original = originals.current.get(node) || "";
         const { core } = splitWhitespace(original);
-        if (!core || isProbablyTechnicalText(core)) continue;
-        nodes.push(node);
+        if (core && !isProbablyTechnicalText(core)) nodes.push(node);
       }
 
-      const elements = [];
-      for (const element of root.querySelectorAll("[placeholder], [aria-label], [title]")) {
-        if (isDynamicIdentityElement(element) || element.closest(SKIP_SELECTOR)) continue;
+      const attributes = [];
+      for (const element of document.body.querySelectorAll("[placeholder], [aria-label], [title]")) {
+        if (element.closest(IDENTITY_SELECTOR)) continue;
+        if (!attributeOriginals.current.has(element)) attributeOriginals.current.set(element, {});
+        const saved = attributeOriginals.current.get(element);
         for (const attribute of TRANSLATABLE_ATTRIBUTES) {
-          if (!element.hasAttribute(attribute)) continue;
-          const value = element.getAttribute(attribute) || "";
-          if (value.trim().length < 2 || isProbablyTechnicalText(value)) continue;
-          if (!attributeOriginals.current.has(element)) attributeOriginals.current.set(element, {});
-          const originalsForElement = attributeOriginals.current.get(element);
-          if (originalsForElement[attribute] == null) originalsForElement[attribute] = value;
-          elements.push({ element, attribute, original: originalsForElement[attribute] });
+          const value = element.getAttribute(attribute);
+          if (!value || value.trim().length < 2 || isProbablyTechnicalText(value)) continue;
+          if (saved[attribute] == null) saved[attribute] = value;
+          attributes.push({ element, attribute, original: saved[attribute] });
         }
       }
 
       if (language === "en") return;
-
       const missing = [];
-      const missingSet = new Set();
-      const addMissing = (value) => {
+      const seen = new Set();
+      const add = (value) => {
         const core = splitWhitespace(value).core;
-        if (!core || isProbablyTechnicalText(core) || missingSet.has(core) || cache.current.has(core)) return;
-
+        if (!core || seen.has(core) || cache.current.has(core) || isProbablyTechnicalText(core)) return;
         const protectedText = protectTerms(core, protectedTerms);
-        missingSet.add(core);
+        seen.add(core);
         missing.push({ original: core, source: protectedText.source, restore: protectedText.restore });
       };
-
-      for (const item of nodes) addMissing(originals.current.get(item) || "");
-      for (const item of elements) addMissing(item.original);
+      nodes.forEach((item) => add(originals.current.get(item) || ""));
+      attributes.forEach((item) => add(item.original));
+      if (!missing.length) return;
 
       busy.current = true;
       try {
         for (let offset = 0; offset < missing.length; offset += 40) {
           const batchItems = missing.slice(offset, offset + 40);
-          const batch = batchItems.map((item) => item.source);
           const response = await apiFetch("http://localhost:5000/api/translate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ target: language, texts: batch }),
+            body: JSON.stringify({ target: language, source: "auto", texts: batchItems.map((item) => item.source) }),
           });
-          if (!response.ok) throw new Error(`Translation request failed (${response.status}).`);
-          const data = await response.json().catch(() => null);
-          const failedTexts = new Set(Array.isArray(data?.failures) ? data.failures.map((item) => String(item?.text || "")) : []);
-
+          if (!response.ok) continue;
+          const data = await response.json().catch(() => ({}));
           for (const item of batchItems) {
-            if (failedTexts.has(item.source)) continue;
             const translated = data?.translations?.[item.source];
-            if (typeof translated !== "string") continue;
-            const restored = item.restore(translated);
-            const displayValue = normalizeTranslationForDisplay(restored, item.original);
-            if (displayValue) cache.current.set(item.original, displayValue);
+            if (typeof translated !== "string" || !translated.trim()) continue;
+            const restored = item.restore(translated.trim());
+            if (restored && restored.toLowerCase() !== item.original.toLowerCase()) cache.current.set(item.original, restored);
           }
-          if (cancelled) return;
         }
-
-        const compact = Object.fromEntries([...cache.current.entries()].slice(-1200));
-        localStorage.setItem(cacheKey, JSON.stringify(compact));
-
+        localStorage.setItem(cacheKey, JSON.stringify(Object.fromEntries([...cache.current.entries()].slice(-1600))));
         for (const item of nodes) {
           const original = originals.current.get(item);
           if (!original) continue;
@@ -213,13 +163,11 @@ export default function AutoTranslate() {
           const translated = cache.current.get(core);
           if (translated) item.nodeValue = `${leading}${translated}${trailing}`;
         }
-        for (const item of elements) {
+        for (const item of attributes) {
           const { leading, core, trailing } = splitWhitespace(item.original);
           const translated = cache.current.get(core);
           if (translated) item.element.setAttribute(item.attribute, `${leading}${translated}${trailing}`);
         }
-      } catch {
-        // Keep English source text when translation is unavailable or malformed.
       } finally {
         busy.current = false;
       }
@@ -229,18 +177,16 @@ export default function AutoTranslate() {
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(process, 180);
     };
-
     schedule();
     observer.current = new MutationObserver((mutations) => {
       if (mutations.some((mutation) => mutation.type === "childList" && mutation.addedNodes.length)) schedule();
     });
     observer.current.observe(document.body, { childList: true, subtree: true });
-
     return () => {
       cancelled = true;
       window.clearTimeout(timer.current);
       observer.current?.disconnect();
-      restoreTrackedEnglish();
+      restore();
     };
   }, [language]);
 
