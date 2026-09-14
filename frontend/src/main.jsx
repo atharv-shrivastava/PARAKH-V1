@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import AutoTranslate from "./components/AutoTranslate";
+import CoinCalibrationAssist from "./components/CoinCalibrationAssist";
 import ScanScopedUnableToVerifyReview from "./components/ScanScopedUnableToVerifyReview";
 import StartupSplash from "./components/StartupSplash";
 import "./styles/global.css";
@@ -32,6 +33,7 @@ createRoot(document.getElementById("root")).render(
         <AutoTranslate />
         <App />
         <ScanScopedUnableToVerifyReview />
+        <CoinCalibrationAssist />
       </StartupSplash>
     </LanguageProvider>
   </StrictMode>
