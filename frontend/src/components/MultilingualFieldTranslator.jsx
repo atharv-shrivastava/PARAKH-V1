@@ -15,12 +15,12 @@ function shouldTranslateValue(element, value) {
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())) return false;
   if (/^(https?:\/\/|www\.)/i.test(value.trim())) return false;
   if (TECHNICAL.test(value.trim())) return false;
-  return /[^\x00-\x7F]/u.test(value) || Boolean(element.closest(".ocr-edit-field"));
+  return /[^\x00-\x7F]/u.test(value) || Boolean(element.closest(".ocr-edit-field,.registration-form"));
 }
 
 function isSignupIdentity(element) {
   const text = `${element.name || ""} ${element.id || ""} ${element.getAttribute("aria-label") || ""}`.toLowerCase();
-  return /(^|\W)(name|email|username)(\W|$)/.test(text) && element.closest("form");
+  return /(^|\W)(name|email|username)(\W|$)/.test(text) && element.closest("form") && !element.closest(".registration-form");
 }
 
 export default function MultilingualFieldTranslator() {
