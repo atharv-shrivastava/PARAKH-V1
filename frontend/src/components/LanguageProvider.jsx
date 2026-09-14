@@ -1,12 +1,22 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { getUser } from "../lib/auth";
-import { getLanguage, saveLanguage, translate } from "../lib/language";
+import { getLanguage, isSupportedLanguage, saveLanguage, translate } from "../lib/language";
 
 const LanguageContext = createContext(null);
 
+function getInitialLanguage(user) {
+  // Language preferences are user-specific. Do not let the last language
+  // selected by another account silently become this account's locale.
+  if (user?.id) {
+    const stored = localStorage.getItem(`parakh_language_${user.id}`);
+    return isSupportedLanguage(stored) ? stored : "en";
+  }
+  return getLanguage();
+}
+
 export function LanguageProvider({ children }) {
   const user = getUser();
-  const [language, setLanguageState] = useState(() => getLanguage(user?.id));
+  const [language, setLanguageState] = useState(() => getInitialLanguage(user));
 
   useEffect(() => {
     saveLanguage(language, getUser()?.id);
