@@ -1,1 +1,8 @@
-PaddleOCR service added. Start from ocr-service/start-paddle.ps1. Default port is 8081 so it does not collide with the existing OCR service on 8080.
+RapidOCR service. Start from the ocr-service directory with:
+
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8081
+
+The service accepts up to 6 package images per request and processes the image set in parallel. PaddleOCR is not used.
