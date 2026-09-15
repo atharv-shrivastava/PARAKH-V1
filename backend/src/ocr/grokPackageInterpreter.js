@@ -3,7 +3,26 @@ import {
   normalizeSemanticResult,
   parseJsonContent,
 } from "./semanticPackageCommon.js";
+import { interpretOcrFields } from "./ocrFieldInterpreter.js";
+import { repairNumericFields } from "./numericFieldRepair.js";
 import { preprocessImagesForAI } from "./imagePreprocessor.js";
+
+function buildNormalizedOcrCandidates(detections, rawText) {
+  const deterministic = repairNumericFields(
+    interpretOcrFields({ detections, rawText })?.fields || {},
+    detections,
+    rawText,
+  );
+  return Object.fromEntries(Object.entries(deterministic || {}).map(([key, field]) => [key, {
+    value: String(field?.value ?? "").replace(/\s+/g, " ").trim(),
+    raw: String(field?.raw ?? "").replace(/\s+/g, " ").trim(),
+    evidence: String(field?.evidence ?? "").replace(/\s+/g, " ").trim(),
+    status: field?.status || "absent",
+    confidence: Number(field?.confidence || 0),
+    imageIndex: Number.isInteger(field?.imageIndex) ? field.imageIndex : -1,
+    evidenceIndex: Number.isInteger(field?.evidenceIndex) ? field.evidenceIndex : -1,
+  }]));
+}
 
 export async function interpretPackageWithGrok({ images = [], detections = [], rawText = "", categoryOptions = [], signal } = {}) {
   const apiKey = process.env.XAI_API_KEY || "";
@@ -16,7 +35,8 @@ export async function interpretPackageWithGrok({ images = [], detections = [], r
     return { enabled: false, provider: "grok", model, reason: "No package images supplied." };
   }
 
-  const prompt = buildSemanticPrompt({ detections, rawText, categoryOptions });
+  const regexCandidates = buildNormalizedOcrCandidates(detections, rawText);
+  const prompt = `${buildSemanticPrompt({ detections, rawText, categoryOptions })}\n\nREGEX-NORMALIZED OCR CANDIDATES\nThese are deterministic, format-checked candidate fields derived from the supplied OCR text. They are evidence hints only. Recheck them against the package image and return the normalized value only when the image supports it.\n${JSON.stringify(regexCandidates)}`;
   const preparedImages = await preprocessImagesForAI(images);
   const content = [
     { type: "text", text: `${prompt}\n\nYou are the independent second semantic verifier. Inspect the prepared image directly. Do not trust an OCR string merely because it looks plausible. Recheck every digit in MRP, quantity, dates, batch/lot codes, phone numbers, email addresses, FSSAI/license identifiers and GTIN-like numbers. Keep manufacturer, packer, marketer and importer roles separate. When image evidence is insufficient or two plausible readings remain, use status=ambiguous or unreadable instead of guessing.` },
@@ -29,6 +49,7 @@ export async function interpretPackageWithGrok({ images = [], detections = [], r
   try {
     if (signal?.aborted) throw new DOMException("The request was aborted.", "AbortError");
     const startedAt = Date.now();
+    console.log(`[ocr:grok-semantic] START model=${model} preparedImages=${preparedImages.length} regexCandidates=${Object.keys(regexCandidates).length}`);
     const response = await fetch("https://api.x.ai/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
