@@ -145,7 +145,7 @@ function fieldMatchScore(aiField, referenceValue, key) {
   return 0;
 }
 
-function rapidConfidence(evidence, field) {
+function paddleConfidence(evidence, field) {
   if (!Array.isArray(evidence) || !field) return null;
   if (Number.isInteger(field.evidenceIndex) && Number.isFinite(Number(evidence[field.evidenceIndex]?.confidence))) return Number(evidence[field.evidenceIndex].confidence);
   const candidate = evidence.find((item) => item?.field === field.fieldName || item?.key === field.fieldName || item?.name === field.fieldName);
@@ -164,7 +164,7 @@ export function compareWithDataKart(ocrResult, dataKart) {
   if (!dataKart?.found || !dataKart.product) return empty;
 
   const comparisons = {};
-  const rapidEvidence = Array.isArray(ocrResult?.rawOcrEvidence) ? ocrResult.rawOcrEvidence : [];
+  const paddleEvidence = Array.isArray(ocrResult?.rawOcrEvidence) ? ocrResult.rawOcrEvidence : [];
   for (const [key, column] of Object.entries(FIELD_MAP)) {
     if (NON_COMPLIANCE_FIELDS.has(key)) continue;
     const sourceField = ocrResult?.[key];
@@ -180,11 +180,11 @@ export function compareWithDataKart(ocrResult, dataKart) {
       continue;
     }
     const match = matchScore >= 0.85;
-    const gemini = Number(field.geminiConfidence ?? field.confidence);
-    const rapid = rapidConfidence(rapidEvidence, field);
+    const semantic = Number(field.semanticConsensusConfidence ?? field.geminiConfidence ?? field.confidence);
+    const paddle = paddleConfidence(paddleEvidence, field);
     const verificationConfidence = weightedAverage([
-      { score: Number.isFinite(rapid) ? rapid : null, weight: 0.30 },
-      { score: Number.isFinite(gemini) ? gemini : null, weight: 0.30 },
+      { score: Number.isFinite(paddle) ? paddle : null, weight: 0.30 },
+      { score: Number.isFinite(semantic) ? semantic : null, weight: 0.30 },
       { score: matchScore, weight: 0.40 },
     ]);
     comparisons[key] = { aiValue: field.value, rawAiValue: field.value, referenceValue, matchScore, verificationConfidence, score: verificationConfidence, match, status: match ? "MATCH" : "MISMATCH" };
@@ -213,7 +213,7 @@ export function calculateVerificationConfidence({ ocrResult, dataKartComparison 
     .map((item) => Number(item.confidence)));
   const semanticConfidence = average(Object.entries(ocrResult || {})
     .filter(([key, field]) => !NON_COMPLIANCE_FIELDS.has(String(key).toLowerCase()) && field && typeof field === "object" && field.status === "found")
-    .map(([, field]) => Number(field.geminiConfidence ?? field.confidence)));
+    .map(([, field]) => Number(field.semanticConsensusConfidence ?? field.geminiConfidence ?? field.confidence)));
   const dataKartConfidence = Number.isFinite(Number(dataKartComparison?.matchRate)) ? Number(dataKartComparison.matchRate) : null;
   const overall = weightedAverage([
     { score: ocrConfidence, weight: 0.30 },
@@ -225,8 +225,8 @@ export function calculateVerificationConfidence({ ocrResult, dataKartComparison 
     overall: resolved,
     percentage: Math.round(resolved * 100),
     label: resolved >= 0.85 ? "HIGH" : resolved >= 0.65 ? "MEDIUM" : "LOW",
-    components: { ocr: ocrConfidence, gemini: semanticConfidence, datakart: dataKartConfidence },
-    weights: { ocr: 0.30, gemini: 0.30, datakart: 0.40 },
+    components: { paddleocr: ocrConfidence, semanticConsensus: semanticConfidence, datakart: dataKartConfidence },
+    weights: { paddleocr: 0.30, semanticConsensus: 0.30, datakart: 0.40 },
     barcodeExcludedFromCompliance: true,
     matchedFields: Number(dataKartComparison?.matchedFields || 0),
     comparedFields: Number(dataKartComparison?.comparedFields || 0),
