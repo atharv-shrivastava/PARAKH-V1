@@ -23,6 +23,14 @@ function parseImages(product) {
   return product?.imageUrl?.startsWith("data:image/") ? [product.imageUrl] : [];
 }
 
+function parseOcrData(product) {
+  if (product?.ocrData && typeof product.ocrData === "object") return product.ocrData;
+  if (typeof product?.ocrData === "string") {
+    try { return JSON.parse(product.ocrData); } catch { return null; }
+  }
+  return null;
+}
+
 function drawSectionHeader(doc, title, y) {
   doc.setFillColor(245, 247, 250);
   doc.roundedRect(40, y - 15, 515, 28, 4, 4, "F");
@@ -67,6 +75,20 @@ export async function downloadProductPdf({ product, user, violations = [], penal
   const shop = product?.inspections?.[0]?.shop;
   const inspection = product?.inspections?.[0];
   const images = parseImages(product);
+  const stored = parseOcrData(product);
+  const compliance = stored?.compliance && typeof stored.compliance === "object" ? stored.compliance : null;
+  const review = stored?.complianceReview && typeof stored.complianceReview === "object" ? stored.complianceReview : {};
+  const allFindings = Array.isArray(compliance?.findings) ? compliance.findings : [];
+  const acceptedIds = new Set(Array.isArray(review.acceptedFindingIds) ? review.acceptedFindingIds.map(String) : []);
+  const rejectedIds = new Set(Array.isArray(review.rejectedFindingIds) ? review.rejectedFindingIds.map(String) : []);
+  const unableDecisions = review.unableToVerifyDecisions && typeof review.unableToVerifyDecisions === "object" ? review.unableToVerifyDecisions : {};
+  const officerDecision = (finding) => {
+    const id = String(finding?.findingId || "");
+    if (acceptedIds.has(id)) return "ACCEPTED";
+    if (rejectedIds.has(id)) return "NOT ACCEPTED";
+    if (String(finding?.status || "").toUpperCase() === "UNABLE_TO_VERIFY") return String(unableDecisions[id] || "PENDING").toUpperCase();
+    return "NOT REVIEWED";
+  };
   const path = [
     product?.category?.parent?.parent?.parent,
     product?.category?.parent?.parent,
@@ -95,7 +117,7 @@ export async function downloadProductPdf({ product, user, violations = [], penal
   drawField(doc, "Brand / Manufacturer", product.brandName, 305, rowStart, 250);
   drawField(doc, "Category", path || product.category?.name, left, rowStart + 55, 250);
   drawField(doc, "MRP", product.mrp == null ? "Not recorded" : `Rs. ${product.mrp}`, 305, rowStart + 55, 250);
-  drawField(doc, "Net Quantity", `${product.netQuantity || "Not recorded"} ${product.unit || ""}`, left, rowStart + 110, 250);
+  drawField(doc, "Net Quantity", [product.netQuantity, product.unit].filter(Boolean).join(" ") || "Not recorded", left, rowStart + 110, 250);
   drawField(doc, "Barcode", product.barcode, 305, rowStart + 110, 250);
   drawField(doc, "Registered At", registeredAt.toLocaleString(), left, rowStart + 165, 250);
   drawField(doc, "Inspection At", inspectedAt.toLocaleString(), 305, rowStart + 165, 250);
@@ -132,6 +154,49 @@ export async function downloadProductPdf({ product, user, violations = [], penal
       doc.setTextColor(127, 29, 29);
       doc.text(lines, left + 10, y + 15);
       y += boxHeight + 8;
+    });
+  }
+
+  if (y > 680) { doc.addPage(); y = 55; }
+  y = drawSectionHeader(doc, "Officer Review Ledger", y);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Engine findings recorded: ${allFindings.length}`, left, y + 8);
+  doc.text(`Review timestamp: ${safe(review.reviewedAt || "Not recorded")}`, 305, y + 8);
+  y += 24;
+  if (!allFindings.length) {
+    doc.text("No engine findings were retained for officer review.", left, y + 8);
+    y += 24;
+  } else {
+    allFindings.forEach((finding, index) => {
+      if (y > 765) { doc.addPage(); y = 55; }
+      const decision = officerDecision(finding);
+      const header = `${finding.ruleNumber || finding.ruleCode || `Rule ${index + 1}`} · ${String(finding.status || "UNKNOWN").toUpperCase()} · Officer: ${decision}`;
+      const message = finding.message || finding.violationReason || "No finding message recorded.";
+      const lines = doc.splitTextToSize(`${header}\n${message}`, 490);
+      const boxHeight = 16 + lines.length * 12;
+      doc.setFillColor(decision === "ACCEPTED" || decision === "FAIL" ? 254 : 248, decision === "ACCEPTED" || decision === "FAIL" ? 242 : 250, decision === "ACCEPTED" || decision === "FAIL" ? 242 : 252);
+      doc.roundedRect(left, y, 515, boxHeight, 4, 4, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(30, 41, 59);
+      doc.text(lines, left + 10, y + 14);
+      y += boxHeight + 7;
+    });
+  }
+  const manualDecisions = Array.isArray(review.manualDecisions) ? review.manualDecisions : [];
+  if (manualDecisions.length) {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(30, 41, 59);
+    doc.text("Manual officer decisions", left, y + 4);
+    y += 18;
+    manualDecisions.forEach((decision) => {
+      if (y > 770) { doc.addPage(); y = 55; }
+      const text = `${decision.ruleNumber || decision.ruleCode || "Rule"} · ${decision.decision || "RECORDED"} · ${decision.reason || "No reason recorded."}`;
+      const lines = doc.splitTextToSize(text, 500);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(71, 85, 105);
+      doc.text(lines, left, y);
+      y += Math.max(15, lines.length * 11 + 4);
     });
   }
 
@@ -196,7 +261,7 @@ export async function downloadProductPdf({ product, user, violations = [], penal
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(51, 65, 85);
-  doc.text("I have reviewed the product inspection information, accepted findings and penalty reference recorded above.", left, y + 8);
+  doc.text("I have reviewed the product inspection information, accepted findings and officer review decisions recorded above.", left, y + 8);
   doc.setDrawColor(71, 85, 105);
   doc.line(left, y + 75, 280, y + 75);
   doc.line(330, y + 75, right, y + 75);
