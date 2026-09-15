@@ -32,6 +32,23 @@ function normalizeText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function buildNormalizedOcrCandidates(detections, rawText) {
+  const deterministic = repairNumericFields(
+    interpretOcrFields({ detections, rawText })?.fields || {},
+    detections,
+    rawText,
+  );
+  return Object.fromEntries(Object.entries(deterministic || {}).map(([key, field]) => [key, {
+    value: normalizeText(field?.value),
+    raw: normalizeText(field?.raw),
+    evidence: normalizeText(field?.evidence),
+    status: field?.status || "absent",
+    confidence: Number(field?.confidence || 0),
+    imageIndex: Number.isInteger(field?.imageIndex) ? field.imageIndex : -1,
+    evidenceIndex: Number.isInteger(field?.evidenceIndex) ? field.evidenceIndex : -1,
+  }]));
+}
+
 function mergeDeterministicEvidence(geminiFields, detections, rawText) {
   const deterministic = repairNumericFields(interpretOcrFields({ detections, rawText })?.fields || {}, detections, rawText);
   const merged = {};
@@ -95,7 +112,8 @@ export async function interpretPackageWithGemini({ images = [], detections = [],
   }
 
   const ai = new GoogleGenAI({ apiKey });
-  const prompt = buildSemanticPrompt({ detections, rawText, categoryOptions });
+  const regexCandidates = buildNormalizedOcrCandidates(detections, rawText);
+  const prompt = `${buildSemanticPrompt({ detections, rawText, categoryOptions })}\n\nREGEX-NORMALIZED OCR CANDIDATES\nThese are deterministic, format-checked candidate fields derived from the supplied OCR text. They are evidence hints only. Recheck them against the package image and return the normalized value only when the image supports it.\n${JSON.stringify(regexCandidates)}`;
   const preparedImages = await preprocessImagesForAI(images);
   const contents = [
     ...preparedImages.map(({ base64, mediaType }) => ({ inlineData: { mimeType: mediaType, data: base64 } })),
@@ -117,7 +135,7 @@ export async function interpretPackageWithGemini({ images = [], detections = [],
   try {
     if (signal?.aborted) throw new DOMException("The request was aborted.", "AbortError");
 
-    console.log(`[ocr:gemini-semantic] START model=${model} preparedImages=${preparedImages.length}`);
+    console.log(`[ocr:gemini-semantic] START model=${model} preparedImages=${preparedImages.length} regexCandidates=${Object.keys(regexCandidates).length}`);
     const startedAt = Date.now();
     const response = await request();
     const elapsedMs = Date.now() - startedAt;
