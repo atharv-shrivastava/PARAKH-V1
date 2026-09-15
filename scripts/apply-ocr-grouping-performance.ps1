@@ -13,9 +13,6 @@ function Replace-Once([string]$Path, [string]$Old, [string]$New, [string]$Name) 
   Write-Host "patched $Path ($Name)"
 }
 
-# 1) PaddleOCR: preprocess images normally, then run the independent image inferences concurrently.
-#    The previous loop waited for image 1, then image 2, then image 3, which made a 3-image scan
-#    roughly the sum of all three Paddle inference times.
 Replace-Once "ocr-service/main.py" @'
     engine = _get_paddle(language)
     all_entries = []
@@ -66,9 +63,6 @@ Replace-Once "ocr-service/main.py" @'
         engine_ms += elapsed
 '@ "parallelize-paddle-images"
 
-# 2) Make the shared semantic prompt treat the uploaded images as a single inspection set.
-#    Models must first decide whether the images are consistent views of ONE physical package.
-#    They must not merge two different products into one record.
 Replace-Once "backend/src/ocr/semanticPackageCommon.js" @'
 CORE EXTRACTION METHOD
 For EVERY field:
@@ -123,7 +117,33 @@ Return valid compact JSON only. No markdown. No commentary. No extra keys outsid
 Return valid compact JSON only. No markdown. No commentary. The response may include the required packageAssessment object in addition to the field objects and suggestedCategory.`;
 '@ "allow-package-assessment"
 
-# 3) Keep the model-specific interpreters' packageAssessment so fastRoutes can enforce/review it.
+Replace-Once "backend/src/ocr/semanticPackageCommon.js" @'
+      suggestedCategory: {
+        type: "object",
+'@ @'
+      packageAssessment: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["single_package", "multiple_packages", "uncertain"] },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+          evidence: { type: "string" },
+        },
+        required: ["status", "confidence", "evidence"],
+      },
+      suggestedCategory: {
+        type: "object",
+'@ "schema-package-assessment-properties"
+
+Replace-Once "backend/src/ocr/semanticPackageCommon.js" @'
+    required: FIELD_KEYS,
+  };
+}
+'@ @'
+    required: [...FIELD_KEYS, "packageAssessment"],
+  };
+}
+'@ "schema-package-assessment-required"
+
 Replace-Once "backend/src/ocr/geminiPackageInterpreter.js" @'
     const parsed = parseJsonContent(response.text || "", { recoverTruncated: true });
     const normalized = normalizeSemanticResult(parsed, categoryOptions);
@@ -161,5 +181,47 @@ Replace-Once "backend/src/ocr/grokPackageInterpreter.js" @'
       : { status: "uncertain", confidence: 0, evidence: "Model did not return packageAssessment." };
     return { enabled: true, provider: "grok", model, fields: normalized.fields, suggestedCategory: normalized.suggestedCategory, packageAssessment, timingMs: elapsedMs };
 '@ "preserve-grok-package-assessment"
+
+# 4) Expose a conservative package-consistency decision in the backend response.
+Replace-Once "backend/src/ocr/fastRoutes.js" @'
+  const consensus = reconcileSemanticResults(settled, categoryOptions);
+  return { ...consensus, timingMs: Date.now() - startedAt, timing: Object.fromEntries(settled.map((provider) => [provider.provider, provider.timingMs || 0])) };
+'@ @'
+  const consensus = reconcileSemanticResults(settled, categoryOptions);
+  const assessments = settled
+    .filter((provider) => provider?.enabled && provider?.packageAssessment)
+    .map((provider) => ({ provider: provider.provider, ...provider.packageAssessment }));
+  const assessmentGroups = new Map();
+  for (const item of assessments) {
+    if (!assessmentGroups.has(item.status)) assessmentGroups.set(item.status, []);
+    assessmentGroups.get(item.status).push(item);
+  }
+  const ranked = [...assessmentGroups.entries()]
+    .sort((a, b) => b[1].length - a[1].length || Math.max(...b[1].map((item) => Number(item.confidence) || 0)) - Math.max(...a[1].map((item) => Number(item.confidence) || 0)));
+  const topAssessment = ranked[0];
+  const packageConsistency = topAssessment && topAssessment[1].length >= 2
+    ? { status: topAssessment[0], confidence: Math.max(...topAssessment[1].map((item) => Number(item.confidence) || 0)), providers: assessments, evidence: topAssessment[1].map((item) => `${item.provider}: ${item.evidence}`).join(" | ") }
+    : { status: "uncertain", confidence: 0, providers: assessments, evidence: assessments.length ? assessments.map((item) => `${item.provider}: ${item.status} ${item.evidence}`).join(" | ") : "No package consistency assessment returned." };
+  return { ...consensus, packageConsistency, timingMs: Date.now() - startedAt, timing: Object.fromEntries(settled.map((provider) => [provider.provider, provider.timingMs || 0])) };
+'@ "surface-package-consistency"
+
+Replace-Once "backend/src/ocr/fastRoutes.js" @'
+      needsReview: Object.values(fields).some((field) => field?.status === "ambiguous" || field?.status === "unreadable" || (field?.status === "found" && Number(field?.confidence || 0) < 0.6)),
+'@ @'
+      needsReview: semantic.packageConsistency?.status !== "single_package" || Object.values(fields).some((field) => field?.status === "ambiguous" || field?.status === "unreadable" || (field?.status === "found" && Number(field?.confidence || 0) < 0.6)),
+      packageConsistency: semantic.packageConsistency || { status: "uncertain", confidence: 0, providers: [], evidence: "Package consistency could not be established." },
+'@ "package-consistency-requires-review"
+
+Replace-Once "backend/src/ocr/fastRoutes.js" @'
+      aiSemantic: { providerCount: semantic.providerCount, providers: semantic.providers, suggestedCategory: semantic.suggestedCategory || null },
+'@ @'
+      aiSemantic: { providerCount: semantic.providerCount, providers: semantic.providers, suggestedCategory: semantic.suggestedCategory || null, packageConsistency: semantic.packageConsistency || null },
+'@ "attach-package-consistency-to-ai-semantic"
+
+Replace-Once "backend/src/ocr/fastRoutes.js" @'
+    console.log(`[ocr:fast] images=${packageFiles.length} evidence=${rapid.evidence.length} rapid=${rapid.timingMs}ms semantic=${semantic.timingMs}ms gemini=${semantic.timing?.gemini || 0}ms grok=${semantic.timing?.grok || 0}ms providers=${semantic.providerCount} total=${totalMs}ms parallel=true`);
+'@ @'
+    console.log(`[ocr:fast] images=${packageFiles.length} evidence=${rapid.evidence.length} paddle=${rapid.timingMs}ms semantic=${semantic.timingMs}ms gemini=${semantic.timing?.gemini || 0}ms grok=${semantic.timing?.grok || 0}ms providers=${semantic.providerCount} package=${semantic.packageConsistency?.status || "uncertain"} total=${totalMs}ms parallel=true`);
+'@ "paddle-log-label"
 
 Write-Host "OCR grouping/performance patch prepared. Restart the OCR service and backend after running this script."
