@@ -25,23 +25,25 @@ function buildNormalizedOcrCandidates(detections, rawText) {
 }
 
 export async function interpretPackageWithGrok({ images = [], detections = [], rawText = "", categoryOptions = [], signal } = {}) {
-  const apiKey = process.env.XAI_API_KEY || "";
-  const model = process.env.GROK_SEMANTIC_MODEL || "grok-4.6";
+  // Keep the historical provider slot as "grok" so existing consensus/UI contracts stay intact.
+  // The slot now uses multimodal Qwen through Groq's OpenAI-compatible API.
+  const apiKey = process.env.GROQ_API_KEY || "";
+  const model = process.env.GROK_SEMANTIC_MODEL || "qwen/qwen3.6-27b";
 
   if (!apiKey) {
-    console.warn(`[ocr:grok-semantic] SKIPPED model=${model} reason=XAI_API_KEY is not configured.`);
-    return { enabled: false, provider: "grok", model, reason: "XAI_API_KEY is not configured." };
+    console.warn(`[ocr:grok-semantic] SKIPPED provider=groq model=${model} reason=GROQ_API_KEY is not configured.`);
+    return { enabled: false, provider: "grok", model, reason: "GROQ_API_KEY is not configured." };
   }
   if (!images.length) {
-    console.warn(`[ocr:grok-semantic] SKIPPED model=${model} reason=No package images supplied.`);
+    console.warn(`[ocr:grok-semantic] SKIPPED provider=groq model=${model} reason=No package images supplied.`);
     return { enabled: false, provider: "grok", model, reason: "No package images supplied." };
   }
 
   const regexCandidates = buildNormalizedOcrCandidates(detections, rawText);
-  const prompt = `${buildSemanticPrompt({ detections, rawText, categoryOptions })}\n\nREGEX-NORMALIZED OCR CANDIDATES\nThese are deterministic, format-checked candidate fields derived from the supplied OCR text. They are evidence hints only. Recheck them against the package image and return the normalized value only when the image supports it.\n${JSON.stringify(regexCandidates)}`;
+  const prompt = `${buildSemanticPrompt({ detections, rawText, categoryOptions })}\n\nREGEX-NORMALIZED OCR CANDIDATES\nThese are deterministic, format-checked candidate fields derived from the supplied OCR text. They are evidence hints only. Recheck them against the original package image and return the normalized value only when the image supports it.\n${JSON.stringify(regexCandidates)}`;
   const preparedImages = await preprocessImagesForAI(images);
   const content = [
-    { type: "text", text: `${prompt}\n\nYou are the independent second semantic verifier. Inspect the prepared image directly. Do not trust an OCR string merely because it looks plausible. Recheck every digit in MRP, quantity, dates, batch/lot codes, phone numbers, email addresses, FSSAI/license identifiers and GTIN-like numbers. Keep manufacturer, packer, marketer and importer roles separate. When image evidence is insufficient or two plausible readings remain, use status=ambiguous or unreadable instead of guessing.` },
+    { type: "text", text: `${prompt}\n\nYou are the independent second semantic verifier. Inspect the original package image directly. Use the structured OCR candidates as evidence hints, not as truth. Recheck every digit in MRP, quantity, dates, batch/lot codes, phone numbers, email addresses, FSSAI/license identifiers and GTIN-like numbers. Keep manufacturer, packer, marketer and importer roles separate. When image evidence is insufficient or two plausible readings remain, use status=ambiguous or unreadable instead of guessing.` },
     ...preparedImages.map(({ base64, mediaType }) => ({
       type: "image_url",
       image_url: { url: `data:${mediaType};base64,${base64}` },
@@ -51,8 +53,8 @@ export async function interpretPackageWithGrok({ images = [], detections = [], r
   try {
     if (signal?.aborted) throw new DOMException("The request was aborted.", "AbortError");
     const startedAt = Date.now();
-    console.log(`[ocr:grok-semantic] START model=${model} preparedImages=${preparedImages.length} regexCandidates=${Object.keys(regexCandidates).length}`);
-    const response = await fetch("https://api.x.ai/v1/chat/completions", {
+    console.log(`[ocr:grok-semantic] START provider=groq model=${model} preparedImages=${preparedImages.length} regexCandidates=${Object.keys(regexCandidates).length}`);
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -62,14 +64,15 @@ export async function interpretPackageWithGrok({ images = [], detections = [], r
           { role: "user", content },
         ],
         temperature: 0,
-        max_tokens: 2600,
+        max_completion_tokens: 2600,
+        response_format: { type: "json_object" },
       }),
       signal,
     });
     const elapsedMs = Date.now() - startedAt;
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const reason = data?.error?.message || data?.error || `Grok API returned HTTP ${response.status}.`;
+      const reason = data?.error?.message || data?.error || `Groq API returned HTTP ${response.status}.`;
       throw Object.assign(new Error(reason), { statusCode: response.status });
     }
     const output = data?.choices?.[0]?.message?.content;
@@ -82,11 +85,11 @@ export async function interpretPackageWithGrok({ images = [], detections = [], r
           evidence: String(parsed.packageAssessment.evidence || "").trim(),
         }
       : { status: "uncertain", confidence: 0, evidence: "Model did not return packageAssessment." };
-    console.log(`[ocr:grok-semantic] DONE model=${model} elapsed=${elapsedMs}ms`);
+    console.log(`[ocr:grok-semantic] DONE provider=groq model=${model} elapsed=${elapsedMs}ms`);
     return { enabled: true, provider: "grok", model, fields: normalized.fields, suggestedCategory: normalized.suggestedCategory, packageAssessment, timingMs: elapsedMs };
   } catch (error) {
     if (error?.name === "AbortError") throw error;
-    console.error(`[ocr:grok-semantic] FAILED model=${model} status=${error?.statusCode ?? "unknown"} reason=${error?.message || "Grok semantic interpretation failed."}`, error);
-    return { enabled: false, provider: "grok", model, reason: error?.message || "Grok semantic interpretation failed.", statusCode: error?.statusCode ?? null };
+    console.error(`[ocr:grok-semantic] FAILED provider=groq model=${model} status=${error?.statusCode ?? "unknown"} reason=${error?.message || "Qwen/Groq semantic interpretation failed."}`, error);
+    return { enabled: false, provider: "grok", model, reason: error?.message || "Qwen/Groq semantic interpretation failed.", statusCode: error?.statusCode ?? null };
   }
 }
