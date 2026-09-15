@@ -36,7 +36,35 @@ app.use("/api/translate", translateRouter);
 app.use("/api/datakart", datakartRouter);
 app.use("/api/products/ecommerce-ocr", ecommerceOcrRouter);
 
-// Production OCR uses RapidOCR + semantic verification.
+// The local OCR service is PaddleOCR 3.7.0 primary with RapidOCR retained only
+// as an internal fallback. The legacy fast router still uses the old "rapid"
+// field names, so normalize its public response names here without changing the
+// underlying fallback behavior.
+app.use("/api/ocr", (req, res, next) => {
+  if (req.method !== "POST" || req.path !== "/analyze") return next();
+  const originalJson = res.json.bind(res);
+  res.json = (payload) => {
+    if (payload && payload.provider === "rapidocr") {
+      const timing = payload.timing && typeof payload.timing === "object" ? { ...payload.timing } : payload.timing;
+      if (timing && Object.prototype.hasOwnProperty.call(timing, "rapidMs")) {
+        timing.paddleMs = timing.rapidMs;
+        delete timing.rapidMs;
+      }
+      payload = {
+        ...payload,
+        provider: "paddleocr",
+        model: "PaddleOCR 3.7.0",
+        detectionProvider: "paddleocr",
+        detectionProviders: ["paddleocr"],
+        timing,
+      };
+    }
+    return originalJson(payload);
+  };
+  next();
+});
+
+// Production OCR uses PaddleOCR as primary with RapidOCR fallback + semantic verification.
 app.use("/api/ocr", fastOcrRouter);
 // Gemini vs Grok benchmark/timing endpoint.
 app.use("/api/ocr", semanticTimingRouter);
