@@ -5,15 +5,9 @@ import { evaluateInspection as evaluateConfiguredRules } from './evaluator.js';
 import { unitSalePriceFinding } from './unit-sale-price-evaluator.js';
 
 const AUTHORITATIVE_SPECIALIZED_RULES = new Set([
-  'PCR-R6-1-A',
-  'PCR-R6-1-B',
-  'PCR-R6-1-C',
-  'PCR-R6-1-D',
-  'PCR-R6-1-E',
-  'PCR-R6-1-F',
-  'PCR-R6-1-G',
-  'PCR-R6-2',
+  'PCR-R6-1-A', 'PCR-R6-1-B', 'PCR-R6-1-C', 'PCR-R6-1-D', 'PCR-R6-1-E', 'PCR-R6-1-F', 'PCR-R6-1-G', 'PCR-R6-2',
 ]);
+const SUPPRESSED_PARENT_RULES = new Set(['PCR-R4']);
 
 function canonical(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v);
@@ -34,13 +28,17 @@ function summarize(findings: OverallInspectionResult['findings']) {
 }
 
 function evidenceForFinding(request: InspectionRequest, field: string) {
-  return (request.evidence ?? []).filter(item =>
-    item.field === field ||
-    item.field === field.replace(/^declarations\./, '') ||
-    (field === 'declarations.dateOfManufacturePackingImport' && item.field === 'declarations.manufactureOrImportDate') ||
-    (field === 'declarations.dateOfManufacturePackingImport' && item.field === 'declarations.dateOfPacking') ||
-    (field === 'declarations.dateOfManufacturePackingImport' && item.field === 'declarations.dateOfManufacture')
-  );
+  const aliases: Record<string, string[]> = {
+    'declarations.dateOfManufacturePackingImport': [
+      'declarations.dateOfManufacturePackingImport', 'declarations.manufactureOrImportDate',
+      'declarations.dateOfManufacture', 'declarations.dateOfPacking', 'declarations.dateOfPrePacking', 'declarations.dateOfImport',
+      'dateOfManufacture', 'dateOfPacking',
+    ],
+    'declarations.retailSalePrice': ['declarations.retailSalePrice', 'declarations.mrp', 'mrp', 'retailSalePrice', 'transaction.mrp'],
+    'declarations.netQuantity': ['declarations.netQuantity', 'netQuantity', 'declarations.quantityText', 'declarations.netQuantityText'],
+  };
+  const fields = new Set(aliases[field] ?? [field]);
+  return (request.evidence ?? []).filter(item => fields.has(item.field) || fields.has(item.field.replace(/^declarations\./, '')));
 }
 
 function attachAuditEvidence(request: InspectionRequest, findings: OverallInspectionResult['findings']) {
@@ -58,9 +56,17 @@ export function evaluateInspectionCompleteWithCurrentRulesV2(r: InspectionReques
 
   const specializedAuthoritative = specialized.findings.filter(f => AUTHORITATIVE_SPECIALIZED_RULES.has(f.ruleId));
   const specializedOther = specialized.findings.filter(f => !configuredIds.has(f.ruleId) && !AUTHORITATIVE_SPECIALIZED_RULES.has(f.ruleId));
-  const configuredOther = configured?.findings.filter(f => !AUTHORITATIVE_SPECIALIZED_RULES.has(f.ruleId)) ?? [];
+  const configuredOther = configured?.findings.filter(f => !AUTHORITATIVE_SPECIALIZED_RULES.has(f.ruleId) && !SUPPRESSED_PARENT_RULES.has(f.ruleId)) ?? [];
 
-  const findings = [...specializedOther, ...specializedAuthoritative, ...configuredOther];
+  const rawFindings = [...specializedOther, ...specializedAuthoritative, ...configuredOther];
+  const seen = new Set<string>();
+  const findings = rawFindings.filter(finding => {
+    const key = `${finding.ruleCode}|${finding.ruleNumber}|${finding.field ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
   const unitSalePrice = unitSalePriceFinding(r);
   if (unitSalePrice && !findings.some(f => f.findingId === unitSalePrice.findingId)) findings.push(unitSalePrice);
 
