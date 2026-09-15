@@ -4,10 +4,10 @@ $root = Split-Path -Parent $PSScriptRoot
 
 function Replace-Once([string]$Path, [string]$Old, [string]$New, [string]$Name) {
   $full = Join-Path $root $Path
-  if (-not (Test-Path $full)) { throw "$Name: file not found: $full" }
+  if (-not (Test-Path $full)) { throw "${Name}: file not found: $full" }
   $text = Get-Content -Raw -Path $full
   $count = ([regex]::Matches($text, [regex]::Escape($Old))).Count
-  if ($count -ne 1) { throw "$Name: expected exactly 1 match in $Path, found $count" }
+  if ($count -ne 1) { throw "${Name}: expected exactly 1 match in $Path, found $count" }
   $updated = $text.Replace($Old, $New)
   Set-Content -Path $full -Value $updated -Encoding utf8NoBOM
   Write-Host "patched $Path ($Name)"
@@ -182,7 +182,6 @@ Replace-Once "backend/src/ocr/grokPackageInterpreter.js" @'
     return { enabled: true, provider: "grok", model, fields: normalized.fields, suggestedCategory: normalized.suggestedCategory, packageAssessment, timingMs: elapsedMs };
 '@ "preserve-grok-package-assessment"
 
-# 4) Expose a conservative package-consistency decision in the backend response.
 Replace-Once "backend/src/ocr/fastRoutes.js" @'
   const consensus = reconcileSemanticResults(settled, categoryOptions);
   return { ...consensus, timingMs: Date.now() - startedAt, timing: Object.fromEntries(settled.map((provider) => [provider.provider, provider.timingMs || 0])) };
