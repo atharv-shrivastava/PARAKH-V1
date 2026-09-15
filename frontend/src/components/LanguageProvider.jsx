@@ -19,7 +19,11 @@ export function LanguageProvider({ children }) {
   const [language, setLanguageState] = useState(() => getInitialLanguage(user));
 
   useEffect(() => {
-    saveLanguage(language, getUser()?.id);
+    const userId = getUser()?.id;
+    saveLanguage(language, userId);
+    // Keep the active locale mirrored for legacy OCR localization code that
+    // reads the current browser language without user identity context.
+    localStorage.setItem("parakh_language", language);
   }, [language]);
 
   const value = useMemo(() => ({
