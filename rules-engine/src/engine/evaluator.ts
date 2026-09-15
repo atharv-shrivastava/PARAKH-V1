@@ -48,47 +48,235 @@ type ConditionResult = { status: EvaluationStatus; missing: string[]; message: s
 function conditionResult(request: InspectionRequest, condition: RuleCondition): ConditionResult {
   const evidence = evidenceFor(request, condition.targetField);
   const conflicts = conflictsFor(request, condition.targetField);
-  const pass = (): ConditionResult => ({ status: 'PASS', missing: [], message: 'Requirement satisfied.', evidence, conflicts });
-  const unable = (missing = [condition.targetField]): ConditionResult => ({ status: 'UNABLE_TO_VERIFY', missing, message: condition.errorMessage, evidence, conflicts });
-  const fail = (reason = condition.violationReason): ConditionResult => ({ status: 'VIOLATION', missing: [], message: condition.errorMessage, reason, evidence, conflicts });
-  const missingDeclaration = (): ConditionResult => ({ status: 'VIOLATION', missing: [condition.targetField], message: condition.errorMessage, reason: `${condition.violationReason} No declaration evidence was established by the available inspection providers.`, evidence, conflicts });
-  if (conflicts.length > 0) return { status: 'UNABLE_TO_VERIFY', missing: [], message: condition.errorMessage, evidence, conflicts };
-  if (evidence.length === 0 && condition.targetField.startsWith('declarations.')) return missingDeclaration();
-  if (!confidenceOk(evidence, condition.minimumConfidence)) return unable();
+
+  const pass = (): ConditionResult => ({
+    status: 'PASS',
+    missing: [],
+    message: 'Requirement satisfied.',
+    evidence,
+    conflicts,
+  });
+
+  const unable = (missing = [condition.targetField]): ConditionResult => ({
+    status: 'UNABLE_TO_VERIFY',
+    missing,
+    message: condition.errorMessage,
+    evidence,
+    conflicts,
+  });
+
+  const fail = (reason = condition.violationReason): ConditionResult => ({
+    status: 'VIOLATION',
+    missing: [],
+    message: condition.errorMessage,
+    reason,
+    evidence,
+    conflicts,
+  });
+
+  if (conflicts.length > 0) {
+    return {
+      status: 'UNABLE_TO_VERIFY',
+      missing: [],
+      message: condition.errorMessage,
+      evidence,
+      conflicts,
+    };
+  }
+
+  const declarationStatuses = evidence
+    .map(item => {
+      const status = item.metadata?.declarationStatus;
+      return typeof status === 'string' ? status.toLowerCase() : null;
+    })
+    .filter(Boolean);
+
+  const explicitlyAbsent = declarationStatuses.includes('absent');
+  const explicitlyUncertain =
+    declarationStatuses.includes('ambiguous') ||
+    declarationStatuses.includes('unreadable');
+
+  // IMPORTANT:
+  // No evidence means the inspection providers did not establish the
+  // declaration. That is NOT proof that the package lacks the declaration.
+  // The officer must review it.
+  if (
+    evidence.length === 0 &&
+    condition.targetField.startsWith('declarations.')
+  ) {
+    return unable();
+  }
+
+  // Explicit semantic absence is different from extractor failure.
+  if (explicitlyAbsent && condition.operator === 'EXISTS') {
+    return fail(
+      `${condition.violationReason} The inspection providers explicitly classified the declaration as absent.`
+    );
+  }
+
+  if (explicitlyUncertain) {
+    return unable();
+  }
+
   const value = sourceValue(request, condition.targetField);
   const missing = value === undefined || value === null || value === '';
+
   switch (condition.operator) {
-    case 'EXISTS': return missing ? missingDeclaration() : pass();
-    case 'NOT_EXISTS': return missing ? pass() : fail();
-    case 'EQUALS': return missing ? unable() : value === condition.expectedValue ? pass() : fail();
-    case 'NOT_EQUALS': return missing ? unable() : value !== condition.expectedValue ? pass() : fail();
-    case 'REGEX_MATCH': return missing ? missingDeclaration() : pass();
-    case 'GREATER_THAN': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value > condition.expectedValue ? pass() : fail() : unable();
-    case 'LESS_THAN': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value < condition.expectedValue ? pass() : fail() : unable();
-    case 'GREATER_THAN_OR_EQUAL': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value >= condition.expectedValue ? pass() : fail() : unable();
-    case 'LESS_THAN_OR_EQUAL': return typeof value === 'number' && typeof condition.expectedValue === 'number' ? value <= condition.expectedValue ? pass() : fail() : unable();
-    case 'VALID_UNIT': return missing ? missingDeclaration() : pass();
-    case 'VALID_CURRENCY': return missing ? missingDeclaration() : pass();
-    case 'VALID_DATE_FORMAT': return missing ? missingDeclaration() : pass();
-    case 'IN_LIST': return missing || !Array.isArray(condition.expectedValue) ? unable() : condition.expectedValue.includes(value) ? pass() : fail();
-    case 'IN_NUMERIC_RANGE': return typeof value === 'number' && Array.isArray(condition.expectedValue) && condition.expectedValue.length === 2 ? value >= Number(condition.expectedValue[0]) && value <= Number(condition.expectedValue[1]) ? pass() : fail() : unable();
+    case 'EXISTS':
+      // Evidence exists, but the normalized value could not be recovered.
+      // Do not convert that into a violation.
+      return missing ? unable() : pass();
+
+    case 'NOT_EXISTS':
+      return missing ? pass() : fail();
+
+    case 'EQUALS':
+      return missing ? unable() : value === condition.expectedValue ? pass() : fail();
+
+    case 'NOT_EQUALS':
+      return missing ? unable() : value !== condition.expectedValue ? pass() : fail();
+
+    case 'REGEX_MATCH':
+      return missing ? unable() : pass();
+
+    case 'GREATER_THAN':
+      return typeof value === 'number' && typeof condition.expectedValue === 'number'
+        ? value > condition.expectedValue ? pass() : fail()
+        : unable();
+
+    case 'LESS_THAN':
+      return typeof value === 'number' && typeof condition.expectedValue === 'number'
+        ? value < condition.expectedValue ? pass() : fail()
+        : unable();
+
+    case 'GREATER_THAN_OR_EQUAL':
+      return typeof value === 'number' && typeof condition.expectedValue === 'number'
+        ? value >= condition.expectedValue ? pass() : fail()
+        : unable();
+
+    case 'LESS_THAN_OR_EQUAL':
+      return typeof value === 'number' && typeof condition.expectedValue === 'number'
+        ? value <= condition.expectedValue ? pass() : fail()
+        : unable();
+
+    case 'VALID_UNIT':
+      return missing ? unable() : pass();
+
+    case 'VALID_CURRENCY':
+      return missing ? unable() : pass();
+
+    case 'VALID_DATE_FORMAT':
+      return missing ? unable() : pass();
+
+    case 'IN_LIST':
+      return missing || !Array.isArray(condition.expectedValue)
+        ? unable()
+        : condition.expectedValue.includes(value) ? pass() : fail();
+
+    case 'IN_NUMERIC_RANGE':
+      return typeof value === 'number' &&
+        Array.isArray(condition.expectedValue) &&
+        condition.expectedValue.length === 2
+        ? value >= Number(condition.expectedValue[0]) &&
+          value <= Number(condition.expectedValue[1])
+          ? pass()
+          : fail()
+        : unable();
+
     case 'WITHIN_FIRST_SCHEDULE_MPE': {
-      const measurement = request.measurements; if (!measurement) return unable(['measurements']);
-      const declared = normalizeQuantity(measurement.declaredQuantity, measurement.declaredUnit); const actual = normalizeQuantity(measurement.actualQuantity, measurement.actualUnit);
-      if (!declared || !actual) return unable(['measurements.declaredQuantity', 'measurements.actualQuantity']);
-      const declaredBase = toBaseQuantity(declared.value, declared.unit); const actualBase = toBaseQuantity(actual.value, actual.unit);
-      if ((declaredBase.unit !== 'g' && declaredBase.unit !== 'mL') || actualBase.unit !== declaredBase.unit) return unable(['measurements.declaredUnit', 'measurements.actualUnit']);
-      const result = firstScheduleMpe(declaredBase.value, actualBase.value, declaredBase.unit); if (!result.applicable) return unable(['measurements']);
-      return result.withinTolerance ? pass() : fail(`${condition.violationReason} Deficiency ${result.deficiency} ${declaredBase.unit}; MPE ${result.tolerance} ${declaredBase.unit}.`);
+      const measurement = request.measurements;
+      if (!measurement) return unable(['measurements']);
+
+      const declared = normalizeQuantity(
+        measurement.declaredQuantity,
+        measurement.declaredUnit
+      );
+      const actual = normalizeQuantity(
+        measurement.actualQuantity,
+        measurement.actualUnit
+      );
+
+      if (!declared || !actual) {
+        return unable([
+          'measurements.declaredQuantity',
+          'measurements.actualQuantity',
+        ]);
+      }
+
+      const declaredBase = toBaseQuantity(declared.value, declared.unit);
+      const actualBase = toBaseQuantity(actual.value, actual.unit);
+
+      if (
+        (declaredBase.unit !== 'g' && declaredBase.unit !== 'mL') ||
+        actualBase.unit !== declaredBase.unit
+      ) {
+        return unable([
+          'measurements.declaredUnit',
+          'measurements.actualUnit',
+        ]);
+      }
+
+      const result = firstScheduleMpe(
+        declaredBase.value,
+        actualBase.value,
+        declaredBase.unit
+      );
+
+      if (!result.applicable) return unable(['measurements']);
+
+      return result.withinTolerance
+        ? pass()
+        : fail(
+            `${condition.violationReason} Deficiency ${result.deficiency} ${declaredBase.unit}; MPE ${result.tolerance} ${declaredBase.unit}.`
+          );
     }
-    case 'VISUAL_CHECK': return typeof value === 'boolean' ? (value ? pass() : fail()) : unable();
-    case 'CONFLICT_EXISTS': return conflicts.length > 0 ? fail() : pass();
-    case 'PACKAGE_TYPE': return request.productMetadata.packageType ? request.productMetadata.packageType === condition.expectedValue ? pass() : fail() : unable();
-    case 'COMMODITY_TYPE': return request.productMetadata.commodityCategory ? request.productMetadata.commodityCategory.toLowerCase() === String(condition.expectedValue).toLowerCase() ? pass() : fail() : unable();
-    case 'CONTEXT_TYPE': return request.context === condition.expectedValue ? pass() : fail();
-    case 'DATE_RANGE': return typeof value === 'string' && Array.isArray(condition.expectedValue) && condition.expectedValue.length === 2 ? value >= String(condition.expectedValue[0]) && value <= String(condition.expectedValue[1]) ? pass() : fail() : unable();
-    case 'EVIDENCE_CONFIDENCE': return evidence.length === 0 ? unable() : Math.max(...evidence.map(item => item.confidence)) >= Number(condition.expectedValue) ? pass() : unable();
-    default: return unable();
+
+    case 'VISUAL_CHECK':
+      return typeof value === 'boolean'
+        ? value ? pass() : fail()
+        : unable();
+
+    case 'CONFLICT_EXISTS':
+      return conflicts.length > 0 ? fail() : pass();
+
+    case 'PACKAGE_TYPE':
+      return request.productMetadata.packageType
+        ? request.productMetadata.packageType === condition.expectedValue
+          ? pass()
+          : fail()
+        : unable();
+
+    case 'COMMODITY_TYPE':
+      return request.productMetadata.commodityCategory
+        ? request.productMetadata.commodityCategory.toLowerCase() ===
+          String(condition.expectedValue).toLowerCase()
+          ? pass()
+          : fail()
+        : unable();
+
+    case 'CONTEXT_TYPE':
+      return request.context === condition.expectedValue ? pass() : fail();
+
+    case 'DATE_RANGE':
+      return typeof value === 'string' &&
+        Array.isArray(condition.expectedValue) &&
+        condition.expectedValue.length === 2
+        ? value >= String(condition.expectedValue[0]) &&
+          value <= String(condition.expectedValue[1])
+          ? pass()
+          : fail()
+        : unable();
+
+    case 'EVIDENCE_CONFIDENCE':
+      return evidence.length === 0
+        ? unable()
+        : Math.max(...evidence.map(item => item.confidence)) >=
+            Number(condition.expectedValue)
+          ? pass()
+          : unable();
+
+    default:
+      return unable();
   }
 }
 function findingFor(rule: RuleDefinition, version: RuleVersion, condition: RuleCondition, result: ConditionResult, index: number): Finding { return { findingId: `${rule.ruleCode}-${version.version}-${index + 1}`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, subclause: rule.subclause, ruleVersion: version.version, status: result.status, field: condition.targetField, message: result.status === 'PASS' ? 'Requirement satisfied.' : result.message, violationReason: result.reason, evidenceUsed: result.evidence, missingEvidence: result.missing, conflicts: result.conflicts, legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: version.legalSources.some(source => source.verificationStatus !== 'VERIFIED') }; }

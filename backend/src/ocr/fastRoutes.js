@@ -96,7 +96,7 @@ function evidenceScore(key, field, item) {
       const hasUnit = /\b(?:mg|mcg|g|gm|kg|ml|l|ltr|cl|oz|lb|pcs?|pieces?|units?|nos)\b/i.test(candidate);
       return hasUnit ? 1 : 0.55;
     }
-    if (/\b(?:m\.?r\.?p\.?|maximum\s+retail\s+price|retail\s+price)\b/i.test(candidate) || /(?:₹|rs\.?|inr)/i.test(candidate)) return 1;
+    if (/\b(?:m\.?r\.?p\.?|maximum\s+retail\s+price|retail\s+price)\b/i.test(candidate) || /(?:\u20B9|rs\.?|inr)/i.test(candidate)) return 1;
     return 0.45;
   }
   if (["dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate"].includes(key)) {
@@ -167,15 +167,56 @@ function regexRepairFields(fields, evidence, rawText) {
 
 function resolveEvidenceForFields(fields, evidence) {
   return Object.fromEntries(Object.entries(fields || {}).map(([key, field]) => {
-    if (!field || field.status !== "found") return [key, field];
+    if (!field) return [key, field];
+
     const providedIndex = Number.isInteger(field.evidenceIndex) ? field.evidenceIndex : -1;
     const provided = providedIndex >= 0 && evidence[providedIndex] ? evidence[providedIndex] : null;
-    const providedScore = provided ? evidenceScore(key, field, provided) : 0;
-    const best = candidateEvidence(key, field, evidence);
-    const item = providedScore >= 0.75 ? provided : best?.item || provided;
-    const matchedScore = item === provided ? providedScore : best?.score || 0;
-    if (!item) return [key, field];
-    const confidenceMultiplier = matchedScore >= 0.9 ? 1 : matchedScore >= 0.75 ? 0.95 : matchedScore >= 0.5 ? 0.82 : 0.65;
+
+    // Geometry is ONLY trusted when the semantic provider explicitly points
+    // to the OCR detection that contains the actual value.
+    const providedScore = provided && field.status === "found"
+      ? evidenceScore(key, field, provided)
+      : 0;
+
+    let item = providedScore >= 0.75 ? provided : null;
+    let matchedScore = item ? providedScore : 0;
+
+    // Safe fallback: exact normalized evidence-text match only.
+    // Do NOT use fuzzy token overlap here because it can attach an unrelated
+    // OCR rectangle containing a shared number such as 100, 229, 2026, etc.
+    if (!item && field.status === "found") {
+      const wanted = [
+        normalizeComparable(field.evidence),
+        normalizeComparable(field.raw),
+        normalizeComparable(field.value),
+      ].filter(Boolean);
+
+      for (const candidate of evidence) {
+        const candidateText = normalizeComparable(candidate.text);
+        if (!candidateText || !wanted.includes(candidateText)) continue;
+
+        item = candidate;
+        matchedScore = 1;
+        break;
+      }
+    }
+
+    if (!item) {
+      // Preserve semantic evidence even when OCR geometry cannot be trusted.
+      return [key, {
+        ...field,
+        boundingBox: null,
+        imageWidth: field.imageWidth || null,
+        imageHeight: field.imageHeight || null,
+        verification: field.verification || "semantic-evidence-without-ocr-geometry",
+      }];
+    }
+
+    const confidenceMultiplier =
+      matchedScore >= 0.9 ? 1 :
+      matchedScore >= 0.75 ? 0.95 :
+      matchedScore >= 0.5 ? 0.82 : 0.65;
+
     return [key, {
       ...field,
       evidence: item.text,
@@ -186,8 +227,12 @@ function resolveEvidenceForFields(fields, evidence) {
       imageHeight: item.imageHeight || null,
       rapidOcrConfidence: item.confidence,
       ocrEvidenceQuality: matchedScore,
-      confidence: Math.round(Math.max(0, Math.min(1, Number(field.confidence || 0) * confidenceMultiplier)) * 1000) / 1000,
-      verification: matchedScore >= 0.75 ? (field.verification || "ocr-evidence-confirmed") : "ocr-evidence-weak",
+      confidence: Math.round(
+        Math.max(0, Math.min(1, Number(field.confidence || 0) * confidenceMultiplier)) * 1000
+      ) / 1000,
+      verification: matchedScore >= 0.75
+        ? (field.verification || "ocr-evidence-confirmed")
+        : "ocr-evidence-weak",
     }];
   }));
 }
@@ -212,10 +257,56 @@ function attachEvidence(fields, evidence) {
 }
 
 function buildDeclarationEvidence(fields) {
-  const map = { productName: "PRODUCT_NAME", manufacturer: "MANUFACTURER", manufacturerAddress: "ADDRESS", packer: "PACKER", packerAddress: "ADDRESS", importer: "IMPORTER", importerAddress: "ADDRESS", netQuantity: "NET_QUANTITY", mrp: "MRP", dateOfManufacture: "DATE_OF_MANUFACTURE", dateOfPacking: "DATE_OF_PACKING", bestBefore: "BEST_BEFORE", expiryDate: "EXPIRY_DATE", consumerCarePhone: "CONSUMER_CARE", consumerCareEmail: "CONSUMER_CARE" };
+  const map = {
+    productName: "PRODUCT_NAME",
+    manufacturer: "MANUFACTURER",
+    manufacturerAddress: "ADDRESS",
+    packer: "PACKER",
+    packerAddress: "ADDRESS",
+    importer: "IMPORTER",
+    importerAddress: "ADDRESS",
+    netQuantity: "NET_QUANTITY",
+    mrp: "MRP",
+    dateOfManufacture: "DATE_OF_MANUFACTURE",
+    dateOfPacking: "DATE_OF_PACKING",
+    bestBefore: "BEST_BEFORE",
+    expiryDate: "EXPIRY_DATE",
+    consumerCarePhone: "CONSUMER_CARE",
+    consumerCareEmail: "CONSUMER_CARE",
+  };
+
   return Object.entries(fields || {}).flatMap(([key, field]) => {
-    if (!map[key] || !field || field.status !== "found" || !field.value || !field.boundingBox) return [];
-    return [{ id: `semantic-${key}`, imageIndex: Number.isInteger(field.imageIndex) ? field.imageIndex : 0, type: map[key], text: text(field.evidence || field.raw || field.value), value: text(field.value), confidence: Number(field.confidence || 0), source: field.source || "SEMANTIC_CONSENSUS", evidenceIndex: Number.isInteger(field.evidenceIndex) ? field.evidenceIndex : -1, boundingBox: field.boundingBox, imageWidth: field.imageWidth || null, imageHeight: field.imageHeight || null, verification: field.verification || null }];
+    if (!map[key] || !field) return [];
+
+    const status = String(field.status || "").toLowerCase();
+    if (!["found", "absent", "unreadable", "ambiguous"].includes(status)) return [];
+
+    const value = text(field.value);
+    const evidenceText = text(field.evidence || field.raw || field.value);
+
+    return [{
+      id: `semantic-${key}`,
+      imageIndex: Number.isInteger(field.imageIndex) ? field.imageIndex : 0,
+      type: map[key],
+      text: evidenceText,
+      value: value || null,
+      confidence: Number(field.confidence || 0),
+      source: "IMAGE_INSPECTION",
+      evidenceIndex: Number.isInteger(field.evidenceIndex) ? field.evidenceIndex : -1,
+      boundingBox: field.boundingBox || null,
+      imageWidth: field.imageWidth || null,
+      imageHeight: field.imageHeight || null,
+      verification: field.verification || null,
+
+      // This is critical:
+      // the rules engine can now distinguish explicit semantic ABSENCE
+      // from "no extractor evidence was available".
+      metadata: {
+        declarationStatus: status,
+        semanticSource: field.source || "SEMANTIC_CONSENSUS",
+        ocrGeometryVerified: Boolean(field.boundingBox),
+      },
+    }];
   });
 }
 
@@ -232,7 +323,21 @@ async function runSemanticProviders({ images, rapid, categoryOptions, signal }) 
     }
   }));
   const consensus = reconcileSemanticResults(settled, categoryOptions);
-  return { ...consensus, timingMs: Date.now() - startedAt, timing: Object.fromEntries(settled.map((provider) => [provider.provider, provider.timingMs || 0])) };
+  const assessments = settled
+    .filter((provider) => provider?.enabled && provider?.packageAssessment)
+    .map((provider) => ({ provider: provider.provider, ...provider.packageAssessment }));
+  const assessmentGroups = new Map();
+  for (const item of assessments) {
+    if (!assessmentGroups.has(item.status)) assessmentGroups.set(item.status, []);
+    assessmentGroups.get(item.status).push(item);
+  }
+  const ranked = [...assessmentGroups.entries()]
+    .sort((a, b) => b[1].length - a[1].length || Math.max(...b[1].map((item) => Number(item.confidence) || 0)) - Math.max(...a[1].map((item) => Number(item.confidence) || 0)));
+  const topAssessment = ranked[0];
+  const packageConsistency = topAssessment && topAssessment[1].length >= 2
+    ? { status: topAssessment[0], confidence: Math.max(...topAssessment[1].map((item) => Number(item.confidence) || 0)), providers: assessments, evidence: topAssessment[1].map((item) => `${item.provider}: ${item.evidence}`).join(" | ") }
+    : { status: "uncertain", confidence: 0, providers: assessments, evidence: assessments.length ? assessments.map((item) => `${item.provider}: ${item.status} ${item.evidence}`).join(" | ") : "No package consistency assessment returned." };
+  return { ...consensus, packageConsistency, timingMs: Date.now() - startedAt, timing: Object.fromEntries(settled.map((provider) => [provider.provider, provider.timingMs || 0])) };
 }
 
 async function analyze(req, res) {
@@ -259,14 +364,15 @@ async function analyze(req, res) {
       rawOcrEvidence: rapid.evidence,
       otherDeclarations: rapid.evidence.map((item) => item.text),
       semanticReconciliation: { providerCount: semantic.providerCount, providers: semantic.providers },
-      aiSemantic: { providerCount: semantic.providerCount, providers: semantic.providers, suggestedCategory: semantic.suggestedCategory || null },
+      aiSemantic: { providerCount: semantic.providerCount, providers: semantic.providers, suggestedCategory: semantic.suggestedCategory || null, packageConsistency: semantic.packageConsistency || null },
       suggestedCategory: semantic.suggestedCategory || null,
       warnings: semantic.providerCount < 2 ? ["Only one semantic AI provider was available; review single-provider findings carefully."] : [],
-      needsReview: Object.values(fields).some((field) => field?.status === "ambiguous" || field?.status === "unreadable" || (field?.status === "found" && Number(field?.confidence || 0) < 0.6)),
+      needsReview: semantic.packageConsistency?.status !== "single_package" || Object.values(fields).some((field) => field?.status === "ambiguous" || field?.status === "unreadable" || (field?.status === "found" && Number(field?.confidence || 0) < 0.6)),
+      packageConsistency: semantic.packageConsistency || { status: "uncertain", confidence: 0, providers: [], evidence: "Package consistency could not be established." },
     };
     const finalResult = await applyEvidenceConfidence(structured, { barcodeImageProvided: Boolean(barcodeFile) });
     const totalMs = Date.now() - startedAt;
-    console.log(`[ocr:fast] images=${packageFiles.length} evidence=${rapid.evidence.length} rapid=${rapid.timingMs}ms semantic=${semantic.timingMs}ms gemini=${semantic.timing?.gemini || 0}ms grok=${semantic.timing?.grok || 0}ms providers=${semantic.providerCount} total=${totalMs}ms parallel=true`);
+    console.log(`[ocr:fast] images=${packageFiles.length} evidence=${rapid.evidence.length} paddle=${rapid.timingMs}ms semantic=${semantic.timingMs}ms gemini=${semantic.timing?.gemini || 0}ms grok=${semantic.timing?.grok || 0}ms providers=${semantic.providerCount} package=${semantic.packageConsistency?.status || "uncertain"} total=${totalMs}ms parallel=true`);
     return res.json({ result: finalResult, provider: "rapidocr", model: "RapidOCR", detectionProvider: "rapidocr", detectionProviders: ["rapidocr"], rawText: rapid.rawText, semantic: { provider: "consensus", providers: semantic.providers, providerCount: semantic.providerCount, enabled: semantic.enabled }, aiSuggestedCategory: semantic.suggestedCategory || null, aiSemanticEnabled: semantic.enabled, aiSemanticError: semantic.enabled ? null : semantic.providers.map((item) => `${item.provider}: ${item.reason || "unavailable"}`).join(" | "), timing: { uploadMs: 0, rapidMs: rapid.timingMs, semanticMs: semantic.timingMs, geminiMs: semantic.timing?.gemini || 0, grokMs: semantic.timing?.grok || 0, totalMs, parallelMs: Math.max(rapid.timingMs, semantic.timingMs) } });
   } catch (error) {
     console.error("[ocr:fast]", error);
