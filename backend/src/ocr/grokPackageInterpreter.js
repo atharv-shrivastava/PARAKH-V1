@@ -29,9 +29,11 @@ export async function interpretPackageWithGrok({ images = [], detections = [], r
   const model = process.env.GROK_SEMANTIC_MODEL || "grok-4.6";
 
   if (!apiKey) {
+    console.warn(`[ocr:grok-semantic] SKIPPED model=${model} reason=XAI_API_KEY is not configured.`);
     return { enabled: false, provider: "grok", model, reason: "XAI_API_KEY is not configured." };
   }
   if (!images.length) {
+    console.warn(`[ocr:grok-semantic] SKIPPED model=${model} reason=No package images supplied.`);
     return { enabled: false, provider: "grok", model, reason: "No package images supplied." };
   }
 
@@ -80,9 +82,11 @@ export async function interpretPackageWithGrok({ images = [], detections = [], r
           evidence: String(parsed.packageAssessment.evidence || "").trim(),
         }
       : { status: "uncertain", confidence: 0, evidence: "Model did not return packageAssessment." };
+    console.log(`[ocr:grok-semantic] DONE model=${model} elapsed=${elapsedMs}ms`);
     return { enabled: true, provider: "grok", model, fields: normalized.fields, suggestedCategory: normalized.suggestedCategory, packageAssessment, timingMs: elapsedMs };
   } catch (error) {
     if (error?.name === "AbortError") throw error;
+    console.error(`[ocr:grok-semantic] FAILED model=${model} status=${error?.statusCode ?? "unknown"} reason=${error?.message || "Grok semantic interpretation failed."}`, error);
     return { enabled: false, provider: "grok", model, reason: error?.message || "Grok semantic interpretation failed.", statusCode: error?.statusCode ?? null };
   }
 }
