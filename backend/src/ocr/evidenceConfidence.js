@@ -15,7 +15,7 @@ const RULE_ENGINE_FIELDS = [
   "expiryDate", "batchNumber", "consumerCarePhone", "consumerCareEmail", "countryOfOrigin", "fssaiLicenseNumber",
 ];
 
-const CONFIDENCE_WEIGHTS = { gemini: 0.60, rapidocr: 0.40 };
+const CONFIDENCE_WEIGHTS = { semanticConsensus: 0.60, paddleocr: 0.40 };
 const HIGH_CONFIDENCE_THRESHOLD = 0.70;
 const RULE_ENGINE_MIN_CONFIDENCE = 0.30;
 
@@ -52,10 +52,10 @@ function dataKartMatch(fieldKey, currentValue, registeredValue) {
   return common.length >= 2 && common.length / Math.min(leftTokens.size, rightTokens.size) >= 0.8;
 }
 
-function rapidEvidenceScore(field) {
+function paddleEvidenceScore(field) {
   const explicit = clamp01(field?.ocrEvidenceQuality);
   if (explicit != null) return explicit;
-  const confidence = clamp01(field?.rapidOcrConfidence);
+  const confidence = clamp01(field?.paddleOcrConfidence ?? field?.rapidOcrConfidence);
   return confidence ?? 0;
 }
 
@@ -113,8 +113,6 @@ export async function applyEvidenceConfidence(result, options = {}) {
   const next = { ...result };
   const evidence = Array.isArray(result?.rawOcrEvidence) ? result.rawOcrEvidence : [];
 
-  // GTIN comes only from the dedicated local barcode scanner result.
-  // DataKart is reference verification only and never becomes Rules Engine input.
   const scannedBarcode = String(next.barcode?.source === "BARCODE_IMAGE_DECODER" ? next.barcode?.value : "").replace(/\D/g, "");
   const barcode = scannedBarcode || null;
   console.log(`[DataKart] barcode source=${barcode ? "BARCODE_SCANNER" : barcodeImageProvided ? "BARCODE_UNREADABLE" : "NONE"} gtin=${barcode || "none"}`);
@@ -133,9 +131,6 @@ export async function applyEvidenceConfidence(result, options = {}) {
     }
   }
 
-  // Web MRP lookup is an expensive fallback. Only run it when we actually
-  // had a GTIN and DataKart could not find that GTIN. A successful DataKart
-  // match never starts web search; no GTIN also skips web search entirely.
   const shouldSearchWebMrp = Boolean(barcode) && !dataKart && !dataKartError;
   if (shouldSearchWebMrp) {
     try {
@@ -153,19 +148,19 @@ export async function applyEvidenceConfidence(result, options = {}) {
   const details = {};
   for (const [fieldKey, fieldValue] of Object.entries(result || {})) {
     if (!fieldValue || typeof fieldValue !== "object" || !FIELD_MAP[fieldKey]) continue;
-    const gemini = clamp01(fieldValue.confidence);
-    const rapidocr = rapidEvidenceScore(fieldValue);
+    const semanticConsensus = clamp01(fieldValue.confidence);
+    const paddleocr = paddleEvidenceScore(fieldValue);
     const registeredValue = dataKart?.[FIELD_MAP[fieldKey]];
     const dataKartMatchState = dataKartMatch(fieldKey, fieldValue.value, registeredValue);
     const fused = Math.max(0, Math.min(1,
-      CONFIDENCE_WEIGHTS.gemini * (gemini ?? 0) + CONFIDENCE_WEIGHTS.rapidocr * rapidocr,
+      CONFIDENCE_WEIGHTS.semanticConsensus * (semanticConsensus ?? 0) + CONFIDENCE_WEIGHTS.paddleocr * paddleocr,
     ));
     const verification = dataKartMatchState === true ? "MATCH" : dataKartMatchState === false ? "MISMATCH" : "UNVERIFIED";
     const nextField = {
       ...fieldValue,
       confidence: Math.round(fused * 1000) / 1000,
       evidenceConfidence: Math.round(fused * 1000) / 1000,
-      confidenceSources: { gemini, rapidocr, weights: { ...CONFIDENCE_WEIGHTS }, dataKart: null },
+      confidenceSources: { semanticConsensus, paddleocr, weights: { ...CONFIDENCE_WEIGHTS }, dataKart: null },
       verification,
       verificationIcon: verification === "MATCH" ? "✓" : verification === "MISMATCH" ? "✕" : "?",
       confidenceLabel: "Evidence confidence",
@@ -191,7 +186,7 @@ export async function applyEvidenceConfidence(result, options = {}) {
     weights: { ...CONFIDENCE_WEIGHTS },
     highConfidenceThreshold: HIGH_CONFIDENCE_THRESHOLD,
     ruleEngineMinimumConfidence: RULE_ENGINE_MIN_CONFIDENCE,
-    method: "Gemini visual extraction (60%) + RapidOCR evidence quality (40%). Fields with usable values at 30% or higher remain eligible for Rules Engine evaluation; below 30% is withheld. DataKart is reference verification only and never contributes to Rules Engine input.",
+    method: "Semantic consensus (Gemini + Grok, 60%) + PaddleOCR evidence quality (40%). Fields with usable values at 30% or higher remain eligible for Rules Engine evaluation; below 30% is withheld. DataKart is reference verification only and never contributes to Rules Engine input.",
     dataKartAvailable: Boolean(dataKart),
     dataKartError,
     dataKartMatchedGtin,
