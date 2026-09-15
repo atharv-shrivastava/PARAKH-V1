@@ -9,7 +9,7 @@ function Replace-Once([string]$Path, [string]$Old, [string]$New, [string]$Name) 
   $count = ([regex]::Matches($text, [regex]::Escape($Old))).Count
   if ($count -ne 1) { throw "${Name}: expected exactly 1 match in $Path, found $count" }
   $updated = $text.Replace($Old, $New)
-  Set-Content -Path $full -Value $updated -Encoding utf8NoBOM
+  [System.IO.File]::WriteAllText($full, $updated, (New-Object System.Text.UTF8Encoding($false)))
   Write-Host "patched $Path ($Name)"
 }
 
