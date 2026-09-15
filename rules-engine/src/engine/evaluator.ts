@@ -13,9 +13,33 @@ function canonical(value: unknown): string {
   return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${canonical(record[key])}`).join(',')}}`;
 }
 function getPath(input: unknown, path: string): unknown { return path.split('.').reduce<unknown>((value, part) => value == null || typeof value !== 'object' ? undefined : (value as Record<string, unknown>)[part], input); }
-function evidenceFor(request: InspectionRequest, field: string): EvidenceItem[] { return request.evidence.filter(item => item.field === field || item.field === field.replace(/^declarations\./, '')); }
-function conflictsFor(request: InspectionRequest, field: string): EvidenceConflict[] { return (request.evidenceConflicts ?? []).filter(conflict => conflict.status === 'UNRESOLVED' && conflict.field === field); }
-function sourceValue(request: InspectionRequest, field: string): unknown { const direct = getPath(request, field); if (direct !== undefined) return direct; const visualFlags = request.visualFlags ?? {}; if (field.startsWith('visual.')) { const visual = visualFlags[field.slice('visual.'.length)]; if (visual !== undefined) return visual; } const directVisual = visualFlags[field]; if (directVisual !== undefined) return directVisual; const evidence = evidenceFor(request, field); return evidence[0]?.normalizedValue ?? evidence[0]?.rawValue; }
+function declarationEvidenceFields(field: string): string[] {
+  if (field === 'declarations.manufactureOrImportDate' || field === 'declarations.dateOfManufacturePackingImport') {
+    return [field, 'declarations.dateOfManufacture', 'declarations.dateOfPacking', 'declarations.dateOfPrePacking', 'declarations.dateOfImport'];
+  }
+  if (field === 'declarations.quantityText' || field === 'declarations.netQuantityText') return [field, 'declarations.quantityText', 'declarations.netQuantityText'];
+  return [field];
+}
+function evidenceFor(request: InspectionRequest, field: string): EvidenceItem[] {
+  const fields = new Set(declarationEvidenceFields(field));
+  return request.evidence.filter(item => fields.has(item.field) || fields.has(item.field.replace(/^declarations\./, '')));
+}
+function conflictsFor(request: InspectionRequest, field: string): EvidenceConflict[] { return (request.evidenceConflicts ?? []).filter(conflict => conflict.status === 'UNRESOLVED' && declarationEvidenceFields(field).includes(conflict.field)); }
+function sourceValue(request: InspectionRequest, field: string): unknown {
+  for (const candidate of declarationEvidenceFields(field)) {
+    const direct = getPath(request, candidate);
+    if (direct !== undefined && direct !== null && direct !== '') return direct;
+  }
+  const visualFlags = request.visualFlags ?? {};
+  if (field.startsWith('visual.')) {
+    const visual = visualFlags[field.slice('visual.'.length)];
+    if (visual !== undefined) return visual;
+  }
+  const directVisual = visualFlags[field];
+  if (directVisual !== undefined) return directVisual;
+  const evidence = evidenceFor(request, field);
+  return evidence[0]?.normalizedValue ?? evidence[0]?.rawValue;
+}
 function confidenceOk(items: EvidenceItem[], minimum?: number): boolean { return minimum === undefined || (items.length > 0 && Math.max(...items.map(item => item.confidence)) >= minimum); }
 function applicable(request: InspectionRequest, version: RuleVersion): boolean { const criteria = version.applicabilityCriteria; if (criteria.contexts && !criteria.contexts.includes(request.context)) return false; const commodity = request.productMetadata.commodityCategory.trim().toLowerCase(); if (criteria.includedCommodities && !criteria.includedCommodities.some(item => commodity.includes(item.toLowerCase()))) return false; if (criteria.excludedCommodities && criteria.excludedCommodities.some(item => commodity.includes(item.toLowerCase()))) return false; if (criteria.packageTypes && request.productMetadata.packageType && !criteria.packageTypes.includes(request.productMetadata.packageType)) return false; if (criteria.consumerTypes && request.productMetadata.consumerType && !criteria.consumerTypes.includes(request.productMetadata.consumerType)) return false; if (criteria.excludedConsumerTypes && request.productMetadata.consumerType && criteria.excludedConsumerTypes.includes(request.productMetadata.consumerType)) return false; return true; }
 function chooseVersion(rule: RuleDefinition, date: string): RuleVersion | undefined { return [...rule.versions].filter(version => version.effectiveFrom <= date && (version.effectiveUntil === null || date <= version.effectiveUntil)).sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0]; }
