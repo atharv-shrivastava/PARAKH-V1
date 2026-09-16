@@ -17,6 +17,7 @@ import fastOcrRouter from "./ocr/fastRoutes.js";
 import semanticTimingRouter from "./ocr/semanticTimingRoutes.js";
 import ocrRouter from "./ocr/routes.js";
 import ecommerceOcrRouter from "./routes/ecommerceOcr.js";
+import fontSizeVisionRouter from "./routes/fontSizeVision.js";
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -44,6 +45,8 @@ app.use("/api/ocr", fastOcrRouter);
 app.use("/api/ocr", semanticTimingRouter);
 // Structured compliance evaluation is kept separate from OCR extraction.
 app.use("/api/ocr", ocrRouter);
+// Calibrated OpenCV font-size measurement + Rule 7 compliance workflow.
+app.use("/api/vision", fontSizeVisionRouter);
 
 const PORT = Number(process.env.PORT || 5000);
 app.listen(PORT, () => console.log(`PARAKH backend running on http://localhost:${PORT}`));
