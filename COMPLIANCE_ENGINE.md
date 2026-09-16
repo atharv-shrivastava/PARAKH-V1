@@ -4,7 +4,7 @@
 
 The Compliance Engine is PARAKH's legal/business-rule layer. It evaluates structured inspection information against configured Legal Metrology requirements.
 
-It is intentionally separate from OCR, semantic AI, reference verification, analytics, and the user interface.
+It is intentionally separate from OCR, semantic AI, reference verification, analytics, visual preprocessing, and the user interface.
 
 ## 2. Legal scope
 
@@ -19,13 +19,15 @@ Package images
       ↓
 RapidOCR
       ↓
-Structured declarations
+Structured declarations + bounding boxes
       ↑
-Gemini semantic interpretation
+Gemini / semantic interpretation
       ↓
 GTIN / DataKart reference verification
       ↓
 Evidence confidence
+      ↓
+OpenCV calibrated visual evidence where applicable
       ↓
 Applicable compliance rules
       ↓
@@ -36,7 +38,7 @@ Findings
 Officer review
 ```
 
-The OCR, AI and registry layers provide evidence and interpretation. The compliance engine performs the legal-rule evaluation.
+The OCR, AI, registry and computer-vision layers provide evidence and interpretation. The compliance engine performs the legal-rule evaluation.
 
 ## 4. Rule representation
 
@@ -73,6 +75,8 @@ OCR / semantic interpretation
         ↓
 Structured field values
         ↓
+Visual measurements where applicable
+        ↓
 Configured compliance rules
         ↓
 Deterministic validation
@@ -82,7 +86,56 @@ Finding + evidence
 Officer decision
 ```
 
-## 7. Result states
+## 7. Rule 7 font-size workflow
+
+PARAKH now connects the OpenCV vision service to the Rule 7 evaluator.
+
+```text
+Package image
+    ↓
+OpenCV detects Indian ₹10 coin
+    ↓
+27 mm reference calibrates image scale
+    ↓
+OCR bounding box identifies declaration region
+    ↓
+OpenCV estimates glyph height
+    ↓
+Physical height in mm
+    ↓
+Rule 7 evaluator
+    ↓
+PASS / VIOLATION / UNABLE_TO_VERIFY
+```
+
+The **current Rule 7 table is based on principal display panel area**, not package weight. The ₹10 coin is only the physical calibration reference.
+
+Current minimum height table:
+
+| Principal display panel area | Normal | Blown / formed / molded |
+|---|---:|---:|
+| A ≤ 50 cm² | 1.0 mm | 2.0 mm |
+| 50 < A ≤ 100 cm² | 1.5 mm | 3.0 mm |
+| 100 < A ≤ 500 cm² | 2.5 mm | 4.0 mm |
+| 500 < A ≤ 2500 cm² | 4.0 mm | 6.0 mm |
+| A > 2500 cm² | 6.0 mm | 6.0 mm |
+
+The engine also uses the available width-to-height signal for the one-third minimum described in the Rules.
+
+### Rule 7 evidence contract
+
+The backend supplies:
+
+```text
+visual.principalDisplayPanelAreaCm2
+visual.surfaceType
+visual.rule7FontSizeMeasurements[]
+visual.fontSizeCalibrationReference
+```
+
+If the display-panel area, coin calibration or declaration bounding box cannot be established reliably, the finding is `UNABLE_TO_VERIFY` rather than an invented violation.
+
+## 8. Result states
 
 The application supports compliance outcomes such as:
 
@@ -94,7 +147,7 @@ The application supports compliance outcomes such as:
 
 The UI also exposes field-level verification states such as **Verified / Needs Verification / Missing**. These are evidence states and must not be confused with the legal result itself.
 
-## 8. Evidence confidence vs legal result
+## 9. Evidence confidence vs legal result
 
 The field-level **Evidence Confidence** score is calculated separately from legal compliance.
 
@@ -112,7 +165,7 @@ This score describes the strength of supporting extraction/reference evidence. I
 
 A field can have high evidence confidence and still produce a violation because the extracted value itself violates a configured rule.
 
-## 9. DataKart role
+## 10. DataKart role
 
 DataKart is a separate product-reference registry. A GTIN/barcode can be used to retrieve registered product data, which is compared against extracted inspection fields.
 
@@ -120,7 +173,7 @@ A DataKart match strengthens evidence for a field. A mismatch identifies referen
 
 The Rules Engine remains the only layer responsible for configured Legal Metrology compliance evaluation.
 
-## 10. Deterministic checks
+## 11. Deterministic checks
 
 Use deterministic backend logic for checks such as:
 
@@ -130,17 +183,18 @@ Use deterministic backend logic for checks such as:
 - configured field requirements
 - exact structural/legal conditions
 - configured thresholds
+- Rule 7 calibrated font-size measurement
 - rule-specific conditions represented in the rule definition
 
 Use semantic AI when semantic interpretation is actually required, not as a replacement for deterministic legal validation.
 
-## 11. Uncertainty
+## 12. Uncertainty
 
-Some photographic evidence cannot establish compliance conclusively. Examples include unclear placement, poor image quality, insufficient information for physical measurement, ambiguous text, missing declarations, and context-dependent legal conditions.
+Some photographic evidence cannot establish compliance conclusively. Examples include unclear placement, poor image quality, insufficient information for physical measurement, ambiguous text, missing declarations, unreliable calibration, and context-dependent legal conditions.
 
 These cases should result in a review state rather than fabricated certainty.
 
-## 12. Evidence traceability
+## 13. Evidence traceability
 
 A finding should be traceable to:
 
@@ -152,13 +206,13 @@ A finding should be traceable to:
 6. confidence/verification state
 7. officer decision
 
-## 13. Manual officer violations
+## 14. Manual officer violations
 
 The scan workflow supports manual violation entry in addition to automated rule findings.
 
 Manual entries remain distinguishable from automated detections and are stored with the inspection outcome.
 
-## 14. Human-in-the-loop
+## 15. Human-in-the-loop
 
 The intended flow is:
 
@@ -168,6 +222,8 @@ RapidOCR + Gemini
 Structured fields + evidence
       ↓
 Reference verification where available
+      ↓
+OpenCV visual evidence where applicable
       ↓
 Rules evaluation
       ↓
@@ -180,7 +236,7 @@ Complete inspection / report
 
 Human verification is also required for reported serious batch incidents before a `BatchAlert` becomes active across the platform.
 
-## 15. Compliance Intelligence boundary
+## 16. Compliance Intelligence boundary
 
 The Rules Engine produces inspection findings. Those findings are later aggregated by the analytics layer into Compliance Intelligence.
 
@@ -196,7 +252,7 @@ The intelligence layer can analyze:
 
 Analytics do not change the underlying legal rule decision.
 
-## 16. Batch Safety boundary
+## 17. Batch Safety boundary
 
 A batch incident is a separate operational workflow from ordinary rule violations.
 
@@ -212,12 +268,14 @@ Platform warning for exact product + batch
 
 A batch alert is not a substitute for a Legal Metrology finding, and AI must not autonomously declare a batch defective.
 
-## 17. Testing
+## 18. Testing
 
 Rules should be tested independently of the UI with valid, invalid, missing, ambiguous and not-applicable cases where relevant.
 
+Rule 7 should additionally be tested with different display-panel areas, normal/formed surfaces, sufficient/insufficient calibrated heights, width-to-height failures, missing coin calibration, and missing panel-area evidence.
+
 Batch incident verification and analytics aggregation should also be tested against realistic inspection records.
 
-## 18. Important limitation
+## 19. Important limitation
 
-PARAKH is inspection decision support. OCR, AI, reference verification, evidence confidence, analytics and Rules Engine outputs are aids to the authorized officer and do not by themselves constitute a final legal determination.
+PARAKH is inspection decision support. OCR, AI, reference verification, OpenCV measurements, evidence confidence, analytics and Rules Engine outputs are aids to the authorized officer and do not by themselves constitute a final legal determination.
