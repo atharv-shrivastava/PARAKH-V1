@@ -4,7 +4,7 @@ import { RULES, RULESET_VERSION } from '../legal/rules.js';
 import { SOURCES } from '../legal/sources.js';
 import { firstScheduleMpe, normalizeQuantity, toBaseQuantity } from '../legal/schedules.js';
 
-export const ENGINE_VERSION = '0.2.1';
+export const ENGINE_VERSION = '0.3.0';
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -21,6 +21,71 @@ function applicable(request: InspectionRequest, version: RuleVersion): boolean {
 function chooseVersion(rule: RuleDefinition, date: string): RuleVersion | undefined { return [...rule.versions].filter(version => version.effectiveFrom <= date && (version.effectiveUntil === null || date <= version.effectiveUntil)).sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0]; }
 
 type ConditionResult = { status: EvaluationStatus; missing: string[]; message: string; reason?: string; evidence: EvidenceItem[]; conflicts: EvidenceConflict[] };
+
+function rule7RequiredHeightMm(panelAreaCm2: number, formed: boolean): number {
+  if (panelAreaCm2 <= 50) return formed ? 2.0 : 1.0;
+  if (panelAreaCm2 <= 100) return formed ? 3.0 : 1.5;
+  if (panelAreaCm2 <= 500) return formed ? 4.0 : 2.5;
+  if (panelAreaCm2 <= 2500) return formed ? 6.0 : 4.0;
+  return 6.0;
+}
+
+function rule7FontSizeFinding(request: InspectionRequest, rule: RuleDefinition, version: RuleVersion): Finding {
+  const field = 'visual.rule7FontSizeMeasurements';
+  const visual = request.visualFlags ?? {};
+  const area = Number(visual.principalDisplayPanelAreaCm2);
+  const measurements = Array.isArray(visual.rule7FontSizeMeasurements) ? visual.rule7FontSizeMeasurements : [];
+  const formed = String(visual.surfaceType ?? 'normal').toLowerCase() === 'formed';
+  const calibrationConfidence = measurements.length ? Math.min(...measurements.map((item: any) => Number(item?.calibrationConfidence ?? 0))) : 0;
+  const legalReferences = version.legalSources;
+
+  if (!Number.isFinite(area) || area <= 0) {
+    return {
+      findingId: `${rule.ruleCode}-${version.version}-AREA`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber,
+      ruleVersion: version.version, status: 'UNABLE_TO_VERIFY', field,
+      message: 'Rule 7 requires the principal display panel area before the calibrated font-size requirement can be evaluated.',
+      missingEvidence: ['visual.principalDisplayPanelAreaCm2'], legalReferences, severity: rule.defaultSeverity,
+      requiresLegalReview: legalReferences.some(source => source.verificationStatus !== 'VERIFIED'),
+    };
+  }
+  if (!measurements.length || calibrationConfidence < 0.55) {
+    return {
+      findingId: `${rule.ruleCode}-${version.version}-MEASURE`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber,
+      ruleVersion: version.version, status: 'UNABLE_TO_VERIFY', field,
+      message: 'No sufficiently calibrated OpenCV font-size measurement is available. The ₹10 coin reference or declaration bounding box could not be established reliably.',
+      missingEvidence: ['visual.rule7FontSizeMeasurements'], legalReferences, severity: rule.defaultSeverity,
+      requiresLegalReview: false,
+    };
+  }
+
+  const required = rule7RequiredHeightMm(area, formed);
+  const failing = measurements.filter((item: any) => Number(item?.measuredHeightMm) < required || (item?.widthHeightRatio != null && Number(item.widthHeightRatio) < 1 / 3));
+  const weak = measurements.filter((item: any) => Number(item?.calibrationConfidence ?? 0) < 0.70);
+  const fieldText = measurements.map((item: any) => `${item?.field ?? 'declaration'}=${Number(item?.measuredHeightMm ?? 0).toFixed(2)}mm`).join(', ');
+
+  if (failing.length) {
+    const first = failing[0];
+    const widthIssue = first?.widthHeightRatio != null && Number(first.widthHeightRatio) < 1 / 3;
+    return {
+      findingId: `${rule.ruleCode}-${version.version}-VIOLATION`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber,
+      ruleVersion: version.version, status: 'VIOLATION', field,
+      message: `Rule 7 font-size requirement failed. Principal display panel area ${area.toFixed(2)} cm² requires at least ${required.toFixed(1)} mm letter/numeral height${formed ? ' for a formed/blown/molded surface' : ''}. Measured: ${fieldText}.`,
+      violationReason: widthIssue ? 'At least one measured character/region is below the prescribed minimum width-to-height ratio of one-third or has insufficient height.' : 'At least one calibrated declaration has a measured letter/numeral height below the Rule 7 minimum.',
+      legalReferences, severity: rule.defaultSeverity, requiresLegalReview: false,
+    };
+  }
+
+  return {
+    findingId: `${rule.ruleCode}-${version.version}-PASS`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber,
+    ruleVersion: version.version, status: weak.length ? 'UNABLE_TO_VERIFY' : 'PASS', field,
+    message: weak.length
+      ? `OpenCV measured the Rule 7 declaration heights, but one or more coin calibrations are below the preferred review confidence. Required ${required.toFixed(1)} mm; measured ${fieldText}.`
+      : `Rule 7 font-size requirement satisfied. Principal display panel area ${area.toFixed(2)} cm² requires ${required.toFixed(1)} mm; measured ${fieldText}.`,
+    missingEvidence: weak.length ? ['visual.rule7FontSizeMeasurements.calibrationConfidence'] : undefined,
+    legalReferences, severity: rule.defaultSeverity, requiresLegalReview: false,
+  };
+}
+
 function conditionResult(request: InspectionRequest, condition: RuleCondition): ConditionResult {
   const evidence = evidenceFor(request, condition.targetField);
   const conflicts = conflictsFor(request, condition.targetField);
@@ -69,4 +134,4 @@ function conditionResult(request: InspectionRequest, condition: RuleCondition): 
 }
 function findingFor(rule: RuleDefinition, version: RuleVersion, condition: RuleCondition, result: ConditionResult, index: number): Finding { return { findingId: `${rule.ruleCode}-${version.version}-${index + 1}`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, subclause: rule.subclause, ruleVersion: version.version, status: result.status, field: condition.targetField, message: result.status === 'PASS' ? 'Requirement satisfied.' : result.message, violationReason: result.reason, evidenceUsed: result.evidence, missingEvidence: result.missing, conflicts: result.conflicts, legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: version.legalSources.some(source => source.verificationStatus !== 'VERIFIED') }; }
 function quantityFindings(request: InspectionRequest): Finding[] { if (!request.measurements) return []; const source = SOURCES.PRINCIPAL_2011; const measurement = request.measurements; const declared = normalizeQuantity(measurement.declaredQuantity, measurement.declaredUnit); const actual = normalizeQuantity(measurement.actualQuantity, measurement.actualUnit); if (!declared || !actual) return [{ findingId: 'PCR-SCHED-I-MPE-UNVERIFIED', ruleId: 'PCR-SCHED-I-MPE', ruleCode: 'PCR-SCHED-I-MPE', ruleNumber: 'First Schedule', ruleVersion: 1, status: 'UNABLE_TO_VERIFY', field: 'measurements', message: 'Physical measurement data could not be normalized for First Schedule MPE evaluation.', missingEvidence: ['measurements.declaredQuantity', 'measurements.actualQuantity'], legalReferences: [source], severity: 'HIGH', requiresLegalReview: false }]; const declaredBase = toBaseQuantity(declared.value, declared.unit); const actualBase = toBaseQuantity(actual.value, actual.unit); if ((declaredBase.unit !== 'g' && declaredBase.unit !== 'mL') || actualBase.unit !== declaredBase.unit) return [{ findingId: 'PCR-SCHED-I-MPE-NON-WEIGHT', ruleId: 'PCR-SCHED-I-MPE', ruleCode: 'PCR-SCHED-I-MPE', ruleNumber: 'First Schedule Table II', ruleVersion: 1, status: 'OUT_OF_SCOPE', field: 'measurements', message: 'First Schedule length, area and number measurement validation requires a physical measurement workflow beyond the image-only declaration inspection.', legalReferences: [source], severity: 'HIGH', requiresLegalReview: false }]; const result = firstScheduleMpe(declaredBase.value, actualBase.value, declaredBase.unit); return [{ findingId: 'PCR-SCHED-I-MPE', ruleId: 'PCR-SCHED-I-MPE', ruleCode: 'PCR-SCHED-I-MPE', ruleNumber: 'First Schedule', ruleVersion: 1, status: result.applicable ? result.withinTolerance ? 'PASS' : 'VIOLATION' : 'UNABLE_TO_VERIFY', field: 'measurements', message: result.applicable ? result.withinTolerance ? `Measured deficiency is within MPE ${result.tolerance} ${declaredBase.unit}.` : `Measured deficiency exceeds MPE ${result.tolerance} ${declaredBase.unit}.` : result.reason ?? 'First Schedule MPE could not be evaluated.', violationReason: result.withinTolerance ? undefined : 'Net quantity deficiency exceeds the First Schedule maximum permissible error.', legalReferences: [source], severity: 'CRITICAL', requiresLegalReview: false }]; }
-export function evaluateInspection(request: InspectionRequest, rules: RuleDefinition[] = RULES): OverallInspectionResult { const findings: Finding[] = []; for (const rule of rules.filter(item => item.enabled)) { const version = chooseVersion(rule, request.inspectionDate.slice(0, 10)); if (!version) continue; if (rule.ruleId === 'PCR-R3') { const quantity = getPath(request, 'declarations.netQuantity'); const unit = getPath(request, 'declarations.netQuantityUnit'); const normalized = typeof quantity === 'number' && typeof unit === 'string' ? normalizeQuantity(quantity, unit) : undefined; const excluded = request.productMetadata.consumerType === 'industrial' || request.productMetadata.consumerType === 'institutional' || !!(normalized && ((normalized.unit === 'kg' && normalized.value > 25) || (normalized.unit === 'L' && normalized.value > 25))); findings.push({ findingId: `${rule.ruleCode}-${version.version}`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, ruleVersion: version.version, status: excluded ? 'NOT_APPLICABLE' : 'PASS', message: excluded ? 'Chapter II is not applicable to the identified industrial/institutional or excluded bulk package.' : 'Package was identified as within the engine inspection scope.', legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: false }); continue; } if (!applicable(request, version)) { findings.push({ findingId: `${rule.ruleCode}-${version.version}-NA`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, ruleVersion: version.version, status: 'NOT_APPLICABLE', message: 'Rule is outside its structured applicability criteria.', legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: false }); continue; } if (rule.ruleId === 'PCR-R6-1-F' && request.productMetadata.dimensionsRelevant !== true) { findings.push({ findingId: `${rule.ruleCode}-${version.version}-NA`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, ruleVersion: version.version, status: 'NOT_APPLICABLE', field: 'declarations.dimensions', message: 'Dimensions are not identified as relevant to the inspected commodity/package.', legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: false }); continue; } if (version.status === 'REQUIRES_LEGAL_REVIEW') { findings.push({ findingId: `${rule.ruleCode}-${version.version}-LEGAL`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, ruleVersion: version.version, status: 'UNABLE_TO_VERIFY', message: 'Rule version is marked for legal review.', legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: true }); continue; } version.conditions.forEach((condition, index) => findings.push(findingFor(rule, version, condition, conditionResult(request, condition), index))); } findings.push(...quantityFindings(request)); const summary = { totalRulesEvaluated: findings.length, passed: findings.filter(finding => finding.status === 'PASS').length, violations: findings.filter(finding => finding.status === 'VIOLATION').length, unableToVerify: findings.filter(finding => finding.status === 'UNABLE_TO_VERIFY').length, notApplicable: findings.filter(finding => finding.status === 'NOT_APPLICABLE').length, outOfScope: findings.filter(finding => finding.status === 'OUT_OF_SCOPE').length }; const overallStatus: EvaluationStatus = summary.violations > 0 ? 'VIOLATION' : summary.unableToVerify > 0 ? 'UNABLE_TO_VERIFY' : summary.passed > 0 ? 'PASS' : summary.outOfScope > 0 ? 'OUT_OF_SCOPE' : 'NOT_APPLICABLE'; const base = { inspectionId: request.inspectionId, productId: request.productId, inspectionDate: request.inspectionDate, overallStatus, engineVersion: ENGINE_VERSION, ruleSetVersion: RULESET_VERSION, summary, findings }; return { ...base, auditHash: createHash('sha256').update(canonical(base)).digest('hex') }; }
+export function evaluateInspection(request: InspectionRequest, rules: RuleDefinition[] = RULES): OverallInspectionResult { const findings: Finding[] = []; for (const rule of rules.filter(item => item.enabled)) { const version = chooseVersion(rule, request.inspectionDate.slice(0, 10)); if (!version) continue; if (rule.ruleId === 'PCR-R3') { const quantity = getPath(request, 'declarations.netQuantity'); const unit = getPath(request, 'declarations.netQuantityUnit'); const normalized = typeof quantity === 'number' && typeof unit === 'string' ? normalizeQuantity(quantity, unit) : undefined; const excluded = request.productMetadata.consumerType === 'industrial' || request.productMetadata.consumerType === 'institutional' || !!(normalized && ((normalized.unit === 'kg' && normalized.value > 25) || (normalized.unit === 'L' && normalized.value > 25))); findings.push({ findingId: `${rule.ruleCode}-${version.version}`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, ruleVersion: version.version, status: excluded ? 'NOT_APPLICABLE' : 'PASS', message: excluded ? 'Chapter II is not applicable to the identified industrial/institutional or excluded bulk package.' : 'Package was identified as within the engine inspection scope.', legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: false }); continue; } if (!applicable(request, version)) { findings.push({ findingId: `${rule.ruleCode}-${version.version}-NA`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, ruleVersion: version.version, status: 'NOT_APPLICABLE', message: 'Rule is outside its structured applicability criteria.', legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: false }); continue; } if (rule.ruleId === 'PCR-R6-1-F' && request.productMetadata.dimensionsRelevant !== true) { findings.push({ findingId: `${rule.ruleCode}-${version.version}-NA`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, ruleVersion: version.version, status: 'NOT_APPLICABLE', field: 'declarations.dimensions', message: 'Dimensions are not identified as relevant to the inspected commodity/package.', legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: false }); continue; } if (version.status === 'REQUIRES_LEGAL_REVIEW') { findings.push({ findingId: `${rule.ruleCode}-${version.version}-LEGAL`, ruleId: rule.ruleId, ruleCode: rule.ruleCode, ruleNumber: rule.ruleNumber, ruleVersion: version.version, status: 'UNABLE_TO_VERIFY', message: 'Rule version is marked for legal review.', legalReferences: version.legalSources, severity: rule.defaultSeverity, requiresLegalReview: true }); continue; } if (rule.ruleId === 'PCR-R7') { findings.push(rule7FontSizeFinding(request, rule, version)); continue; } version.conditions.forEach((condition, index) => findings.push(findingFor(rule, version, condition, conditionResult(request, condition), index))); } findings.push(...quantityFindings(request)); const summary = { totalRulesEvaluated: findings.length, passed: findings.filter(finding => finding.status === 'PASS').length, violations: findings.filter(finding => finding.status === 'VIOLATION').length, unableToVerify: findings.filter(finding => finding.status === 'UNABLE_TO_VERIFY').length, notApplicable: findings.filter(finding => finding.status === 'NOT_APPLICABLE').length, outOfScope: findings.filter(finding => finding.status === 'OUT_OF_SCOPE').length }; const overallStatus: EvaluationStatus = summary.violations > 0 ? 'VIOLATION' : summary.unableToVerify > 0 ? 'UNABLE_TO_VERIFY' : summary.passed > 0 ? 'PASS' : summary.outOfScope > 0 ? 'OUT_OF_SCOPE' : 'NOT_APPLICABLE'; const base = { inspectionId: request.inspectionId, productId: request.productId, inspectionDate: request.inspectionDate, overallStatus, engineVersion: ENGINE_VERSION, ruleSetVersion: RULESET_VERSION, summary, findings }; return { ...base, auditHash: createHash('sha256').update(canonical(base)).digest('hex') }; }
