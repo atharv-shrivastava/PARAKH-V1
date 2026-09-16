@@ -50,6 +50,7 @@ OCR and AI provide evidence and interpretation. The deterministic Rules Engine e
 | `docs/REPOSITORY_CODE_GUIDE.md` | Code-oriented guide to frontend, backend, OCR, AI, image processing, database, analytics, reporting, validation, and configuration |
 | `docs/ADMIN_AND_ROLES.md` | Administrative capabilities, officer actions, role boundaries, and future admin controls |
 | `docs/FUTURE_SCOPE.md` | Offline mode, GTIN/official registry integration, regulatory updates, computer vision, scale, security, and other future work |
+| `docs/OPENCV_FONT_SIZE_RULE7.md` | ₹10 coin calibration, physical text-height measurement, and Rule 7 integration |
 | `DATABASE_SCHEMA.md` | Logical database model |
 | `COMPLIANCE_ENGINE.md` | Legal Metrology rule architecture |
 | `API_SPEC.md` | API contract and endpoint groups |
@@ -89,24 +90,66 @@ The documentation intentionally distinguishes current implementation, feature-br
 - RapidOCR primary OCR service
 - Gemini multimodal semantic interpretation
 - GTIN/DataKart reference verification
-- OpenCV visual-processing work in dedicated feature branches
+- OpenCV calibrated visual measurement service
 - OCR geometry and visual evidence processing
 
 ### Reporting
 
 - jsPDF where used for report generation
 
+## OpenCV ₹10 coin calibration + Rule 7
+
+PARAKH now has a dedicated OpenCV vision service that detects a visible Indian ₹10 coin and uses its **27 mm reference diameter** to convert image pixels into approximate physical millimetres. The calibrated text measurements are then passed to the deterministic Rules Engine.
+
+```text
+Package image
+    ↓
+OpenCV ₹10 coin detection
+    ↓
+27 mm physical calibration
+    ↓
+OCR declaration bounding boxes
+    ↓
+Glyph-height estimation
+    ↓
+Measured text height in mm
+    ↓
+Rule 7 evaluator
+    ↓
+PASS / VIOLATION / UNABLE_TO_VERIFY
+```
+
+The current Rule 7 implementation uses the **principal display panel area** to determine the required minimum height. It does not use package weight for the current table.
+
+The integrated workflow is exposed through:
+
+```text
+POST /api/vision/font-size-compliance
+```
+
+The OpenCV service runs on:
+
+```text
+http://localhost:8082
+```
+
+The Rules Engine runs on:
+
+```text
+http://localhost:8090
+```
+
+See [`docs/OPENCV_FONT_SIZE_RULE7.md`](docs/OPENCV_FONT_SIZE_RULE7.md) for the measurement contract, thresholds, limitations, and service setup.
+
 ## OpenCV work
 
-PARAKH has dedicated OpenCV feature branches for visual inspection and measurement work:
+PARAKH also retains dedicated OpenCV feature branches for broader visual inspection work:
 
 ```text
 feat/opencv-font-size-rules
 feat/opencv-10rs-coin-calibration
 feat/opencv-package-background-separation
 ```
-
-These branches cover work such as OCR bounding-box based text-height analysis, font-size related checks, physical-reference calibration experiments, package/background separation, and geometry-based visual checks.
 
 The merged `main` branch is the authority for current functionality. Feature-branch work must not be described as merged or deployed functionality until it is actually integrated and verified.
 
@@ -194,7 +237,23 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8081
 
 RapidOCR is the primary OCR service.
 
-### 3. Backend API
+### 3. OpenCV Vision Service
+
+```powershell
+cd C:\parakh-copy\vision-service
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m uvicorn main:app --host 0.0.0.0 --port 8082
+```
+
+Health check:
+
+```text
+http://localhost:8082/health
+```
+
+### 4. Backend API
 
 ```powershell
 cd C:\parakh-copy\backend
@@ -208,7 +267,7 @@ Or:
 pnpm start
 ```
 
-### 4. Frontend
+### 5. Frontend
 
 ```powershell
 cd C:\parakh-copy\frontend
