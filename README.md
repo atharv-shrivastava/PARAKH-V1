@@ -1,7 +1,6 @@
 # PARAKH
 
-**Packaged Article Regulatory Assessment & Knowledge Hub**
-
+**Packaged Article Regulatory Assessment & Knowledge Hub**  
 **SIH Problem Statement: 26034**
 
 PARAKH is an AI-assisted inspection and compliance platform for packaged commodities in India, designed around the **Legal Metrology Act, 2009** and the **Legal Metrology (Packaged Commodities) Rules, 2011**.
@@ -38,42 +37,27 @@ Inspection + Batch Intelligence
 Final Compliance Report
 ```
 
-OCR and AI provide evidence and interpretation. The deterministic Rules Engine evaluates configured requirements, while the authorized officer reviews uncertain/conflicting findings and records the final inspection decision.
+OCR and AI provide evidence and interpretation. The deterministic Rules Engine evaluates configured requirements, while the authorized officer reviews uncertain or conflicting findings and records the final inspection decision.
 
-## Detailed feature documentation
+## Documentation map
 
-The complete feature-level inventory is maintained in [`docs/FEATURE_CATALOG.md`](docs/FEATURE_CATALOG.md).
+| Document | Purpose |
+|---|---|
+| `README.md` | Product overview, technology, local startup, and project boundaries |
+| `PROJECT_SPEC.md` | Functional/project specification |
+| `ARCHITECTURE.md` | Service boundaries and technical architecture |
+| `docs/FEATURE_CATALOG.md` | Detailed feature inventory, including small UI, analytics, admin, and engineering behavior |
+| `docs/REPOSITORY_CODE_GUIDE.md` | Code-oriented guide to frontend, backend, OCR, AI, image processing, database, analytics, reporting, validation, and configuration |
+| `docs/ADMIN_AND_ROLES.md` | Administrative capabilities, officer actions, role boundaries, and future admin controls |
+| `docs/FUTURE_SCOPE.md` | Offline mode, GTIN/official registry integration, regulatory updates, computer vision, scale, security, and other future work |
+| `DATABASE_SCHEMA.md` | Logical database model |
+| `COMPLIANCE_ENGINE.md` | Legal Metrology rule architecture |
+| `API_SPEC.md` | API contract and endpoint groups |
+| `UI_UX_SPEC.md` | Interface requirements |
+| `DEVELOPMENT_RULES.md` | Engineering rules |
+| `ROADMAP.md` | Planned milestones |
 
-It documents not only the headline features but also the smaller implementation details, including:
-
-- React/Vite UI and responsive behavior
-- navigation, themes, forms, loading/error/empty states
-- multi-image inspection and image handling
-- Sharp image processing
-- RapidOCR configuration and failure handling
-- OCR bounding boxes and evidence localization
-- Gemini semantic extraction
-- evidence fusion and verification states
-- GTIN/DataKart verification and fallback behavior
-- product/category hierarchy and final-category selection
-- deterministic Legal Metrology rule evaluation
-- Rule 23 officer assessment
-- OpenCV visual-processing extensions
-- font-size analysis and physical-reference calibration work
-- human-in-the-loop verification
-- dynamic Compliance Intelligence graphs
-- combined analytics filters
-- dynamically changing counters and graph datasets
-- manufacturer analytics
-- batch safety alerts
-- shops and inspection history
-- product registration
-- e-commerce inspection
-- multilingual reports/UI
-- administration and role-aware access
-- API responsibilities
-- Prisma/PostgreSQL persistence
-- validation, caching, error handling, security, and performance behavior
+The documentation intentionally distinguishes current implementation, feature-branch work, prototype limitations, and future scope.
 
 ## Current technology
 
@@ -85,7 +69,7 @@ It documents not only the headline features but also the smaller implementation 
 - JSX/JavaScript
 - Responsive CSS and centralized theme system
 - Light, dark, gradient, and palette variants
-- Dynamic dashboard and Compliance Intelligence visualizations
+- Data-driven dashboard and Compliance Intelligence visualizations
 - Client-side report generation where used
 
 ### Backend
@@ -105,7 +89,7 @@ It documents not only the headline features but also the smaller implementation 
 - RapidOCR primary OCR service
 - Gemini multimodal semantic interpretation
 - GTIN/DataKart reference verification
-- OpenCV visual-processing extensions in feature branches
+- OpenCV visual-processing work in dedicated feature branches
 - OCR geometry and visual evidence processing
 
 ### Reporting
@@ -122,9 +106,9 @@ feat/opencv-10rs-coin-calibration
 feat/opencv-package-background-separation
 ```
 
-These branches cover work such as OCR bounding-box based text-height analysis, font-size related checks, physical-reference calibration experiments, and package/background separation.
+These branches cover work such as OCR bounding-box based text-height analysis, font-size related checks, physical-reference calibration experiments, package/background separation, and geometry-based visual checks.
 
-The `main` branch is the authority for merged functionality. Feature-branch work must not be represented as deployed production functionality until merged and verified.
+The merged `main` branch is the authority for current functionality. Feature-branch work must not be described as merged or deployed functionality until it is actually integrated and verified.
 
 ## Compliance Intelligence
 
@@ -135,7 +119,7 @@ Manufacturer | Product | GTIN | Batch | Violation
 City / District | State | Date range | Verified only
 ```
 
-The dashboard can display dynamic visualizations for inspection trends, violation types, affected batches, severity, geography, and manufacturer violation rates.
+The dashboard can display dynamic visualizations for inspection trends, violation types, affected batches, severity, geography, and manufacturer analytics.
 
 Filters are data-driven: changing the selected filters changes the inspection population used for aggregation, which updates the displayed counters, graph datasets, tables, and related analytics.
 
@@ -151,6 +135,8 @@ Administrative verification
 Verified batch alert
       ↓
 Warning for product + exact batch
+      ↓
+Resolution
 ```
 
 AI does not autonomously declare a batch defective or activate a verified safety alert.
@@ -178,6 +164,12 @@ Food → Ready-to-Eat → Biscuits [Final]
 ```
 
 Administrators can manage global category definitions separately from ordinary product registration.
+
+## Future scope
+
+Future work includes offline-first inspection and synchronization, local rule/product caches, resumable uploads, conflict resolution, official/authorized GTIN and product-registry integrations, government/legal-metrology integrations where permitted, rule versioning, stronger OpenCV measurement, improved multilingual/offline OCR, multi-model evidence verification, evidence provenance, state/district intelligence, officer review queues, expanded Batch Safety workflows, asynchronous processing workers, production media storage, and stronger enterprise security/audit controls.
+
+See [`docs/FUTURE_SCOPE.md`](docs/FUTURE_SCOPE.md) for the full roadmap and boundaries.
 
 ## Local development services
 
@@ -226,21 +218,8 @@ pnpm run dev
 
 The Vite frontend normally runs on `http://localhost:5173`.
 
-## Repository documentation
-
-- `README.md` — product overview and local startup
-- `PROJECT_SPEC.md` — functional specification
-- `ARCHITECTURE.md` — technical architecture and service boundaries
-- `docs/FEATURE_CATALOG.md` — exhaustive feature-level documentation, including small UI/UX and engineering features
-- `DATABASE_SCHEMA.md` — logical data model
-- `COMPLIANCE_ENGINE.md` — Legal Metrology rule architecture
-- `API_SPEC.md` — API contract and endpoint groups
-- `UI_UX_SPEC.md` — interface requirements
-- `DEVELOPMENT_RULES.md` — engineering rules
-- `ROADMAP.md` — planned work
-
-The working source code is authoritative for the exact implementation state of every feature.
-
 ## Prototype boundary
 
-PARAKH is an SIH-oriented working prototype. It is not a claim of national-scale deployment or complete statutory coverage. Context-dependent legal decisions and physical measurements can require authorized officer verification.
+PARAKH is an SIH-oriented working prototype. It is not a claim of national-scale production deployment or complete statutory coverage. Context-dependent legal decisions and physical measurements can require authorized officer verification.
+
+The working source code is authoritative for the exact implementation state of every feature.
