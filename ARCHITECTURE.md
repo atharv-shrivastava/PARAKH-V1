@@ -1,124 +1,135 @@
 # PARAKH Technical Architecture
 
+**SIH Problem Statement: 26034**
+
 ## 1. Architecture goals
 
-PARAKH separates the presentation layer, API/business logic, OCR/AI processing, evidence verification, compliance rules, persistence, reporting, analytics, and batch-safety workflows.
+PARAKH separates presentation, API/business logic, image processing, OCR, semantic interpretation, evidence verification, compliance rules, persistence, reporting, analytics, and batch-safety workflows.
 
-AI is an assistive layer. It is not the legal source of truth.
+The architectural boundary is intentional:
+
+```text
+OCR / Computer Vision → extract and measure evidence
+AI / semantic layer   → interpret evidence
+DataKart / GTIN       → provide reference evidence
+Rules Engine           → deterministic configured evaluation
+Officer                → human verification and final inspection decision
+```
 
 ## 2. Current high-level architecture
 
 ```text
-┌──────────────────────────────────────────────────────────────────┐
-│                         PARAKH CLIENT                            │
-│ React + Vite + React Router                                     │
-│ Dashboard | Scan | Shops | Products | History | Reports         │
-│ E-commerce | Admin | Compliance Intelligence | Batch Safety    │
-│ Responsive theme system                                         │
-└───────────────────────────────┬──────────────────────────────────┘
-                                │ REST / JSON / multipart
-                                ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                     NODE + EXPRESS BACKEND                       │
-│ Auth | Products | Shops | Categories | Inspections              │
-│ OCR orchestration | Evidence verification | Rules | Reports    │
-│ Analytics | Batch incidents | Batch alerts                     │
-└───────────────┬────────────────┬───────────────────────┬─────────┘
-                │                │                       │
-                ▼                ▼                       ▼
-        ┌───────────────┐  ┌──────────────────────┐ ┌─────────────────┐
-        │ PostgreSQL    │  │ OCR / AI / reference │ │ Analytics +     │
-        │ via Prisma 7  │  │ RapidOCR → Gemini    │ │ Batch Safety    │
-        │               │  │       → DataKart    │ │                 │
-        └───────────────┘  └──────────┬───────────┘ └────────┬────────┘
-                                     │                      │
-                                     ▼                      ▼
-                              Evidence confidence    Human/admin review
-                                     │                      │
-                                     └──────────┬───────────┘
-                                                ▼
-                                      Legal Rules Engine
-                                                │
-                                                ▼
-                                      Inspection / Report
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              PARAKH CLIENT                              │
+│ React + Vite + React Router                                             │
+│ Dashboard | Scan | Shops | Products | History | Reports                │
+│ E-commerce | Admin | Intelligence | Batch Safety                       │
+│ Responsive themes + dynamic filters + data-driven graphs               │
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │ REST / JSON / multipart
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         NODE + EXPRESS BACKEND                          │
+│ Auth | Products | Shops | Categories | Inspections                     │
+│ Uploads | Sharp | OCR orchestration | Evidence | Rules | Reports      │
+│ Analytics | Batch incidents | Batch alerts                            │
+└──────────────┬─────────────────────┬─────────────────────┬──────────────┘
+               │                     │                     │
+               ▼                     ▼                     ▼
+       ┌──────────────┐     ┌──────────────────────┐  ┌─────────────────┐
+       │ PostgreSQL   │     │ OCR / AI / reference │  │ Analytics +     │
+       │ via Prisma 7 │     │ RapidOCR → Gemini    │  │ Batch Safety    │
+       │              │     │ → GTIN/DataKart      │  │                 │
+       └──────────────┘     └───────────┬──────────┘  └────────┬────────┘
+                                        │                      │
+                                        ▼                      ▼
+                                Evidence confidence     Human/admin review
+                                        │                      │
+                                        └──────────┬───────────┘
+                                                   ▼
+                                         Legal Rules Engine
+                                                   │
+                                                   ▼
+                                      Inspection / Report / Intelligence
 ```
 
 ## 3. Frontend architecture
 
-The current client uses React 19, Vite, React Router, JSX/JavaScript, shared CSS/theme infrastructure, responsive layouts, and session-level GET caching with mutation invalidation where implemented.
+The client uses React 19, Vite, React Router, JSX/JavaScript, shared CSS/theme infrastructure, responsive layouts, and targeted GET caching with mutation invalidation where implemented.
 
-The main inspection flow supports:
+Major interface areas include:
 
-- multi-image capture/upload
-- OCR result review
-- editable structured fields
-- spatial/evidence information where available
-- multimodal semantic analysis
-- GTIN/reference verification
-- compliance findings
-- confidence/verification states
-- manual violation entry
-- human review
-- product registration
+- Dashboard
+- Scan
+- Shops
+- Products
+- History
+- Reports
+- E-commerce
+- Profile
+- Administration
+- Compliance Intelligence
+- Batch Safety
 
-Additional application areas include Compliance Intelligence, Batch Safety, global category administration, compliance-rule administration, and e-commerce inspection.
+The inspection flow supports multi-image capture/upload, image preview/removal, editable extracted fields, evidence/source information, semantic analysis, GTIN verification, compliance findings, manual violations, officer review, and registration/save.
 
-## 4. Backend architecture
+## 4. Responsive UI and navigation
 
-The backend uses Node.js, Express 5, ES modules, Multer, Sharp, Prisma 7, and PostgreSQL.
+The application adapts to mobile, tablet, laptop, and desktop layouts.
 
-The route surface includes authentication, products, categories, shops, inspections, OCR, rules, administration, analytics, and batch-safety operations.
+The desktop interface uses a persistent sidebar while smaller layouts use compact navigation. Theme infrastructure supports light, dark, gradient, dark-gradient, and palette variants.
 
-Important analytics endpoints include:
+The UI includes normal application states such as loading, empty, validation, success, and error states. The inspection interface is designed to expose uncertainty and evidence instead of presenting AI output as an unquestionable answer.
 
-```text
-/api/analytics/dashboard
-/api/analytics/intelligence
-```
-
-Batch-safety operations are exposed through:
-
-```text
-/api/batch-alerts
-/api/batch-alerts/incidents
-/api/batch-alerts/incidents/:id/verify
-/api/batch-alerts/:id/resolve
-```
-
-## 5. Current inspection / AI pipeline
+## 5. Scan and image-input architecture
 
 ```text
 Package image(s)
       ↓
-RapidOCR + image processing
+Upload validation
       ↓
-OCR evidence
-(text + confidence + bounding box where available)
+Image preprocessing
       ↓
-Deterministic field reconciliation
+RapidOCR / visual processing
       ↓
-Gemini multimodal semantic interpretation
+OCR evidence + geometry
       ↓
-Structured compliance fields
+Field reconciliation
       ↓
-GTIN / DataKart reference verification
+Gemini semantic interpretation
       ↓
-Evidence confidence fusion
-      ↓
-Legal Metrology Rules Engine
-      ↓
-Human verification
-      ↓
-Inspection + report + intelligence update
+Structured fields
 ```
 
-RapidOCR supplies primary machine-readable text evidence. Gemini maps content and spatial context to structured declarations. DataKart can provide reference evidence when a GTIN/barcode can be matched. The legal Rules Engine performs deterministic compliance evaluation.
+Multiple images can contribute complementary evidence to one inspection. Images can be removed before processing, and barcode/GTIN imagery can be supplied separately where supported.
 
-Additional semantic providers may be configurable where supported, but they are optional and do not replace RapidOCR or the Rules Engine.
+## 6. Image processing and OpenCV
 
-## 6. RapidOCR service
+The Node backend uses Sharp for image processing. PARAKH also has dedicated OpenCV feature work for visual measurement and package-image analysis.
 
-RapidOCR is the primary OCR service. The backend sends package images to the configured `RAPID_OCR_URL` and can receive OCR text, confidence and geometry.
+Relevant feature branches are:
+
+```text
+feat/opencv-font-size-rules
+feat/opencv-10rs-coin-calibration
+feat/opencv-package-background-separation
+```
+
+The OpenCV work includes:
+
+- OCR bounding-box based text-region measurement
+- text-height estimation
+- font-size related compliance analysis
+- known-object physical-size calibration experiments
+- package/background separation
+- visual-region analysis
+- image geometry for compliance checks
+
+The repository's merged `main` branch is authoritative for current released functionality. OpenCV feature-branch capabilities should be described as integrated only after their code is merged and verified.
+
+## 7. RapidOCR service
+
+RapidOCR is the primary OCR service. The backend sends package images to the configured `RAPID_OCR_URL` and can receive text, confidence and geometry.
 
 Relevant configuration includes:
 
@@ -131,36 +142,64 @@ RAPIDOCR_TEXT_SCORE
 OCR_TIMEOUT_MS
 ```
 
-The default local OCR endpoint is `http://localhost:8081` when configured that way.
+The local OCR service can run at `http://localhost:8081` when configured that way.
 
-## 7. Field reconciliation and spatial reasoning
+Provider failures, timeouts, unavailable services, malformed OCR responses, and incomplete evidence must remain explicit processing states rather than silently becoming compliance decisions.
 
-The reconciliation layer converts OCR detections into structured declarations using labels, spatial relationships, text similarity, field-specific patterns, OCR confidence, and bounding-box geometry.
+## 8. Field reconciliation and spatial reasoning
 
-A resolved field can retain source-image information, evidence text, bounding-box geometry, and OCR confidence. This allows context such as a label/value relationship to be reviewed instead of relying only on exact keyword matches.
+Raw OCR is not treated as the final structured record.
 
-## 8. Gemini semantic layer
+The reconciliation layer combines:
 
-Gemini interprets package images and OCR evidence to perform semantic tasks such as:
+- labels
+- nearby values
+- spatial relationships
+- text similarity
+- field-specific patterns
+- OCR confidence
+- bounding-box geometry
+- source-image context
+
+A resolved field can retain source-image information, evidence text, bounding-box geometry, and OCR confidence where available.
+
+This supports label/value relationships and evidence review instead of relying only on exact keyword matching.
+
+## 9. Gemini semantic layer
+
+Gemini interprets package images and OCR evidence for semantic tasks such as:
 
 - mapping text to compliance fields
 - identifying product and brand information
 - resolving contextual labels and nearby values
-- interpreting package information that is not a simple exact text match
+- handling image-vs-OCR conflicts
+- representing absent, unreadable, or ambiguous information
 
-Gemini output contributes evidence for structured fields but does not directly make the final legal decision.
+AI output is normalized before entering the evidence and rules pipeline. It does not directly make the final legal decision.
 
-## 9. GTIN / DataKart verification
+Additional semantic providers may be configurable where supported, but they remain evidence sources.
 
-GTIN/barcode verification is optional. When a GTIN is available, PARAKH can query the separate DataKart product registry and compare registered values against the current inspection fields.
+## 10. GTIN / DataKart verification
 
-DataKart is a reference/evidence source, not the legal decision-maker.
+GTIN/barcode verification is optional.
 
-When a product is not registered or GTIN verification is unavailable, inspection processing can continue with the available OCR, image and semantic evidence.
+```text
+GTIN / barcode
+      ↓
+DataKart reference lookup
+      ↓
+Registered product information
+      ↓
+Compare with current inspection evidence
+      ↓
+Field-level reference contribution
+```
 
-## 10. Evidence confidence
+DataKart is a product-reference registry, not the Legal Metrology decision-maker. When a reference is unavailable, inspection processing can continue with available package, OCR, and semantic evidence.
 
-The current field-level evidence score uses available sources approximately as follows:
+## 11. Evidence confidence
+
+Current V1 evidence fusion uses:
 
 ```text
 50% DataKart agreement
@@ -168,11 +207,19 @@ The current field-level evidence score uses available sources approximately as f
 20% RapidOCR evidence confidence
 ```
 
-If a source is unavailable, its contribution is omitted and the remaining available weights are renormalized.
+Unavailable sources are omitted and remaining available weights are renormalized.
 
 The result is an evidence-fusion indicator, not a calibrated probability and not legal certainty.
 
-Verification states used by the application can include:
+Field states can include:
+
+```text
+MATCH
+MISMATCH
+UNVERIFIED
+```
+
+Inspection-level states can include:
 
 ```text
 Verified
@@ -180,121 +227,174 @@ Needs Verification
 Missing
 ```
 
-## 11. Compliance Rules Engine
+## 12. Product hierarchy
 
-The legal/business-rule layer receives structured inspection information and evaluates configured Legal Metrology requirements.
+PARAKH uses a flexible category tree rather than a flat catalogue.
 
 ```text
-Structured field values
-        +
-Configured legal rules
-        ↓
-Deterministic evaluation
-        ↓
-Finding + evidence
-        ↓
-Human verification
+Category
+  → Subcategory
+    → Product Type
+      → Final Category / Product
 ```
 
-Rules are not hidden in an LLM prompt or scattered through React components.
+The UI supports dynamic category selection, child-category selection, final-category designation, category cards/forms, suggestions, and administrator-managed global category definitions.
 
-Authorized administrators can manage configurable `ComplianceRule` definitions from the admin interface.
+## 13. Compliance Rules Engine
 
-## 12. Human-in-the-loop
-
-The intended review sequence is:
+The Rules Engine is deterministic and separate from OCR and AI.
 
 ```text
-OCR + AI interpretation
-        ↓
-Field + evidence confidence
-        ↓
-Reference verification where available
-        ↓
+Structured fields + product/category context
+                    +
+             configured rules
+                    ↓
+          deterministic evaluation
+                    ↓
+             rule findings
+                    ↓
+       human verification / decision
+```
+
+Configured requirements can cover declarations, manufacturer/packer/importer details, address, net quantity, MRP, dates, consumer-care information, batch/lot information, formatting/measurement-related checks, and Rule 23 officer assessment inputs.
+
+Authorized administrators can manage `ComplianceRule` definitions. Legal requirements are not hidden inside an LLM prompt or scattered through the React UI.
+
+## 14. Visual screening and measurement
+
+The inspection layer can expose assistive checks for readability, placement, detected text regions, relative size, and visual evidence.
+
+Physical measurements require an appropriate calibration mechanism. Uncalibrated pixel values are estimates and must not be represented as statutory physical measurements.
+
+## 15. Human-in-the-loop
+
+```text
+OCR / AI evidence
+      ↓
+Confidence / uncertainty
+      ↓
+Reference verification
+      ↓
 Rules evaluation
-        ↓
-Officer reviews uncertain/conflicting findings
-        ↓
-Accept / correct / reject / add manual violation
-        ↓
-Complete inspection and generate report
+      ↓
+Officer review
+      ↓
+Accept / correct / reject / manual violation
+      ↓
+Final inspection
 ```
 
-Human verification is also required before a reported batch incident becomes a verified safety alert.
+The officer can review editable values, evidence, uncertainty, conflicts, manual violations, and Rule 23 assessment information.
 
-## 13. Compliance Intelligence
+## 16. Compliance Intelligence architecture
 
-Inspection records feed the current analytics layer.
+Inspection records feed the analytics layer.
 
-Available filters include:
+Supported filter dimensions include:
 
 ```text
-Manufacturer
-Product
-GTIN
-Batch
-Violation type
-City / district
-State
-Date range
-Verified only
+Manufacturer | Product | GTIN | Batch | Violation type
+City / District | State | Date range | Verified only
 ```
 
-The intelligence page renders dynamic graphs for:
+The dashboard is dynamic rather than a collection of static chart images:
 
-- inspection trend over time
-- violations by city/district
+```text
+Stored inspections
+      ↓
+Selected filters
+      ↓
+Filtered population
+      ↓
+Aggregations
+      ↓
+Counters + graph datasets + tables
+      ↓
+Updated UI
+```
+
+Therefore changing filters can change both summary counters and visualizations.
+
+Current intelligence visualizations can include:
+
+- inspection trends over time
 - violation types
+- violations by city/district
 - affected batches
-- violation severity
-- manufacturer violation rate
+- severity
+- manufacturer violation rates
+- manufacturer analytics
+- verified batch alerts
 
-It also provides manufacturer analytics and active verified batch alerts.
-
-The intended drill-down model is:
+The intended drill-down relationship is:
 
 ```text
-State → District → Manufacturer → Product → Batch → Inspection
+State → District / shop city → Manufacturer → Product → Batch → Inspection
 ```
 
-The current implementation uses shop city as the district-like field where a dedicated district column is not yet present.
+Where a dedicated district field is unavailable, shop city is used as the district-like geographic field.
 
-## 14. Batch Safety Network
+## 17. Manufacturer analytics
 
-Batch safety is modeled independently from product-level compliance.
+Manufacturer analytics use stored inspection history.
+
+The violation-rate concept is:
 
 ```text
-Field/admin incident report
-        ↓
+violated scanned products
+─────────────────────────
+total scanned products
+```
+
+Thresholds used for application analytics must not be represented as statutory findings or autonomous legal determinations.
+
+## 18. Batch Safety Network
+
+Batch safety is independent from ordinary product-level compliance.
+
+```text
+Incident report
+      ↓
 Administrative review
-        ↓
+      ↓
 Verified batch alert
-        ↓
-In-app warning for product + exact batch
+      ↓
+Product + exact batch warning
+      ↓
+Resolution
 ```
 
-The database uses `BatchIncidentReport` and `BatchAlert` records. A verified alert is tied to a specific product and batch combination.
+The application models incident reports and alerts separately. A verified alert is associated with a specific product and batch combination.
 
-AI must not autonomously activate a serious batch warning.
+AI does not autonomously activate a verified batch safety alert.
 
-## 15. Product classification and category management
+## 19. Backend architecture
 
-The catalogue uses a flexible category tree with a practical four-level user-facing structure and an explicit final-category option.
+The backend uses Node.js, Express 5, ES modules, Multer, Sharp, Prisma 7, and PostgreSQL.
 
-Example:
+The API surface covers authentication, products, categories, shops, inspections, OCR orchestration, evidence processing, rules, administration, analytics, and batch safety.
+
+Important analytics routes include:
 
 ```text
-Food → Ready-to-Eat → Biscuits [Final]
-Food → Ready-to-Eat → Biscuits → Oreo [Final]
+/api/analytics/dashboard
+/api/analytics/intelligence
 ```
 
-Administrators can manage global category definitions separately from normal product registration.
+Batch safety routes include:
 
-## 16. Database architecture
+```text
+/api/batch-alerts
+/api/batch-alerts/incidents
+/api/batch-alerts/incidents/:id/verify
+/api/batch-alerts/:id/resolve
+```
 
-PARAKH application data is stored in PostgreSQL through Prisma 7.
+## 20. Database architecture
 
-Core models include:
+PostgreSQL is accessed through Prisma 7.
+
+Core application models include:
 
 ```text
 User
@@ -309,30 +409,89 @@ BatchIncidentReport
 BatchAlert
 ```
 
-Inspection records include fields supporting violation type/severity, verification state and batch association. Product records include manufacturer information and product-reference fields.
+These relationships support products, categories, shops, inspections, manufacturers, batches, violations, rules, users, and safety alerts.
 
-OCR/AI evidence can still travel in structured JSON/application result structures rather than requiring a normalized table for every evidence concept.
+OCR/AI evidence may travel in structured JSON/application result structures where a separate normalized evidence table is unnecessary.
 
-## 17. Reporting
+## 21. Reporting
 
-Reports consume inspection and compliance results and can include detected fields, violations, verification status, evidence and inspection metadata.
+Reports consume stored inspection and compliance results and can include extracted fields, evidence/verification state, rule findings, violations, inspection metadata, product/batch information, and officer decisions.
 
-The report layer does not replace the underlying inspection records or rules configuration.
+PDF generation is supported through the application's reporting layer, including client-side generation where used.
 
-## 18. Performance and failure handling
+## 22. E-commerce inspection
 
-External OCR, semantic, reference, upload and database operations should use bounded waits and explicit error handling. User-facing responses should not expose secrets or raw stack traces.
+The application includes an e-commerce inspection area where supported.
 
-The current architecture remains a modular monolith with external/local OCR and semantic services.
+The same boundary applies to online/reference information:
 
-## 19. Scalability path
+```text
+Source information
+      ↓
+Evidence extraction
+      ↓
+Structured fields
+      ↓
+Rules / officer review
+```
 
-A future scale-out path can move OCR/AI work into queue-backed workers without changing the conceptual inspection pipeline. Compliance Intelligence can then operate over a larger inspection dataset while retaining the same product, batch and rule relationships.
+Online/reference information does not override the Rules Engine or officer verification.
 
-## 20. Security
+## 23. Shops and history
 
-Never commit secrets. Validate uploads server-side. Authenticate protected APIs. Authorize role-sensitive operations. Keep DataKart credentials in environment variables. Do not expose database service-role credentials to the browser.
+The shop module supports shop registration, listing, detail views, inspection history, product associations, location/city information, and authorized update/deletion flows.
 
-## 21. Documentation authority
+Inspection history supports listing, search/filtering, historical evidence review, compliance-result review, product/batch relationships, and report access where available.
 
-The source code is authoritative for implemented behavior. This document describes the current technical architecture, while `ROADMAP.md` records future work.
+## 24. Authentication, validation and security
+
+The application uses role-aware authentication/authorization and server-side API protection. Zod is used where configured for request/data validation.
+
+Security boundaries include:
+
+- server-side upload validation
+- protected administrative operations
+- environment-variable secrets
+- no browser exposure of database service credentials
+- controlled API payloads
+- no committed production secrets
+- no raw sensitive inspection data in the repository
+
+Hiding a control in React is not considered authorization.
+
+## 25. Performance and reliability
+
+The current architecture uses measures such as:
+
+- short-lived GET caching where implemented
+- mutation-triggered invalidation
+- bounded external-provider waits
+- targeted UI updates
+- avoidance of unnecessary page remounts/refetches
+- image preprocessing before expensive downstream processing
+- modular OCR service separation
+
+Failure states are expected for invalid images, unavailable OCR, provider timeouts, malformed AI output, missing GTIN, unavailable reference data, conflicting evidence, low confidence, database/API errors, and empty analytics results.
+
+The system should fail into an explicit reviewable state instead of silently converting missing evidence into a positive compliance result.
+
+## 26. Service structure
+
+The repository is organized around:
+
+```text
+backend/
+frontend/
+ocr-service/
+rules-engine/
+semantic-service/
+scripts/
+```
+
+Top-level specification files describe project requirements, architecture, database structure, API contracts, compliance logic, and UI/UX behavior.
+
+For a feature-by-feature inventory, see `docs/FEATURE_CATALOG.md`.
+
+## 27. Prototype boundary
+
+PARAKH is an SIH-oriented working prototype. The source code is authoritative for exact implementation state. Feature branches must not be presented as merged production functionality, and context-dependent legal decisions or physical measurements may require authorized officer verification.
