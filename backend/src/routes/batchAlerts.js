@@ -65,7 +65,7 @@ router.get("/", async (req, res) => {
       take: Math.min(Number(req.query.limit || 50), 200),
       include: { product: { select: { id: true, productName: true, brandName: true, manufacturerName: true, barcode: true } } },
     });
-    res.json({ alerts });
+    res.json({ alerts, scope: "STATEWIDE" });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to load batch alerts" });
@@ -120,10 +120,14 @@ router.post("/incidents", async (req, res) => {
 });
 
 router.get("/incidents", async (req, res) => {
-  if (!isAdmin(req)) return res.status(403).json({ error: "Admin access required" });
+  const mine = String(req.query.scope || "").toUpperCase() === "MINE";
+  if (!isAdmin(req) && !mine) return res.status(403).json({ error: "Admin access required" });
   try {
     const reports = await prisma.batchIncidentReport.findMany({
-      where: { status: String(req.query.status || "REPORTED").toUpperCase() },
+      where: {
+        status: String(req.query.status || (mine ? "REPORTED" : "REPORTED")).toUpperCase(),
+        ...(mine ? { reportedById: req.user.id } : {}),
+      },
       orderBy: { createdAt: "desc" },
       take: 200,
       include: {
@@ -132,7 +136,7 @@ router.get("/incidents", async (req, res) => {
         inspection: { select: { id: true, inspectedAt: true, shop: { select: { city: true, state: true, name: true } } } },
       },
     });
-    res.json({ reports });
+    res.json({ reports, scope: mine ? "OWN" : "STATEWIDE" });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to load batch incident reports" });

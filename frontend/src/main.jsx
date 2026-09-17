@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import AutoTranslate from "./components/AutoTranslate";
+import MultilingualFieldTranslator from "./components/MultilingualFieldTranslator";
 import CoinCalibrationAssist from "./components/CoinCalibrationAssist";
 import ScanScopedUnableToVerifyReview from "./components/ScanScopedUnableToVerifyReview";
 import StartupSplash from "./components/StartupSplash";
@@ -19,6 +20,7 @@ import "./styles/layout-fix.css";
 import "./styles/recorded-product-fixes.css";
 import "./styles/ocr-product-detail-theme.css";
 import "./styles/theme-overrides.css";
+import "./styles/app-shell.css";
 import "./styles/theme-final-overrides.css";
 import "./lib/localBarcodeDetector";
 import { installComplianceStatusDrilldown } from "./lib/complianceStatusDrilldown";
@@ -33,6 +35,7 @@ createRoot(document.getElementById("root")).render(
     <LanguageProvider>
       <StartupSplash>
         <AutoTranslate />
+        <MultilingualFieldTranslator />
         <App />
         <ScanScopedUnableToVerifyReview />
         <CoinCalibrationAssist />

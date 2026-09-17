@@ -16,6 +16,14 @@ const NAV_ITEMS = [
   ["/reports", "reports", "▤"],
   ["/profile", "account", "◉"],
 ];
+const MOBILE_NAV = [
+  ["/", "Dashboard", "⌂"],
+  ["/scan", "Scan", "⌁"],
+  ["/intelligence", "Compliance intelligence", "⌬"],
+  ["/batch-alerts", "Batch safety", "⚠"],
+  ["/history", "History", "↺"],
+  ["/profile", "Account", "◉"],
+];
 
 function NavIcon({ children }) {
   return <span className="nav-icon" aria-hidden="true">{children}</span>;
@@ -91,6 +99,11 @@ function Layout() {
         <InspectionSubmissionGate />
       </>}
     </main>
+
+    <nav className="mobile-navigation" aria-label="Primary navigation">
+      {MOBILE_NAV.map(([to, label, icon]) => <NavLink key={to} to={to} end={to === "/"}><NavIcon>{icon}</NavIcon><span className="nav-label">{label}</span></NavLink>)}
+      {user?.role === "ADMIN" && <NavLink to="/admin"><NavIcon>⚙</NavIcon><span className="nav-label">Admin</span></NavLink>}
+    </nav>
   </div>;
 }
 export default Layout;
