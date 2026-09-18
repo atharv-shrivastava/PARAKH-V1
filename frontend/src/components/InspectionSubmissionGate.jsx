@@ -49,7 +49,8 @@ export default function InspectionSubmissionGate({ status: incomingStatus }) {
 
   if (!active) return null;
 
-  const ready = status.totalUnresolved === 0 && status.officerReviewRecorded;
+  const reviewRecorded = status.totalUnresolved === 0 && status.officerResolvedCount === status.totalUnresolved;
+  const ready = reviewRecorded;
 
   return (
     <section className="scan-review inspection-submission-review officer-review-card" style={{ marginTop: 16 }}>
@@ -67,7 +68,7 @@ export default function InspectionSubmissionGate({ status: incomingStatus }) {
         <div><strong>Violations</strong><span>{status.violations + status.manualViolations}</span></div>
         <div><strong>Out of Scope</strong><span>{status.outOfScope}</span></div>
         <div><strong>Officer decisions recorded</strong><span>{status.officerResolvedCount} / {status.totalUnresolved}</span></div>
-        <div><strong>Officer review</strong><span>{status.officerReviewRecorded ? "Recorded" : "Not recorded"}</span></div>
+        <div><strong>Officer review</strong><span>{reviewRecorded ? "Recorded" : "Not recorded"}</span></div>
       </div>
 
       {!ready && (
