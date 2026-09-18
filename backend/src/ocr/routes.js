@@ -5,7 +5,7 @@ import { authenticate } from "../middleware/auth.js";
 
 const router = express.Router();
 const NON_LEGAL_IDENTIFIER_FIELDS = new Set(["barcode", "gtin", "dataKart", "dataKartReference", "dataKartVerification", "majorityVote", "evidenceConfidence"]);
-const RULES_MIN_CONFIDENCE = 0.30;
+const RULES_MIN_CONFIDENCE = 0;
 
 function fieldSource(fieldName) {
   const map = {
@@ -101,7 +101,10 @@ function sanitizeRulesInput(source) {
     if (NON_LEGAL_IDENTIFIER_FIELDS.has(key)) continue;
     if (!item || typeof item !== "object") continue;
     const confidence = Number(item.confidence || 0);
-    if (item.status !== "found" || confidence < RULES_MIN_CONFIDENCE) {
+    const hasUsableValue = item.value != null && String(item.value).trim() !== "";
+    // A non-empty extracted value remains available to the deterministic rules engine.
+    // Confidence describes extraction certainty; it does not erase evidence.
+    if (!hasUsableValue) {
       clean[key] = { value: null, raw: null, evidence: null, confidence, status: "unverified" };
       continue;
     }
