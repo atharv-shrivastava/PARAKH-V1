@@ -265,7 +265,130 @@ export default function ScanV2() {
     {images.length > 0 && <section className="scan-review"><div className="section-heading"><div><h2>Evidence images</h2><p>Rotate or crop any image before OCR. Edited images are the ones sent to OCR and retained with the registered product.</p></div></div><div className="scan-image-grid">{images.map(({ url, file }, index) => <div className="scan-image-card" key={`${file.name}-${index}`}><img src={url} alt={`Package evidence ${index + 1}`} /><div className="scan-image-card-actions"><button type="button" onClick={() => setEditingImageIndex(index)}>Edit crop / rotate</button><button type="button" onClick={() => remove(index)}>Remove</button></div><span>{file.name}</span></div>)}</div><div className="analyze-action-row"><button type="button" className="primary-button" onClick={analyze} disabled={analyzing}>{analyzing ? "Analyzing..." : "Analyze Images"}</button>{(analyzing || analysisDurationMs != null) && <span className="analysis-timer" aria-live="polite">Analysis time: <strong>{displayedAnalysisTime}</strong></span>}</div></section>}
     {images.length > 0 && <ScanVisualCheck />}
     {providerInfo && <section className="ocr-status-grid"><div><strong>OCR / field mapper</strong><span>{providerInfo.aiSemanticEnabled ? "RapidOCR + Gemini multimodal semantic mapping" : "RapidOCR + local deterministic mapping"}</span></div><div><strong>Text detection</strong><span>{providerInfo.detectionProviders?.length ? providerInfo.detectionProviders.join(" + ") : providerInfo.detectionProvider || "RapidOCR"}</span></div><div><strong>Selected violations</strong><span>{selectedViolations.length}</span></div></section>}
-    {barcodeResult && <section className="scan-review barcode-result-panel"><div className="section-heading"><div><h2>Barcode verification</h2><p>The barcode is decoded independently from OCR. Only a validated scanner/manual GTIN can select a DataKart record. OCR-readable digits are never authoritative and never enter the compliance score.</p></div></div><div className="ocr-status-grid"><div><strong>Barcode data</strong><span>{scannerGtin || "Not decoded"}</span></div><div><strong>Barcode source</strong><span>{barcodeResult.source || "NONE"}</span></div><div><strong>DataKart</strong><span>{datakartLabel(datakartVerification)}</span></div></div><div className="barcode-data-comparison"><h3>Barcode vs extracted data</h3><div className="ocr-status-grid"><div><strong>Scanner GTIN</strong><span>{scannerGtin || "Not available"}</span></div><div><strong>OCR barcode field</strong><span>Not trusted / excluded</span></div><div><strong>Compliance comparison</strong><span>Not scored by design</span></div></div></div>{datakartVerification?.error && datakartVerification.status === "ERROR" && <div className="status-message">DataKart: {datakartVerification.error}</div>}{datakartVerification?.found && <div className="barcode-data-comparison"><h3>Barcode-selected DataKart product vs extracted fields</h3><div className="ocr-fields-grid">{Object.entries(barcodeCompare).map(([key, comparison]) => <div className="ocr-edit-field" key={key}><strong>{fieldLabel(key)}</strong><input value={comparison.rawAiValue ?? ""} readOnly /><small>{comparison.status === "UNKNOWN" ? "? Not scored" : `${comparison.status === "MATCH" ? "✓ MATCH" : "✕ MISMATCH"} · ${Math.round(Number(comparison.verificationConfidence ?? comparison.score ?? 0) * 100)}% verification confidence · reference: ${comparison.referenceValue ?? ""}`}</small></div>)}</div></div>{datakartVerification?.found && datakartVerification.product && <div className="barcode-data-comparison"><div className="section-heading"><div><h3>Complete GTIN registration data</h3><p>Reference data returned for scanner GTIN {datakartVerification.gtin || scannerGtin}. This is reference data only, not package evidence.</p></div><span className="ocr-summary">{Object.keys(datakartVerification.product).length} reference fields</span></div><div className="ocr-fields-grid">{Object.entries(datakartVerification.product).map(([key, value]) => <div className="ocr-edit-field" key={key}><strong>{fieldLabel(key)}</strong>{typeof value === "object" && value !== null ? <pre>{formatReferenceValue(value)}</pre> : <input value={formatReferenceValue(value)} readOnly />}<small>GTIN reference record · not used as compliance evidence</small></div>)}</div></div>}</section>}
+    {barcodeResult && (
+      <section className="scan-review barcode-result-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Barcode verification</h2>
+            <p>
+              The barcode is decoded independently from OCR. Only a validated
+              scanner/manual GTIN can select a DataKart record. OCR-readable
+              digits are never authoritative and never enter the compliance
+              score.
+            </p>
+          </div>
+        </div>
+
+        <div className="ocr-status-grid">
+          <div>
+            <strong>Barcode data</strong>
+            <span>{scannerGtin || "Not decoded"}</span>
+          </div>
+          <div>
+            <strong>Barcode source</strong>
+            <span>{barcodeResult.source || "NONE"}</span>
+          </div>
+          <div>
+            <strong>DataKart</strong>
+            <span>{datakartLabel(datakartVerification)}</span>
+          </div>
+        </div>
+
+        <div className="barcode-data-comparison">
+          <h3>Barcode vs extracted data</h3>
+          <div className="ocr-status-grid">
+            <div>
+              <strong>Scanner GTIN</strong>
+              <span>{scannerGtin || "Not available"}</span>
+            </div>
+            <div>
+              <strong>OCR barcode field</strong>
+              <span>Not trusted / excluded</span>
+            </div>
+            <div>
+              <strong>Compliance comparison</strong>
+              <span>Not scored by design</span>
+            </div>
+          </div>
+        </div>
+
+        {datakartVerification?.error &&
+          datakartVerification.status === "ERROR" && (
+            <div className="status-message">
+              DataKart: {datakartVerification.error}
+            </div>
+          )}
+
+        {datakartVerification?.found && (
+          <div className="barcode-data-comparison">
+            <h3>Barcode-selected DataKart product vs extracted fields</h3>
+            <div className="ocr-fields-grid">
+              {Object.entries(barcodeCompare).map(([key, comparison]) => (
+                <div className="ocr-edit-field" key={key}>
+                  <strong>{fieldLabel(key)}</strong>
+                  <input
+                    value={comparison.rawAiValue ?? ""}
+                    readOnly
+                  />
+                  <small>
+                    {comparison.status === "UNKNOWN"
+                      ? "? Not scored"
+                      : `${comparison.status === "MATCH" ? "✓ MATCH" : "✕ MISMATCH"} · ${Math.round(
+                          Number(
+                            comparison.verificationConfidence ??
+                              comparison.score ??
+                              0
+                          ) * 100
+                        )}% verification confidence · reference: ${comparison.referenceValue ?? ""}`}
+                  </small>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {datakartVerification?.found &&
+          datakartVerification.product && (
+            <div className="barcode-data-comparison">
+              <div className="section-heading">
+                <div>
+                  <h3>Complete GTIN registration data</h3>
+                  <p>
+                    Reference data returned for scanner GTIN{" "}
+                    {datakartVerification.gtin || scannerGtin}. This is
+                    reference data only, not package evidence.
+                  </p>
+                </div>
+                <span className="ocr-summary">
+                  {Object.keys(datakartVerification.product).length} reference
+                  fields
+                </span>
+              </div>
+
+              <div className="ocr-fields-grid">
+                {Object.entries(datakartVerification.product).map(
+                  ([key, value]) => (
+                    <div className="ocr-edit-field" key={key}>
+                      <strong>{fieldLabel(key)}</strong>
+                      {typeof value === "object" && value !== null ? (
+                        <pre>{formatReferenceValue(value)}</pre>
+                      ) : (
+                        <input
+                          value={formatReferenceValue(value)}
+                          readOnly
+                        />
+                      )}
+                      <small>
+                        GTIN reference record · not used as compliance evidence
+                      </small>
+                    </div>
+                  )
+                )}
+              </div>
+            </div>
+          )}
+      </section>
+    )}
     {verificationConfidence && <section className="ocr-status-grid"><div><strong>Verification confidence</strong><span>{verificationConfidence.percentage}% · {verificationConfidence.label}</span></div><div><strong>Evidence weights</strong><span>Extraction 60% · DataKart reference match 40%</span></div><div><strong>Barcode in compliance score</strong><span>Excluded</span></div></section>}
     {aiSuggestedCategory && <section className="ai-category-card"><div className="ai-category-copy"><div className="ai-category-eyebrow">AI SUGGESTED CATEGORY</div><h2>{aiSuggestedCategory.categoryPath || aiSuggestedCategory.categoryName || "Category not determined"}</h2><p>{aiSuggestedCategory.reason || "Suggested from package imagery and OCR evidence."}</p></div><div className="ai-category-meta"><span className="ai-category-confidence">{Math.round(Number(aiSuggestedCategory.confidence || 0) * 100)}% confidence</span><button type="button" className="primary-button" onClick={applyAiCategory} disabled={!aiSuggestedCategory.categoryId}>Use AI Suggestion</button></div></section>}
     {ocr && <section className="scan-review"><div className="section-heading"><div><h2>OCR extraction and rule review</h2><p>Extracted MRP, quantity, dates and other declarations are data. A violation appears only when a legal rule fails or an inspector explicitly records one.</p></div></div><div className="ocr-fields-grid">{Object.entries(ocr).filter(([key, value]) => !NON_COMPLIANCE_FIELDS.has(key) && key !== "rawText" && key !== "semantic" && key !== "aiSemantic" && key !== "aiSuggestedCategory" && value && typeof value === "object" && ["found", "absent", "unreadable", "ambiguous"].includes(value.status)).map(([key, value]) => <label key={key} className="ocr-edit-field"><strong>{fieldLabel(key)}</strong><input value={value.displayValue ?? value.value ?? ""} placeholder={value.status === "found" ? "Review value" : value.status} onChange={(event) => updateOcrField(key, event.target.value)} /><small data-field-confidence>{value.status === "found" ? `${Math.round(Number(value.confidence || 0) * 100)}% confidence` : value.status === "ambiguous" ? "Needs verification" : value.status}</small></label>)}</div>{complianceError && <div className="status-message">Rules Engine: {complianceError.message || complianceError}</div>}{compliance?.summary && <div className="ocr-summary">Rules: {liveComplianceSummary.totalRulesEvaluated} · Passed: {liveComplianceSummary.passed} · Violations: {liveComplianceSummary.violations} · Unable to verify: {liveComplianceSummary.unableToVerify} · Out of scope: {liveComplianceSummary.outOfScope}</div>}{violations.length > 0 && <div className="rule-review-panel"><div className="section-heading"><div><h3>Engine violations</h3><p>Every detected violation is shown as a dropdown. The header gives the engine code/category; open it to see the rule statement and exactly what failed.</p></div></div>{violations.map((finding) => { const details = ruleDetails(finding); return <details className="rule-review-dropdown" key={finding.findingId}><summary><input type="checkbox" checked={acceptedFindingIds.includes(finding.findingId)} onChange={() => toggle(finding.findingId)} onClick={(event) => event.stopPropagation()} /><span><strong>{details.code}</strong><small>Rule {details.number} · {details.title} · {finding.severity || "REVIEW"}</small></span></summary><div className="rule-review-dropdown-body"><p><strong>Rule statement</strong>{details.statement}</p><p><strong>Detected issue</strong>{details.issue}</p><p><strong>Engine category</strong>{details.code} · {details.number}</p></div></details>; })}<div className="ocr-summary">Confirmed engine violations: <strong>{accepted.length + resolvedViolations.length}</strong></div></div>}
