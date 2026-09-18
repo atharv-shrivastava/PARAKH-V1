@@ -263,7 +263,7 @@ function fuseField(key, sources) {
           conflict: false,
           winnerSource: fallback.source,
           candidateSources: [fallback.source],
-          voteSupport: Number(fallback.voteSupport.toFixed(4)),
+          voteSupport: Number(fallback.confidence.toFixed(4)),
           margin: null,
           fallbackUsed: true,
           fallbackOrder: SOURCE_PRIORITY,
