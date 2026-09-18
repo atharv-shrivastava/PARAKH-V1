@@ -215,6 +215,85 @@ function resolveEvidenceForFields(fields, evidence) {
   }));
 }
 
+function dateEvidenceText(field) {
+  return text([
+    field?.evidence,
+    field?.raw,
+    field?.displayValue,
+    field?.value,
+  ].filter(Boolean).join(" "));
+}
+
+function dateHasExplicitLabel(field, type) {
+  const value = dateEvidenceText(field);
+  if (!value) return false;
+
+  const labels = {
+    packing: /\b(?:date\s+of\s+packing|packed\s+(?:on|date)|packing\s+(?:date|dt)|pkd\.?\s*(?:date|dt)?)\b/i,
+    expiry: /\b(?:expiry|expires|exp\.?)\s*(?:date|dt)?\b|\buse\s*by\b/i,
+    bestBefore: /\b(?:best\s*before|use\s*within|shelf\s*life)\b/i,
+    manufacture: /\b(?:date\s+of\s+(?:manufacture|manufacturing)|manufactured\s+(?:on|date)|mfd\.?\s*(?:date|dt)?|mfg\.?\s*(?:date|dt)?)\b/i,
+  };
+
+  return Boolean(labels[type]?.test(value));
+}
+
+function canonicalDateValue(value) {
+  const raw = text(value).replace(/\s+/g, "");
+  if (!raw) return "";
+  const match = raw.match(/\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?|\d{1,2}[\/-]\d{2,4}/);
+  return match ? match[0].replaceAll("-", "/") : raw.toLowerCase();
+}
+
+function repairDateAssignments(fields) {
+  const next = Object.fromEntries(Object.entries(fields || {}).map(([key, field]) => [key, { ...(field || {}) }]));
+  const pairings = [
+    ["dateOfPacking", "expiryDate", "packing", "expiry"],
+    ["dateOfPacking", "bestBefore", "packing", "bestBefore"],
+    ["dateOfManufacture", "expiryDate", "manufacture", "expiry"],
+  ];
+
+  for (const [primaryKey, secondaryKey, primaryType, secondaryType] of pairings) {
+    const primary = next[primaryKey];
+    const secondary = next[secondaryKey];
+    if (primary?.status !== "found" || secondary?.status !== "found") continue;
+    if (!primary.value || !secondary.value) continue;
+    if (canonicalDateValue(primary.value) !== canonicalDateValue(secondary.value)) continue;
+
+    const primaryExplicit = dateHasExplicitLabel(primary, primaryType);
+    const secondaryExplicit = dateHasExplicitLabel(secondary, secondaryType);
+
+    // The same printed date can legitimately serve multiple roles only when
+    // the evidence supports both labels. Never invent an expiry/best-before
+    // assignment from an unlabeled duplicate date.
+    if (primaryExplicit && !secondaryExplicit) {
+      next[secondaryKey] = {
+        ...secondary,
+        value: null,
+        displayValue: "",
+        raw: null,
+        evidence: null,
+        confidence: 0,
+        status: "ambiguous",
+        verification: "duplicate-date-without-explicit-label",
+      };
+    } else if (secondaryExplicit && !primaryExplicit) {
+      next[primaryKey] = {
+        ...primary,
+        value: null,
+        displayValue: "",
+        raw: null,
+        evidence: null,
+        confidence: 0,
+        status: "ambiguous",
+        verification: "duplicate-date-without-explicit-label",
+      };
+    }
+  }
+
+  return next;
+}
+
 function validateFieldFormats(fields) {
   const next = Object.fromEntries(Object.entries(fields || {}).map(([key, field]) => [key, { ...(field || {}) }]));
   const email = text(next.consumerCareEmail?.value), phone = text(next.consumerCarePhone?.value);
@@ -487,7 +566,8 @@ async function analyze(req, res) {
       signal: undefined,
     });
     const validated = validateFieldFormats(semantic.fields);
-    const fields = attachEvidence(validated, rapid.evidence);
+    const dateReconciled = repairDateAssignments(validated);
+    const fields = attachEvidence(dateReconciled, rapid.evidence);
     const submittedBarcode = text(req.body?.barcodeGtin).replace(/\D/g, "");
     if (submittedBarcode) fields.barcode = { value: submittedBarcode, displayValue: submittedBarcode, raw: submittedBarcode, evidence: submittedBarcode, confidence: 1, status: "found", source: "BARCODE_SCAN", verification: "scanner-authoritative" };
     const structured = {
