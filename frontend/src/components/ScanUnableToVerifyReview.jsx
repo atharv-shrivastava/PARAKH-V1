@@ -21,6 +21,44 @@ function clearReviewStorage() {
   } catch {}
 }
 
+function syncComplianceSummaryDom(compliance, unresolvedCount, passCount, failCount) {
+  const summary = compliance?.summary;
+  if (!summary) return;
+
+  const totalRules = Number(summary.totalRulesEvaluated || 0);
+  const basePassed = Number(summary.passed || 0);
+  const baseViolations = Number(summary.violations || 0);
+  const baseUnableToVerify = Number(summary.unableToVerify || 0);
+
+  const remainingUnableToVerify = Math.max(0, baseUnableToVerify - passCount - failCount);
+  const passed = basePassed + passCount;
+  const violations = baseViolations + failCount;
+
+  const summaryElement = Array.from(document.querySelectorAll(".ocr-summary"))
+    .find((element) => /^Rules:\\s*\\d+/i.test(String(element.textContent || "").trim()));
+
+  if (summaryElement) {
+    summaryElement.textContent =
+      `Rules: ${totalRules} · Passed: ${passed} · Violations: ${violations} · Unable to verify: ${remainingUnableToVerify}`;
+  }
+
+  // Keep the registration gate in sync with the same live review state.
+  const reviewCount = document.querySelectorAll(".rule-review-dropdown").length;
+  if (reviewCount > 0) {
+    document.dispatchEvent(new CustomEvent("parakh:unable-review-updated", {
+      detail: {
+        totalRules,
+        passed,
+        violations,
+        unableToVerify: remainingUnableToVerify,
+        unresolvedCount,
+        passCount,
+        failCount,
+      },
+    }));
+  }
+}
+
 function syncRegistrationDom(unresolvedCount, failCount) {
   const button = Array.from(document.querySelectorAll("button[type=submit]"))
     .find((candidate) => /Register Offline Product/i.test(candidate.textContent || ""));
@@ -204,7 +242,8 @@ export default function ScanUnableToVerifyReview() {
 
   useEffect(() => {
     syncRegistrationDom(unresolvedCount, failCount);
-  }, [unresolvedCount, failCount]);
+    syncComplianceSummaryDom(compliance, unresolvedCount, passCount, failCount);
+  }, [compliance, unresolvedCount, passCount, failCount]);
 
   if (!compliance || !unable.length) return null;
 
