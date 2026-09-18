@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 
-const REVIEW_KEY = "parakhOfficerReviewAcknowledged";
-
 const EMPTY_STATUS = {
   unableToVerify: 0,
   passed: 0,
@@ -20,7 +18,6 @@ function readStatus() {
 
 export default function InspectionSubmissionGate() {
   const [status, setStatus] = useState(() => readStatus());
-  const [reviewed, setReviewed] = useState(() => sessionStorage.getItem(REVIEW_KEY) === "true");
   const [message, setMessage] = useState("");
 
   const active = useMemo(() => window.location.pathname.includes("/scan"), []);
@@ -33,14 +30,10 @@ export default function InspectionSubmissionGate() {
       setStatus(next);
       setMessage("");
       if (next.officerReviewRecorded) {
-        sessionStorage.removeItem(REVIEW_KEY);
-        setReviewed(false);
       }
     };
 
     const resetForNewScan = () => {
-      sessionStorage.removeItem(REVIEW_KEY);
-      setReviewed(false);
       setStatus(EMPTY_STATUS);
       setMessage("");
     };
