@@ -343,7 +343,23 @@ router.post("/", async (req, res) => {
     const hasEngineReviewData = Boolean(parsedOcrData?.compliance);
     const finalStatus = hasEngineReviewData ? review.status : (new Set(["OKAY", "VIOLATION", "NEEDS_REVIEW"]).has(complianceStatus) ? complianceStatus : verification.status);
     const reason = hasEngineReviewData ? review.reason : (typeof violationReason === "string" && violationReason.trim() ? violationReason.trim() : verification.reason);
-    const enrichedOcrData = parsedOcrData && typeof parsedOcrData === "object" ? { ...parsedOcrData, complianceReview: { engineViolationCount: review.engineViolations.length, acceptedFindingIds: review.acceptedViolations.map((x) => x.findingId), rejectedFindingIds: review.rejectedViolations.map((x) => x.findingId), reviewedAt: new Date().toISOString() } } : parsedOcrData;
+    const enrichedOcrData = parsedOcrData && typeof parsedOcrData === "object"
+      ? {
+          ...parsedOcrData,
+          complianceReview: {
+            engineViolationCount: review.engineViolations.length,
+            acceptedFindingIds: review.acceptedViolations.map((x) => x.findingId),
+            rejectedFindingIds: review.rejectedViolations.map((x) => x.findingId),
+            officerDecisionMap: review.officerDecisionMap,
+            unresolvedFindingIds: review.unresolvedRemaining.map((x) => x.findingId),
+            resolvedOfficerViolationIds: review.resolvedOfficerViolations.map((x) => x.findingId),
+            resolvedOfficerViolations: review.resolvedOfficerViolations,
+            manualViolations: review.recordedManualViolations,
+            officerDecisionCounts: review.officerDecisionCounts,
+            reviewedAt: new Date().toISOString(),
+          },
+        }
+      : parsedOcrData;
     const inspectedAt = inspectionDate ? new Date(inspectionDate) : new Date(); if (Number.isNaN(inspectedAt.getTime())) return res.status(400).json({ error: "Invalid inspection date" });
     const result = await prisma.$transaction(async (tx) => {
       const product = await tx.product.create({ data: { categoryId, ownerId: req.user.id, brandName: brandName?.trim() || null, productName: productName.trim(), description: description?.trim() || null, ocrData: enrichedOcrData ? JSON.stringify(enrichedOcrData) : null, netQuantity: netQuantity?.trim() || null, unit: unit?.trim() || null, mrp: parsedMrp, barcode: barcode?.trim() || null, imageUrl: imageUrl?.trim() || parsedImages[0] || null, imageUrls: parsedImages, complianceStatus: finalStatus, violationReason: reason, sourceType: normalizedSource, sourceUrl: sourceUrl?.trim() || null, sourceWebsiteName: sourceWebsiteName?.trim() || null } });
