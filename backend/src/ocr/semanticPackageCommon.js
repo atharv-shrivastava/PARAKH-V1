@@ -198,8 +198,9 @@ CATEGORY SUGGESTION
 - Use ONLY one supplied final-category option when it is supported by the visible product identity and commodity type.
 - Never invent a category id or pretend an unavailable category is selectable.
 - Prefer the most specific supplied final category that matches the visible product identity.
-- If no supplied final category is suitable, return categoryId="" with categoryName="" and categoryPath="", confidence=0, and explain briefly in reason.
-- Do not omit suggestedCategory even when the answer is "not determined".
+- If a supplied final category is suitable, return its exact categoryId/categoryName/categoryPath.
+- If no supplied final category is suitable, still return an INFORMATIONAL categoryName/categoryPath inferred from the visible product identity, but set categoryId="" so it cannot be auto-selected for registration. Clearly say in reason that the suggested category is informational because no matching final category is available.
+- Do not omit suggestedCategory even when no selectable category exists.
 
 RESPONSE CONTRACT
 Return EVERY field in FIELD_KEYS as an object.
@@ -275,10 +276,12 @@ export function normalizeSemanticResult(parsed, categoryOptions = []) {
     fields: normalized,
     suggestedCategory: {
       categoryId: allowed ? String(allowed.id) : "",
-      categoryName: allowed ? text(allowed.name) : "",
-      categoryPath: allowed ? text(allowed.path) : "",
-      confidence: allowed ? confidence(suggestion.confidence) : 0,
-      reason: text(suggestion.reason) || (allowed ? "Suggested from visible package identity and supplied final categories." : "No supplied offline final category confidently matched the visible package."),
+      categoryName: allowed ? text(allowed.name) : text(suggestion.categoryName),
+      categoryPath: allowed ? text(allowed.path) : text(suggestion.categoryPath || suggestion.categoryName),
+      confidence: confidence(suggestion.confidence),
+      reason: text(suggestion.reason) || (allowed
+        ? "Suggested from visible package identity and supplied final categories."
+        : "Informational AI category suggestion; no matching selectable final category is currently available."),
     },
   };
 }
