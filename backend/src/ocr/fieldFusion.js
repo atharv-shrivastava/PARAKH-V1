@@ -285,6 +285,34 @@ function fuseField(key, sources) {
 export function fuseFieldSources(sources = [], categoryKeys = FIELD_KEYS) {
   const output = {};
   for (const key of categoryKeys) output[key] = fuseField(key, sources);
+
+  // Keep quantity and unit as separate structured fields in the public result.
+  // This is normalization only; it does not select a source or use confidence.
+  const quantity = text(output.netQuantity?.value || "");
+  const unit = text(output.unit?.value || "");
+  const match = quantity.match(/^([0-9]+(?:[.,][0-9]+)?)\\s*([a-zA-Zµμ%]+)$/);
+  if (match) {
+    const numericValue = match[1].replace(/,/g, "");
+    output.netQuantity = {
+      ...output.netQuantity,
+      value: numericValue,
+      displayValue: numericValue,
+    };
+    if (!unit) {
+      output.unit = {
+        ...(output.unit || {}),
+        value: match[2],
+        displayValue: match[2],
+        raw: output.netQuantity.raw || quantity,
+        evidence: output.netQuantity.evidence || quantity,
+        confidence: output.netQuantity.confidence || 0,
+        status: "found",
+        source: "FIELD_FUSION",
+        verification: output.netQuantity.verification || "quantity-unit-split",
+      };
+    }
+  }
+
   return output;
 }
 
