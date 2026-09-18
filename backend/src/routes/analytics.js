@@ -241,6 +241,31 @@ router.get("/intelligence", async (req, res) => {
       trend.push({ month: key, inspections: monthlyStats.get(key) || 0 });
     }
 
+    const myInspectionWhere = { workerId: req.user.id };
+    const myInspectionsRaw = await prisma.inspection.findMany({
+      where: myInspectionWhere,
+      orderBy: { inspectedAt: "desc" },
+      take: 100,
+      select: {
+        id: true,
+        status: true,
+        isVerified: true,
+        inspectedAt: true,
+        batchNumber: true,
+        shop: { select: { name: true, city: true, state: true } },
+        product: { select: { id: true, productName: true, brandName: true, barcode: true, manufacturerName: true } },
+      },
+    });
+    const myInspections = myInspectionsRaw.map((item) => ({
+      id: item.id,
+      status: item.status,
+      isVerified: item.isVerified,
+      inspectedAt: item.inspectedAt,
+      batchNumber: item.batchNumber,
+      shop: item.shop,
+      product: item.product,
+    }));
+
     res.json({
       filters: { manufacturer, product, gtin, batch, violation, district, state, from, to, verifiedOnly },
       counts: {
@@ -259,6 +284,7 @@ router.get("/intelligence", async (req, res) => {
       affectedBatches: topList(affectedBatchStats, "batch", 15),
       trend,
       inspections: req.user.role === "ADMIN" ? inspections.slice(0, 100) : [],
+      myInspections,
       verifiedInspectionIds: verifiedViolations.map((x) => x.id),
       scope: "STATEWIDE",
     });
