@@ -81,13 +81,19 @@ export async function downloadProductPdf({ product, user, violations = [], penal
   const allFindings = Array.isArray(compliance?.findings) ? compliance.findings : [];
   const acceptedIds = new Set(Array.isArray(review.acceptedFindingIds) ? review.acceptedFindingIds.map(String) : []);
   const rejectedIds = new Set(Array.isArray(review.rejectedFindingIds) ? review.rejectedFindingIds.map(String) : []);
-  const unableDecisions = review.unableToVerifyDecisions && typeof review.unableToVerifyDecisions === "object" ? review.unableToVerifyDecisions : {};
+  const officerDecisionMap =
+    review.officerDecisionMap && typeof review.officerDecisionMap === "object"
+      ? review.officerDecisionMap
+      : review.unableToVerifyDecisions && typeof review.unableToVerifyDecisions === "object"
+        ? review.unableToVerifyDecisions
+        : {};
   const officerDecision = (finding) => {
     const id = String(finding?.findingId || "");
     if (acceptedIds.has(id)) return "ACCEPTED";
     if (rejectedIds.has(id)) return "NOT ACCEPTED";
-    if (String(finding?.status || "").toUpperCase() === "UNABLE_TO_VERIFY") return String(unableDecisions[id] || "PENDING").toUpperCase();
-    return "NOT REVIEWED";
+    const rawDecision = officerDecisionMap[id]?.decision ?? officerDecisionMap[id];
+    if (rawDecision) return String(rawDecision).replace(/_/g, " ").toUpperCase();
+    return String(finding?.status || "").toUpperCase() === "UNABLE_TO_VERIFY" ? "PENDING" : "NOT REVIEWED";
   };
   const path = [
     product?.category?.parent?.parent?.parent,
@@ -164,7 +170,18 @@ export async function downloadProductPdf({ product, user, violations = [], penal
   doc.setTextColor(71, 85, 105);
   doc.text(`Engine findings recorded: ${allFindings.length}`, left, y + 8);
   doc.text(`Review timestamp: ${safe(review.reviewedAt || "Not recorded")}`, 305, y + 8);
-  y += 24;
+  const decisionCounts = review.officerDecisionCounts && typeof review.officerDecisionCounts === "object"
+    ? review.officerDecisionCounts
+    : {};
+  drawField(doc, "Officer Passed", decisionCounts.passed ?? compliance?.summary?.passed ?? 0, left, y, 160);
+  drawField(doc, "Officer Violations", Number(decisionCounts.violations || 0) + (Array.isArray(review.manualViolations) ? review.manualViolations.length : 0), 210, y, 160);
+  drawField(doc, "Not Applicable", decisionCounts.notApplicable ?? compliance?.summary?.notApplicable ?? 0, 380, y, 160);
+  y += 48;
+  drawField(doc, "Unable to Verify", decisionCounts.unresolved ?? compliance?.summary?.unableToVerify ?? 0, left, y, 160);
+  drawField(doc, "Out of Scope", decisionCounts.outOfScope ?? compliance?.summary?.outOfScope ?? 0, 210, y, 160);
+  drawField(doc, "Decisions Recorded", decisionCounts.recorded ?? 0, 380, y, 160);
+  y += 48;
+  if (y > 765) { doc.addPage(); y = 55; }
   if (!allFindings.length) {
     doc.text("No engine findings were retained for officer review.", left, y + 8);
     y += 24;
@@ -183,6 +200,20 @@ export async function downloadProductPdf({ product, user, violations = [], penal
       doc.setTextColor(30, 41, 59);
       doc.text(lines, left + 10, y + 14);
       y += boxHeight + 7;
+    });
+  }
+  const manualViolations = Array.isArray(review.manualViolations) ? review.manualViolations : [];
+  if (manualViolations.length) {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(30, 41, 59);
+    doc.text("Officer-added violations", left, y + 4);
+    y += 18;
+    manualViolations.forEach((finding) => {
+      if (y > 770) { doc.addPage(); y = 55; }
+      const text = `${finding.ruleNumber || finding.ruleCode || "Manual rule"} · VIOLATION · ${finding.message || finding.violationReason || "Officer-recorded violation"}`;
+      const lines = doc.splitTextToSize(text, 500);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(127, 29, 29);
+      doc.text(lines, left, y);
+      y += Math.max(15, lines.length * 11 + 4);
     });
   }
   const manualDecisions = Array.isArray(review.manualDecisions) ? review.manualDecisions : [];
