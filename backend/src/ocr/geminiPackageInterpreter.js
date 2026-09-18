@@ -5,115 +5,63 @@ import {
   normalizeSemanticResult,
   parseJsonContent,
 } from "./semanticPackageCommon.js";
-import { interpretOcrFields } from "./ocrFieldInterpreter.js";
-import { repairNumericFields } from "./numericFieldRepair.js";
 import { preprocessImagesForAI } from "./imagePreprocessor.js";
 
-const OCR_PRIORITY_FIELDS = new Set([
-  "mrp",
-  "netQuantity",
-  "unit",
-  "dateOfManufacture",
-  "dateOfPacking",
-  "bestBefore",
-  "expiryDate",
-  "batchNumber",
-  "consumerCarePhone",
-  "consumerCareEmail",
-  "fssaiLicenseNumber",
-  "barcode",
-]);
+function buildGeminiPrompt({ mode, detections, rawText, categoryOptions }) {
+  const imageOnly = mode === "image";
+  const basePrompt = buildSemanticPrompt({
+    detections: imageOnly ? [] : detections,
+    rawText: imageOnly ? "" : rawText,
+    categoryOptions,
+  });
 
-function hasValue(field) {
-  return field?.status === "found" && String(field?.value ?? "").trim() !== "";
+  if (imageOnly) {
+    return basePrompt + "\n\nEXTRACTION MODE: INDEPENDENT IMAGE-ONLY EXTRACTION" +
+      "\n- This is an independent visual extraction pass." +
+      "\n- The only package evidence available to you is the original image set above." +
+      "\n- Do NOT rely on regex output, deterministic parser output, DataKart, listing metadata, product catalog knowledge, or inferred product records." +
+      "\n- Read every declaration directly from the package image." +
+      "\n- Because no RapidOCR geometry was supplied in this pass, set imageIndex=-1 and evidenceIndex=-1 for every field." +
+      "\n- A field that cannot be read from the image must be absent, unreadable, or ambiguous rather than guessed.";
+  }
+
+  return basePrompt + "\n\nEXTRACTION MODE: RAPIDOCR NORMALIZATION WITH VISUAL RECHECK" +
+    "\n- The original package images remain the primary source." +
+    "\n- RapidOCR text and bounding boxes supplied above are raw OCR evidence only." +
+    "\n- Re-read the corresponding image regions and normalize/correct the raw OCR text when the image supports a correction." +
+    "\n- Do NOT use or request regex-extracted candidate fields. There are none in this pass." +
+    "\n- Do NOT invent missing declarations from product knowledge, external listings, DataKart, or statutory expectations." +
+    "\n- Preserve evidenceIndex as the index of the actual RapidOCR detection containing the value. Use -1 when no trustworthy OCR detection matches the normalized value.";
 }
 
-function normalizeText(value) {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function buildNormalizedOcrCandidates(detections, rawText) {
-  const deterministic = repairNumericFields(
-    interpretOcrFields({ detections, rawText })?.fields || {},
-    detections,
-    rawText,
-  );
-  return Object.fromEntries(Object.entries(deterministic || {}).map(([key, field]) => [key, {
-    value: normalizeText(field?.value),
-    raw: normalizeText(field?.raw),
-    evidence: normalizeText(field?.evidence),
-    status: field?.status || "absent",
-    confidence: Number(field?.confidence || 0),
-    imageIndex: Number.isInteger(field?.imageIndex) ? field.imageIndex : -1,
-    evidenceIndex: Number.isInteger(field?.evidenceIndex) ? field.evidenceIndex : -1,
+function normalizeImageOnlyFields(fields) {
+  return Object.fromEntries(Object.entries(fields || {}).map(([key, field]) => [key, {
+    ...(field || {}),
+    imageIndex: -1,
+    evidenceIndex: -1,
   }]));
 }
 
-function mergeDeterministicEvidence(geminiFields, detections, rawText) {
-  const deterministic = repairNumericFields(interpretOcrFields({ detections, rawText })?.fields || {}, detections, rawText);
-  const merged = {};
-
-  for (const [key, geminiField] of Object.entries(geminiFields || {})) {
-    const localField = deterministic[key];
-    const aiFound = hasValue(geminiField);
-    const localFound = hasValue(localField);
-
-    if (!localFound) {
-      merged[key] = geminiField;
-      continue;
-    }
-
-    if (!aiFound) {
-      merged[key] = {
-        ...localField,
-        displayValue: geminiField?.displayValue || localField?.value || "",
-        verification: "deterministic-ocr-fallback",
-        source: "GEMINI_SEMANTIC_PLUS_LOCAL_OCR",
-      };
-      continue;
-    }
-
-    const localHasGeometry = Boolean(localField?.evidence?.length && localField?.evidence?.some?.((item) => item?.boundingBox));
-    const localConfidence = Number(localField?.confidence || 0);
-    const aiConfidence = Number(geminiField?.confidence || 0);
-
-    if (OCR_PRIORITY_FIELDS.has(key) && localHasGeometry && localConfidence >= aiConfidence) {
-      merged[key] = {
-        ...localField,
-        displayValue: geminiField?.displayValue || localField?.value || "",
-        verification: "deterministic-ocr-priority",
-        source: "GEMINI_SEMANTIC_PLUS_LOCAL_OCR",
-      };
-      continue;
-    }
-
-    merged[key] = {
-      ...geminiField,
-      displayValue: geminiField?.displayValue || geminiField?.value || localField?.value || "",
-      raw: geminiField?.raw || localField?.raw || null,
-      evidence: geminiField?.evidence || localField?.raw || localField?.evidence?.[0]?.text || null,
-      imageIndex: Number.isInteger(geminiField?.imageIndex) ? geminiField.imageIndex : localField?.imageIndex,
-      evidenceIndex: Number.isInteger(geminiField?.evidenceIndex) ? geminiField.evidenceIndex : localField?.evidenceIndex,
-      verification: "semantic-confirmed-by-local-ocr",
-      source: "GEMINI_SEMANTIC_PLUS_LOCAL_OCR",
-    };
-  }
-
-  return merged;
-}
-
-export async function interpretPackageWithGemini({ images = [], detections = [], rawText = "", categoryOptions = [], signal } = {}) {
+export async function interpretPackageWithGemini({
+  images = [],
+  detections = [],
+  rawText = "",
+  categoryOptions = [],
+  signal,
+  mode = "image",
+} = {}) {
   const apiKey = process.env.GEMINI_API_KEY || process.env.OCR_AI_API_KEY || "";
   const model = process.env.GEMINI_SEMANTIC_MODEL || "gemini-3.7-flash";
   const useResponseSchema = String(process.env.GEMINI_USE_RESPONSE_SCHEMA || "false").toLowerCase() === "true";
+  const sourceKind = mode === "image" ? "gemini_image" : "gemini_ocr_normalization";
+
   if (!apiKey) {
-    console.warn(`[ocr:gemini-semantic] SKIPPED model=${model} reason=GEMINI_API_KEY is not configured.`);
-    return { enabled: false, provider: "gemini", model, reason: "GEMINI_API_KEY is not configured." };
+    console.warn("[ocr:gemini-semantic] SKIPPED model=" + model + " mode=" + mode + " reason=GEMINI_API_KEY is not configured.");
+    return { enabled: false, provider: "gemini", model, mode, sourceKind, reason: "GEMINI_API_KEY is not configured." };
   }
 
   const ai = new GoogleGenAI({ apiKey });
-  const regexCandidates = buildNormalizedOcrCandidates(detections, rawText);
-  const prompt = `${buildSemanticPrompt({ detections, rawText, categoryOptions })}\n\nREGEX-NORMALIZED OCR CANDIDATES\nThese are deterministic, format-checked candidate fields derived from the supplied OCR text. They are evidence hints only. Recheck them against the package image and return the normalized value only when the image supports it.\n${JSON.stringify(regexCandidates)}`;
+  const prompt = buildGeminiPrompt({ mode, detections, rawText, categoryOptions });
   const preparedImages = await preprocessImagesForAI(images);
   const contents = [
     ...preparedImages.map(({ base64, mediaType }) => ({ inlineData: { mimeType: mediaType, data: base64 } })),
@@ -135,26 +83,46 @@ export async function interpretPackageWithGemini({ images = [], detections = [],
   try {
     if (signal?.aborted) throw new DOMException("The request was aborted.", "AbortError");
 
-    console.log(`[ocr:gemini-semantic] START model=${model} preparedImages=${preparedImages.length} regexCandidates=${Object.keys(regexCandidates).length}`);
     const startedAt = Date.now();
+    console.log("[ocr:gemini-semantic] START model=" + model + " mode=" + mode + " preparedImages=" + preparedImages.length + " rawOcrProvided=" + Boolean(rawText || detections.length));
     const response = await request();
     const elapsedMs = Date.now() - startedAt;
-    console.log(`[ocr:gemini-semantic] DONE model=${model} elapsed=${elapsedMs}ms`);
+    console.log("[ocr:gemini-semantic] DONE model=" + model + " mode=" + mode + " elapsed=" + elapsedMs + "ms");
 
     const parsed = parseJsonContent(response.text || "", { recoverTruncated: true });
     const normalized = normalizeSemanticResult(parsed, categoryOptions);
-    const mergedFields = mergeDeterministicEvidence(normalized.fields, detections, rawText);
+    const fields = mode === "image" ? normalizeImageOnlyFields(normalized.fields) : normalized.fields;
     const packageAssessment = parsed?.packageAssessment && typeof parsed.packageAssessment === "object"
       ? {
-          status: ["single_package", "multiple_packages", "uncertain"].includes(String(parsed.packageAssessment.status)) ? String(parsed.packageAssessment.status) : "uncertain",
+          status: ["single_package", "multiple_packages", "uncertain"].includes(String(parsed.packageAssessment.status))
+            ? String(parsed.packageAssessment.status)
+            : "uncertain",
           confidence: Math.max(0, Math.min(1, Number(parsed.packageAssessment.confidence) || 0)),
           evidence: String(parsed.packageAssessment.evidence || "").trim(),
         }
       : { status: "uncertain", confidence: 0, evidence: "Model did not return packageAssessment." };
-    return { enabled: true, provider: "gemini", model, fields: mergedFields, suggestedCategory: normalized.suggestedCategory, packageAssessment, timingMs: elapsedMs };
+
+    return {
+      enabled: true,
+      provider: "gemini",
+      model,
+      mode,
+      sourceKind,
+      fields,
+      suggestedCategory: normalized.suggestedCategory,
+      packageAssessment,
+      timingMs: elapsedMs,
+    };
   } catch (error) {
     if (error?.name === "AbortError") throw error;
-    console.error(`[ocr:gemini-semantic] FAILED model=${model} status=${error?.status ?? "unknown"} reason=${error?.message || "Gemini semantic interpretation failed."}`, error);
-    return { enabled: false, provider: "gemini", model, reason: error?.message || "Gemini semantic interpretation failed." };
+    console.error("[ocr:gemini-semantic] FAILED model=" + model + " mode=" + mode + " status=" + (error?.status ?? "unknown") + " reason=" + (error?.message || "Gemini semantic interpretation failed."), error);
+    return {
+      enabled: false,
+      provider: "gemini",
+      model,
+      mode,
+      sourceKind,
+      reason: error?.message || "Gemini semantic interpretation failed.",
+    };
   }
 }
