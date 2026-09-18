@@ -332,3 +332,91 @@
     width: 100%;
   }
 }
+
+
+.ecommerce-page .ecommerce-compliance-summary{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:10px;
+  margin:0 0 14px;
+}
+.ecommerce-page .ecommerce-compliance-summary>div{
+  padding:13px 14px;
+  border:1px solid var(--theme-border,#e5e7eb);
+  border-radius:11px;
+  background:var(--theme-soft,#f8fafc);
+}
+.ecommerce-page .ecommerce-compliance-summary span,
+.ecommerce-page .ecommerce-compliance-summary strong{
+  display:block;
+}
+.ecommerce-page .ecommerce-compliance-summary span{
+  color:var(--theme-muted,#667085);
+  font-size:11px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+}
+.ecommerce-page .ecommerce-compliance-summary strong{
+  margin-top:5px;
+  font-size:24px;
+  line-height:1;
+  color:var(--theme-text,#111827);
+}
+.ecommerce-page .ecommerce-compliance-summary .violation{
+  border-color:#fecaca;
+  background:#fff7f7;
+}
+.ecommerce-page .ecommerce-compliance-summary .unable{
+  border-color:#fde68a;
+  background:#fffbeb;
+}
+.ecommerce-page .ecommerce-compliance-summary .pass{
+  border-color:#bbf7d0;
+  background:#f0fdf4;
+}
+.ecommerce-page .rule-review-dropdown summary{
+  gap:10px;
+}
+.ecommerce-page .rule-review-dropdown summary>span{
+  flex:0 0 auto;
+  font-weight:800;
+}
+.ecommerce-page .rule-review-dropdown summary>strong{
+  flex:0 0 auto;
+  font-size:11px;
+  letter-spacing:.05em;
+}
+.ecommerce-page .rule-review-dropdown summary>em{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  margin-left:auto;
+  color:var(--theme-muted,#667085);
+  font-style:normal;
+  font-weight:600;
+}
+.ecommerce-page .ecommerce-status-violation{
+  border-left:4px solid #dc2626;
+}
+.ecommerce-page .ecommerce-status-unable_to_verify{
+  border-left:4px solid #d97706;
+}
+.ecommerce-page .ecommerce-status-pass{
+  border-left:4px solid #16a34a;
+}
+.ecommerce-page .ecommerce-empty-state{
+  padding:16px;
+  border:1px dashed var(--theme-border,#d1d5db);
+  border-radius:11px;
+  color:var(--theme-muted,#667085);
+  background:var(--theme-soft,#f8fafc);
+}
+@media(max-width:850px){
+  .ecommerce-page .ecommerce-compliance-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:560px){
+  .ecommerce-page .ecommerce-compliance-summary{grid-template-columns:1fr 1fr}
+  .ecommerce-page .rule-review-dropdown summary>em{display:none}
+}
