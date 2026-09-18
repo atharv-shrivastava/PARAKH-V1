@@ -365,49 +365,79 @@ function buildPackageConsistency(providers) {
       };
 }
 
-async function runSemanticFusion({ images, rapid, categoryOptions, signal, imageProviders, imageSemanticTimingMs }) {
+async function runSemanticFusion({ images, rapid, categoryOptions, signal }) {
   const startedAt = Date.now();
-  const geminiNormalizationStartedAt = Date.now();
-  let geminiNormalization;
 
-  try {
-    geminiNormalization = await interpretPackageWithGemini({
-      images,
-      detections: rapid.evidence,
-      rawText: rapid.rawText,
-      categoryOptions,
-      signal,
-      mode: "ocr_normalization",
-    });
-  } catch (error) {
-    geminiNormalization = {
-      enabled: false,
-      provider: "gemini",
-      model: null,
-      mode: "ocr_normalization",
-      sourceKind: "gemini_ocr_normalization",
-      reason: error?.message || "Gemini OCR normalization failed.",
-    };
-  }
+  // After RapidOCR returns, run all independent post-OCR operations together:
+  // 1) Gemini reads the original images on its own.
+  // 2) Gemini normalizes the RAW RapidOCR text/detections using the images.
+  // 3) Regex/deterministic extraction runs directly on the RAW RapidOCR output.
+  //
+  // Crucially, Gemini's normalization input never contains regex-extracted fields.
+  const imageSemanticPromise = runSemanticImageProviders({
+    images,
+    categoryOptions,
+    signal,
+  });
 
-  geminiNormalization = {
-    ...geminiNormalization,
-    timingMs: geminiNormalization?.timingMs ?? Date.now() - geminiNormalizationStartedAt,
-    sourceKind: geminiNormalization?.sourceKind || "gemini_ocr_normalization",
-  };
+  const geminiNormalizationPromise = (async () => {
+    const normalizationStartedAt = Date.now();
+    try {
+      const result = await interpretPackageWithGemini({
+        images,
+        detections: rapid.evidence,
+        rawText: rapid.rawText,
+        categoryOptions,
+        signal,
+        mode: "ocr_normalization",
+      });
+      return {
+        ...result,
+        timingMs: result?.timingMs ?? Date.now() - normalizationStartedAt,
+        sourceKind: result?.sourceKind || "gemini_ocr_normalization",
+      };
+    } catch (error) {
+      return {
+        enabled: false,
+        provider: "gemini",
+        model: null,
+        mode: "ocr_normalization",
+        sourceKind: "gemini_ocr_normalization",
+        reason: error?.message || "Gemini OCR normalization failed.",
+        timingMs: Date.now() - normalizationStartedAt,
+      };
+    }
+  })();
 
-  const deterministic = runDeterministicExtraction(rapid);
-  const sources = [...imageProviders, geminiNormalization, deterministic];
+  const deterministicPromise = Promise.resolve().then(() => runDeterministicExtraction(rapid));
+
+  const [imageSemantic, geminiNormalization, deterministic] = await Promise.all([
+    imageSemanticPromise,
+    geminiNormalizationPromise,
+    deterministicPromise,
+  ]);
+
+  const imageProviders = imageSemantic.providers || [];
+
+  // Field fusion is intentionally a three-source vote:
+  // Gemini image extraction + Gemini raw-OCR normalization + regex/raw-OCR.
+  // Grok remains available for package-level semantic cross-checking, but it
+  // is not allowed to override this three-source declaration field vote.
+  const fusionSources = [
+    imageProviders.find((source) => source?.sourceKind === "gemini_image"),
+    geminiNormalization,
+    deterministic,
+  ].filter(Boolean);
+
   const imageConsensus = reconcileSemanticResults(imageProviders, categoryOptions);
-  const fusedFields = fuseFieldSources(sources);
+  const fusedFields = fuseFieldSources(fusionSources);
 
-  const enabledAiProviders = sources
-    .filter((source) => source?.enabled && source?.sourceKind !== "deterministic_regex")
+  const enabledAiProviders = [...imageProviders, geminiNormalization]
+    .filter((source) => source?.enabled)
     .map((source) => String(source.provider || "unknown"));
   const providerCount = new Set(enabledAiProviders).size;
 
-  const providers = sources
-    .filter((source) => source?.sourceKind !== "deterministic_regex")
+  const providers = [...imageProviders, geminiNormalization]
     .map((source) => ({
       provider: source?.provider || "unknown",
       model: source?.model || null,
@@ -432,12 +462,11 @@ async function runSemanticFusion({ images, rapid, categoryOptions, signal, image
       grokImageMs: imageProviders.find((item) => item.sourceKind === "grok_image")?.timingMs || 0,
       geminiOcrNormalizationMs: geminiNormalization.timingMs || 0,
       deterministicRegexMs: deterministic.timingMs || 0,
-      imageParallelMs: imageSemanticTimingMs,
+      postRapidParallelMs: imageSemantic.timingMs || 0,
       postRapidMs,
     },
   };
 }
-
 async function analyze(req, res) {
   const startedAt = Date.now();
   const packageFiles = Array.isArray(req.files?.images) ? req.files.images : [];
@@ -448,16 +477,14 @@ async function analyze(req, res) {
     const images = await readImages(packageFiles);
     let categoryOptions = [];
     try { categoryOptions = JSON.parse(req.body?.categoryOptions || "[]"); if (!Array.isArray(categoryOptions)) categoryOptions = []; } catch { categoryOptions = []; }
-    const imageSemanticPromise = runSemanticImageProviders({ images, categoryOptions, signal: undefined });
-    const rapidPromise = runRapid(images);
-    const [rapid, imageSemantic] = await Promise.all([rapidPromise, imageSemanticPromise]);
+    // RapidOCR is the gate for the semantic stage. We do not invoke Gemini
+    // until the raw OCR payload is available.
+    const rapid = await runRapid(images);
     const semantic = await runSemanticFusion({
       images,
       rapid,
       categoryOptions,
       signal: undefined,
-      imageProviders: imageSemantic.providers,
-      imageSemanticTimingMs: imageSemantic.timingMs,
     });
     const validated = validateFieldFormats(semantic.fields);
     const fields = attachEvidence(validated, rapid.evidence);
@@ -482,7 +509,7 @@ async function analyze(req, res) {
       "[ocr:fast] images=" + packageFiles.length +
       " evidence=" + rapid.evidence.length +
       " rapid=" + rapid.timingMs + "ms" +
-      " imageSemanticParallel=" + (semantic.timing?.imageParallelMs || 0) + "ms" +
+      " postOcrParallel=" + (semantic.timing?.postRapidParallelMs || 0) + "ms" +
       " geminiImage=" + (semantic.timing?.geminiImageMs || 0) + "ms" +
       " grokImage=" + (semantic.timing?.grokImageMs || 0) + "ms" +
       " geminiOcrNormalization=" + (semantic.timing?.geminiOcrNormalizationMs || 0) + "ms" +
@@ -490,7 +517,8 @@ async function analyze(req, res) {
       " providers=" + semantic.providerCount +
       " package=" + (semantic.packageConsistency?.status || "uncertain") +
       " total=" + totalMs + "ms" +
-      " imageRapidParallel=true"
+      " rapidFirst=true" +
+      " postOcrParallel=true"
     );
     return res.json({
       result: finalResult,
@@ -513,14 +541,14 @@ async function analyze(req, res) {
       timing: {
         uploadMs: 0,
         rapidMs: rapid.timingMs,
-        imageSemanticMs: semantic.timing?.imageParallelMs || 0,
+        imageSemanticMs: semantic.timing?.postRapidParallelMs || 0,
         geminiImageMs: semantic.timing?.geminiImageMs || 0,
         grokImageMs: semantic.timing?.grokImageMs || 0,
         geminiOcrNormalizationMs: semantic.timing?.geminiOcrNormalizationMs || 0,
         deterministicRegexMs: semantic.timing?.deterministicRegexMs || 0,
         semanticMs: semantic.timing?.postRapidMs || semantic.timingMs,
         totalMs,
-        parallelMs: Math.max(rapid.timingMs, semantic.timing?.imageParallelMs || 0) + (semantic.timing?.postRapidMs || 0),
+        parallelMs: rapid.timingMs + (semantic.timing?.postRapidMs || 0),
       },
     });
   } catch (error) {

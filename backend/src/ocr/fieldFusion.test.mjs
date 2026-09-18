@@ -21,7 +21,7 @@ function source(sourceKind, value, confidenceValue, provider, extra = {}) {
   };
 }
 
-test("agreed independent sources increase confidence and preserve provenance", () => {
+test("three independent sources agreeing on a field increase confidence", () => {
   const result = fuseFieldSources([
     source("gemini_image", "₹120", 0.86, "gemini"),
     source("gemini_ocr_normalization", "120", 0.84, "gemini"),
@@ -32,10 +32,11 @@ test("agreed independent sources increase confidence and preserve provenance", (
   assert.equal(result.value, "₹120");
   assert.equal(result.fusion.agreementCount, 3);
   assert.equal(result.verification, "agreement-3-sources");
+  assert.equal(result.fusion.candidateSources.length, 3);
   assert.ok(result.confidence > 0.86);
 });
 
-test("strong semantic evidence is not overwritten by regex disagreement", () => {
+test("strong Gemini data wins when regex disagrees", () => {
   const result = fuseFieldSources([
     source("gemini_image", "₹120", 0.91, "gemini"),
     source("gemini_ocr_normalization", "₹120", 0.88, "gemini"),
@@ -44,10 +45,43 @@ test("strong semantic evidence is not overwritten by regex disagreement", () => 
 
   assert.equal(result.status, "found");
   assert.equal(result.value, "₹120");
-  assert.deepEqual(result.fusion.candidateSources.sort(), ["gemini-image", "gemini-ocr-normalization"]);
+  assert.equal(result.verification, "agreement-2-sources");
+  assert.deepEqual(
+    result.fusion.candidateSources.sort(),
+    ["gemini-image", "gemini-ocr-normalization"],
+  );
 });
 
-test("close conflicting evidence is marked ambiguous", () => {
+test("Gemini OCR normalization fills a missing field before regex", () => {
+  const result = fuseFieldSources([
+    source("gemini_ocr_normalization", "₹150", 0.72, "gemini"),
+  ]).mrp;
+
+  assert.equal(result.status, "found");
+  assert.equal(result.value, "₹150");
+  assert.equal(result.verification, "fallback-priority");
+  assert.equal(result.fusion.fallbackUsed, true);
+  assert.deepEqual(result.fusion.fallbackOrder, [
+    "gemini_image",
+    "gemini_ocr_normalization",
+    "deterministic_regex",
+  ]);
+});
+
+test("regex is the last fallback when Gemini sources have no field value", () => {
+  const result = fuseFieldSources([
+    source("gemini_image", null, 0, "gemini", { status: "absent" }),
+    source("gemini_ocr_normalization", null, 0, "gemini", { status: "absent" }),
+    source("deterministic_regex", "MRP ₹180", 0.70, "regex/raw-ocr"),
+  ]).mrp;
+
+  assert.equal(result.status, "found");
+  assert.equal(result.value, "MRP ₹180");
+  assert.equal(result.verification, "fallback-priority");
+  assert.equal(result.fusion.winnerSource, "regex/raw-ocr");
+});
+
+test("close conflicting sources remain ambiguous", () => {
   const result = fuseFieldSources([
     source("gemini_image", "₹120", 0.72, "gemini"),
     source("deterministic_regex", "₹180", 0.88, "regex/raw-ocr"),
