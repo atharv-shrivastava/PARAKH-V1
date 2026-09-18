@@ -185,10 +185,10 @@ Use these as evidence-confidence anchors, not mathematical probabilities:
 Do not assign high confidence simply because two fields look semantically related.
 
 MULTILINGUAL DISPLAY RULES
-- `value` is the canonical value used by downstream systems.
-- `displayValue` is the human-readable value for the selected display language.
+- \`value\` is the canonical value used by downstream systems.
+- \`displayValue\` is the human-readable value for the selected display language.
 - Preserve legal names, addresses, phone numbers, emails, GTIN/barcodes, license IDs, batch codes, dates, MRP and quantity numerics exactly.
-- For productName and brandName, when the USER DISPLAY LANGUAGE is English and the printed text is in Devanagari or another Indian script, provide a faithful English transliteration in `value` and `displayValue` when the identity is clear. Preserve the exact printed script in `raw` and `evidence`.
+- For productName and brandName, when the USER DISPLAY LANGUAGE is English and the printed text is in Devanagari or another Indian script, provide a faithful English transliteration in \`value\` and \`displayValue\` when the identity is clear. Preserve the exact printed script in \`raw\` and \`evidence\`.
 - Do not invent an English translation that changes the product identity. Transliteration is preferred over semantic translation for names.
 - For generic commodity descriptions, use English when the target language is English.
 - When target language is English, avoid returning Hindi/Devanagari script in productName or brandName unless the exact script is essential to the legal identity.
