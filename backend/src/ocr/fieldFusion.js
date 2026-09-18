@@ -1,15 +1,12 @@
 import { FIELD_KEYS, confidence, text } from "./semanticPackageCommon.js";
 
 const SOURCE_WEIGHTS = {
-  gemini_image: 1,
-  gemini_ocr_normalization: 0.9,
-  deterministic_regex: 0.8,
-  grok_image: 0.7,
+  gemini_image: 1.0,
+  deterministic_regex: 0.75,
 };
 
 const SOURCE_PRIORITY = [
   "gemini_image",
-  "gemini_ocr_normalization",
   "deterministic_regex",
 ];
 
@@ -18,6 +15,9 @@ const PHONE_FIELDS = new Set(["consumerCarePhone"]);
 const DIGIT_FIELDS = new Set(["fssaiLicenseNumber", "barcode"]);
 const CURRENCY_FIELDS = new Set(["mrp"]);
 const QUANTITY_FIELDS = new Set(["netQuantity"]);
+
+const GEMINI_MIN_CONFLICT_CONFIDENCE = 0.70;
+const AGREEMENT_BOOST = 0.08;
 
 function normalizeWhitespace(value) {
   return text(value).normalize("NFKC").replace(/\s+/g, " ").trim();
@@ -63,16 +63,9 @@ function sourceWeight(source) {
   return Number(SOURCE_WEIGHTS[source?.sourceKind] ?? 0.5);
 }
 
-function sourceRank(sourceKind) {
-  const index = SOURCE_PRIORITY.indexOf(sourceKind);
-  return index === -1 ? SOURCE_PRIORITY.length : index;
-}
-
 function sourceLabel(source) {
   if (source?.sourceId) return source.sourceId;
   if (source?.sourceKind === "gemini_image") return "gemini-image";
-  if (source?.sourceKind === "gemini_ocr_normalization") return "gemini-ocr-normalization";
-  if (source?.sourceKind === "grok_image") return "grok-image";
   if (source?.sourceKind === "deterministic_regex") return "regex/raw-ocr";
   return source?.provider || "unknown";
 }
@@ -100,23 +93,23 @@ function statusWhenEmpty(fields) {
   return "absent";
 }
 
-function pickFallbackObservation(observations) {
-  for (const sourceKind of SOURCE_PRIORITY) {
-    const candidate = observations
-      .filter((item) => item.sourceKind === sourceKind && item.normalizedValue && item.status === "found")
-      .sort((a, b) => b.confidence - a.confidence)[0];
-    if (candidate) return candidate;
-  }
-  return null;
+function findSourceField(sources, key, normalizedValue) {
+  const source = sources.find(
+    (item) =>
+      item?.enabled &&
+      item?.fields?.[key] &&
+      canonicalValue(key, item.fields[key].value) === normalizedValue,
+  );
+  return source?.fields?.[key] || null;
 }
 
-function buildFoundResult(winningField, winner, verification, fusion) {
+function buildFoundResult(field, winner, verification, fusion) {
   return {
-    ...(winningField || {}),
+    ...(field || {}),
     value: winner.value,
-    displayValue: winningField?.displayValue || winner.value,
-    raw: winningField?.raw ?? winner.value,
-    evidence: winningField?.evidence ?? winner.evidence ?? winner.value,
+    displayValue: field?.displayValue || winner.value,
+    raw: field?.raw ?? winner.value,
+    evidence: field?.evidence ?? winner.evidence ?? winner.value,
     confidence: Number(Math.min(0.99, Math.max(0, winner.confidence)).toFixed(3)),
     status: "found",
     source: "FIELD_FUSION",
@@ -134,7 +127,6 @@ function fuseField(key, sources) {
 
   const found = observations.filter((item) => item.normalizedValue && item.status === "found");
 
-  // Nothing usable from any source: the field stays empty.
   if (!found.length) {
     return {
       value: null,
@@ -155,154 +147,133 @@ function fuseField(key, sources) {
     };
   }
 
-  const groups = new Map();
-  for (const observation of found) {
-    if (!groups.has(observation.normalizedValue)) groups.set(observation.normalizedValue, []);
-    groups.get(observation.normalizedValue).push(observation);
+  const gemini = found.find((item) => item.sourceKind === "gemini_image");
+  const regex = found.find((item) => item.sourceKind === "deterministic_regex");
+
+  // Gemini is the independent visual reading. Regex is OCR-derived
+  // corroboration, not an equal independent vote.
+  if (gemini && regex) {
+    if (gemini.normalizedValue === regex.normalizedValue) {
+      const agreementConfidence = Math.min(
+        0.99,
+        Math.max(gemini.confidence, regex.confidence) + AGREEMENT_BOOST,
+      );
+      const winningField = findSourceField(sources, key, gemini.normalizedValue);
+
+      return buildFoundResult(
+        winningField,
+        { ...gemini, confidence: agreementConfidence },
+        "agreement-2-sources",
+        {
+          observations,
+          agreementCount: 2,
+          conflict: false,
+          winnerSource: "gemini-image",
+          candidateSources: ["gemini-image", "regex/raw-ocr"],
+          fusionMethod: "independent-visual-plus-ocr-corroboration",
+          fallbackUsed: false,
+        },
+      );
+    }
+
+    // Direct visual evidence has priority when Gemini is sufficiently
+    // confident. The disagreement is retained for audit/review instead of
+    // letting a single OCR-derived regex value overwrite the image reading.
+    if (gemini.confidence >= GEMINI_MIN_CONFLICT_CONFIDENCE) {
+      const winningField = findSourceField(sources, key, gemini.normalizedValue);
+      return buildFoundResult(
+        winningField,
+        gemini,
+        "gemini-visual-priority-conflict-with-ocr",
+        {
+          observations,
+          agreementCount: 1,
+          conflict: true,
+          winnerSource: "gemini-image",
+          candidateSources: ["gemini-image", "regex/raw-ocr"],
+          fusionMethod: "visual-priority-with-ocr-conflict",
+          regexCandidate: regex.value,
+          regexConfidence: regex.confidence,
+          fallbackUsed: false,
+        },
+      );
+    }
+
+    return {
+      value: null,
+      displayValue: "",
+      raw: [gemini, regex].map((item) => item.source + ": " + item.value).join(" | "),
+      evidence: [gemini, regex].map((item) => item.source + ": " + (item.evidence || item.value)).join(" | "),
+      confidence: 0,
+      status: "ambiguous",
+      source: "FIELD_FUSION",
+      verification: "conflicting-evidence",
+      fusion: {
+        observations,
+        agreementCount: 0,
+        conflict: true,
+        winnerSource: null,
+        candidateSources: ["gemini-image", "regex/raw-ocr"],
+        fusionMethod: "low-confidence-conflict-requires-review",
+        fallbackUsed: false,
+      },
+    };
   }
 
-  const rankedGroups = [...groups.entries()]
-    .map(([normalizedValue, members]) => ({
-      normalizedValue,
-      members,
-      agreementCount: members.length,
-      voteSupport: members.reduce((sum, member) => sum + member.confidence, 0),
-      weightedSupport: members.reduce((sum, member) => sum + member.weightedSupport, 0),
-      maxConfidence: Math.max(...members.map((member) => member.confidence)),
-      bestPriority: Math.min(...members.map((member) => sourceRank(member.sourceKind))),
-    }))
-    .sort((a, b) =>
-      b.agreementCount - a.agreementCount ||
-      b.voteSupport - a.voteSupport ||
-      b.weightedSupport - a.weightedSupport ||
-      a.bestPriority - b.bestPriority ||
-      b.maxConfidence - a.maxConfidence
-    );
-
-  const winnerGroup = rankedGroups[0];
-  const runnerUp = rankedGroups[1] || null;
-  const conflict = rankedGroups.length > 1;
-  const agreementCount = winnerGroup.agreementCount;
-
-  const bestMember = [...winnerGroup.members].sort(
-    (a, b) =>
-      b.confidence - a.confidence ||
-      sourceRank(a.sourceKind) - sourceRank(b.sourceKind),
-  )[0];
-
-  // Two or three agreeing sources form the normal vote winner.
-  const consensusWinner = agreementCount >= 2;
-
-  // A single source can still win when it is genuinely high-confidence.
-  // This prevents a strong Gemini reading from being displaced merely because
-  // regex found a different pattern in the raw OCR.
-  const runnerConfidence = runnerUp?.maxConfidence ?? 0;
-  const highConfidenceWinner =
-    agreementCount === 1 &&
-    bestMember.confidence >= 0.85 &&
-    (runnerConfidence === 0 || bestMember.confidence - runnerConfidence >= 0.10);
-
-  if (consensusWinner || highConfidenceWinner) {
-    const agreementBoost = agreementCount >= 3 ? 0.10 : agreementCount === 2 ? 0.06 : 0;
-    const winningConfidence = Math.min(0.99, bestMember.confidence + agreementBoost);
-
-    const winningSource = sources.find(
-      (source) =>
-        source?.enabled &&
-        source?.fields?.[key] &&
-        canonicalValue(key, source.fields[key].value) === winnerGroup.normalizedValue,
-    );
-    const winningField = winningSource?.fields?.[key] || null;
-
+  // Gemini value exists by itself: use it directly.
+  if (gemini) {
+    const winningField = findSourceField(sources, key, gemini.normalizedValue);
     return buildFoundResult(
       winningField,
-      { ...bestMember, confidence: winningConfidence },
-      agreementCount >= 2
-        ? "agreement-" + agreementCount + "-sources"
-        : conflict
-          ? "high-confidence-single-source"
-          : "single-supported-source",
+      gemini,
+      "gemini-visual-extraction",
       {
         observations,
-        agreementCount,
-        conflict,
-        winnerSource: bestMember.source,
-        candidateSources: winnerGroup.members.map((member) => member.source),
-        voteSupport: Number(winnerGroup.voteSupport.toFixed(4)),
-        margin: runnerUp
-          ? Number((winnerGroup.voteSupport - runnerUp.voteSupport).toFixed(4))
-          : null,
+        agreementCount: 1,
+        conflict: false,
+        winnerSource: "gemini-image",
+        candidateSources: ["gemini-image"],
+        fusionMethod: "visual-primary",
         fallbackUsed: false,
+      },
+    );
+  }
+
+  // Regex is the fallback only when Gemini has no usable value.
+  if (regex) {
+    const winningField = findSourceField(sources, key, regex.normalizedValue);
+    return buildFoundResult(
+      winningField,
+      regex,
+      "regex-fallback-no-gemini-value",
+      {
+        observations,
+        agreementCount: 1,
+        conflict: false,
+        winnerSource: "regex/raw-ocr",
+        candidateSources: ["regex/raw-ocr"],
+        fusionMethod: "ocr-fallback",
+        fallbackUsed: true,
         fallbackOrder: SOURCE_PRIORITY,
       },
     );
   }
 
-  // If there is only one usable source and it did not clear the high-confidence
-  // threshold, fill the field using the explicit fallback order:
-  // Gemini image -> Gemini raw-OCR normalization -> regex/raw-OCR.
-  // This is deliberately not applied to genuine multi-source conflicts.
-  if (!conflict) {
-    const fallback = pickFallbackObservation(found);
-    if (fallback) {
-      const fallbackSource = sources.find(
-        (source) =>
-          source?.enabled &&
-          source?.fields?.[key] &&
-          canonicalValue(key, source.fields[key].value) === fallback.normalizedValue,
-      );
-      const fallbackField = fallbackSource?.fields?.[key] || null;
-
-      return buildFoundResult(
-        fallbackField,
-        fallback,
-        "fallback-priority",
-        {
-          observations,
-          agreementCount,
-          conflict: false,
-          winnerSource: fallback.source,
-          candidateSources: [fallback.source],
-          voteSupport: Number(fallback.confidence.toFixed(4)),
-          margin: null,
-          fallbackUsed: true,
-          fallbackOrder: SOURCE_PRIORITY,
-        },
-      );
-    }
-  }
-
-  // A true unresolved conflict must stay unresolved. Do not silently pick a
-  // lower-priority source just to make the UI look complete.
   return {
     value: null,
     displayValue: "",
-    raw: rankedGroups
-      .slice(0, 3)
-      .flatMap((group) => group.members.map((member) => member.source + ": " + member.value))
-      .join(" | "),
-    evidence: rankedGroups
-      .slice(0, 3)
-      .flatMap((group) => group.members.map((member) => member.source + ": " + (member.evidence || member.value)))
-      .join(" | "),
+    raw: null,
+    evidence: null,
     confidence: 0,
-    status: "ambiguous",
+    status: statusWhenEmpty(observations),
     source: "FIELD_FUSION",
-    verification: "conflicting-evidence",
+    verification: "no-supported-value",
     fusion: {
       observations,
-      agreementCount,
-      conflict: true,
+      agreementCount: 0,
+      conflict: false,
       winnerSource: null,
-      winnerCandidate: bestMember.value,
-      winnerConfidence: bestMember.confidence,
       fallbackUsed: false,
-      fallbackOrder: SOURCE_PRIORITY,
-      candidates: rankedGroups.slice(0, 3).map((group) => ({
-        value: group.members[0]?.value ?? null,
-        support: Number(group.voteSupport.toFixed(4)),
-        sources: group.members.map((member) => member.source),
-      })),
     },
   };
 }
@@ -313,4 +284,4 @@ export function fuseFieldSources(sources = [], categoryKeys = FIELD_KEYS) {
   return output;
 }
 
-export { SOURCE_WEIGHTS, SOURCE_PRIORITY, canonicalValue };
+export { SOURCE_WEIGHTS, SOURCE_PRIORITY, canonicalValue, GEMINI_MIN_CONFLICT_CONFIDENCE };
