@@ -24,15 +24,17 @@ function buildGeminiPrompt({ mode, detections, rawText, categoryOptions }) {
       "\n- Because no RapidOCR geometry was supplied in this pass, set imageIndex=-1 and evidenceIndex=-1 for every field." +
       "\n- A field that cannot be read from the image must be absent, unreadable, or ambiguous rather than guessed." +
       "\n- DATE ROLE DISAMBIGUATION IS MANDATORY:" +
-      "\n  * Identify manufacturing date, packing/pre-packing date, best-before, and expiry/use-by separately." +
-      "\n  * Never copy the same date into multiple date fields unless the image visibly shows separate labels/occurrences supporting each field." +
+      "\n  * Return four independent date roles: dateOfManufacture, dateOfPacking, bestBefore, and expiryDate." +
+      "\n  * NEVER copy, mirror, or reuse one printed date across multiple roles. Each role needs its own visible label/context." +
+      "\n  * If the package has only one date and its role is unclear, put that date in NONE of the role fields and mark the affected role absent/ambiguous." +
       "\n  * A bare date such as 03/26 is NOT evidence that it is an expiry date." +
-      "\n  * Assign packing date only when the image context supports labels such as packed on, packing date, PKD, date of packing, or equivalent." +
-      "\n  * Assign expiry only when the image context supports expiry, EXP, expires, use by, or equivalent." +
-      "\n  * Assign best-before only when best before, use within, shelf life, or equivalent is visible; a duration such as \'24 months from packing\' is not itself an expiry date." +
-      "\n  * Use nearby printed labels, line grouping, and visual position to associate a date with its field." +
-      "\n  * If the date role cannot be determined from the image, leave that specific date field absent or ambiguous instead of guessing." +
-      "\n  * Preserve the exact printed date format in the field value."
+      "\n  * Assign manufacturing date only with context such as manufactured on, MFD, MFG, manufacture date, or an equivalent label." +
+      "\n  * Assign packing date only with context such as packed on, packing date, PKD, date of packing, or an equivalent label." +
+      "\n  * Assign expiry only with context such as expiry, EXP, expires, use by, or an equivalent label." +
+      "\n  * Assign best-before only with context such as best before, use within, shelf life, or an equivalent label. A duration such as \'24 months from packing\' is NOT an expiry date." +
+      "\n  * If several different dates are printed, return each one only in the role supported by its own label/group." +
+      "\n  * If the same date is deliberately printed for two legally distinct roles, return it twice only when BOTH labels are visibly present and independently support both roles." +
+      "\n  * Preserve the exact printed date format in each returned field value."
   }
 
   return basePrompt + "\n\nEXTRACTION MODE: RAPIDOCR NORMALIZATION WITH VISUAL RECHECK" +
