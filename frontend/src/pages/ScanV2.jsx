@@ -90,6 +90,23 @@ export default function ScanV2() {
   }, []);
 
   useEffect(() => {
+    if (!compliance && !ocr) {
+      setUnableReviewSync({ unresolvedCount: 0, passCount: 0, failCount: 0 });
+      window.__parakhScanSummary = {
+        unableToVerify: 0,
+        selectedViolations: 0,
+        totalViolations: 0,
+        reviewed: false,
+      };
+    }
+  }, [compliance, ocr]);
+  useEffect(() => () => { controllerRef.current?.abort(); dataKartControllerRef.current?.abort(); if (videoRef.current?.srcObject) videoRef.current.srcObject.getTracks().forEach((track) => track.stop()); }, []);
+  useEffect(() => { if (!analyzing) return undefined; const started = Date.now(); setAnalysisElapsedMs(0); const timer = window.setInterval(() => setAnalysisElapsedMs(Date.now() - started), 100); return () => window.clearInterval(timer); }, [analyzing]);
+  const finalCategories = flattenCategories(categories).filter(isSelectableFinalCategory);
+  const violations = compliance?.findings?.filter((finding) => finding.status === "VIOLATION") || [];
+  const accepted = compliance?.findings?.filter((finding) => acceptedFindingIds.includes(finding.findingId)) || [];
+
+  useEffect(() => {
     const engineFindings = Array.isArray(compliance?.findings)
       ? compliance.findings.filter((finding) => finding.status === "VIOLATION")
       : [];
@@ -110,22 +127,6 @@ export default function ScanV2() {
     };
   }, [compliance, accepted.length, unableReviewSync]);
 
-  useEffect(() => {
-    if (!compliance && !ocr) {
-      setUnableReviewSync({ unresolvedCount: 0, passCount: 0, failCount: 0 });
-      window.__parakhScanSummary = {
-        unableToVerify: 0,
-        selectedViolations: 0,
-        totalViolations: 0,
-        reviewed: false,
-      };
-    }
-  }, [compliance, ocr]);
-  useEffect(() => () => { controllerRef.current?.abort(); dataKartControllerRef.current?.abort(); if (videoRef.current?.srcObject) videoRef.current.srcObject.getTracks().forEach((track) => track.stop()); }, []);
-  useEffect(() => { if (!analyzing) return undefined; const started = Date.now(); setAnalysisElapsedMs(0); const timer = window.setInterval(() => setAnalysisElapsedMs(Date.now() - started), 100); return () => window.clearInterval(timer); }, [analyzing]);
-  const finalCategories = flattenCategories(categories).filter(isSelectableFinalCategory);
-  const violations = compliance?.findings?.filter((finding) => finding.status === "VIOLATION") || [];
-  const accepted = compliance?.findings?.filter((finding) => acceptedFindingIds.includes(finding.findingId)) || [];
   const selectedViolations = [...accepted, ...manualViolations]; const barcodeCompare = datakartVerification?.comparison?.comparisons || {}; const scannerGtin = barcodeResult?.found ? barcodeResult.gtin : null;
   function update(key, value) { setForm((current) => ({ ...current, [key]: value })); }
   function resetVerificationState() { dataKartControllerRef.current?.abort(); dataKartControllerRef.current = null; setBarcodeResult(null); setDatakartVerification({ ...EMPTY_DATAKART }); setVerificationConfidence(null); }
