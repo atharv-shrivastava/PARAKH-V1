@@ -28,7 +28,7 @@ async function normalizeImage(buffer, contentType) {
 
 router.post("/images", async (req, res) => {
   try {
-    const imageUrls = Array.isArray(req.body?.imageUrls) ? req.body.imageUrls.slice(0, 6) : [];
+    const imageUrls = (Array.isArray(req.body?.imageUrls) ? req.body.imageUrls : Array.isArray(req.body?.images) ? req.body.images : []).slice(0, 6);
     if (!imageUrls.length) return res.status(400).json({ error: "At least one public product image URL is required." });
 
     const formData = new FormData();
@@ -89,6 +89,7 @@ router.post("/images", async (req, res) => {
 
     res.json({
       result: data.result || null,
+      ocr: data.result || null,
       provider: data.provider || "local-rules",
       model: data.model || "local declaration mapper",
       semantic: data.semantic || data.result?.semantic || null,
