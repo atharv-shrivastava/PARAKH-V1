@@ -265,6 +265,23 @@ router.get("/intelligence", async (req, res) => {
       shop: item.shop,
       product: item.product,
     }));
+    const reportInspections = inspections.slice(0, 100).map((item) => ({
+      id: item.id,
+      status: item.status,
+      isVerified: item.isVerified,
+      inspectedAt: item.inspectedAt,
+      batchNumber: item.batchNumberResolved || item.batchNumber || null,
+      shop: item.shop ? { name: item.shop.name, city: item.shop.city, state: item.shop.state } : null,
+      product: item.product
+        ? {
+            id: item.product.id,
+            productName: item.product.productName,
+            brandName: item.product.brandName,
+            manufacturerName: item.manufacturerName,
+            barcode: item.product.barcode,
+          }
+        : null,
+    }));
 
     res.json({
       filters: { manufacturer, product, gtin, batch, violation, district, state, from, to, verifiedOnly },
@@ -285,6 +302,7 @@ router.get("/intelligence", async (req, res) => {
       trend,
       inspections: req.user.role === "ADMIN" ? inspections.slice(0, 100) : [],
       myInspections,
+      reportInspections,
       verifiedInspectionIds: verifiedViolations.map((x) => x.id),
       scope: "STATEWIDE",
     });
