@@ -125,7 +125,10 @@ function fuseField(key, sources) {
     observations.push(summarizeObservation(key, source, source.fields[key]));
   }
 
-  const found = observations.filter((item) => item.normalizedValue && item.status === "found");
+  // Source selection is based on whether a usable VALUE exists, not on confidence
+  // or status. Confidence describes certainty; it must never decide whether a
+  // Gemini value gets discarded. Gemini is primary, regex is fallback only.
+  const found = observations.filter((item) => item.normalizedValue);
 
   if (!found.length) {
     return {
@@ -199,25 +202,26 @@ function fuseField(key, sources) {
       );
     }
 
-    return {
-      value: null,
-      displayValue: "",
-      raw: [gemini, regex].map((item) => item.source + ": " + item.value).join(" | "),
-      evidence: [gemini, regex].map((item) => item.source + ": " + (item.evidence || item.value)).join(" | "),
-      confidence: 0,
-      status: "ambiguous",
-      source: "FIELD_FUSION",
-      verification: "conflicting-evidence",
-      fusion: {
+    // Gemini still wins whenever it supplied a value. A disagreement is retained
+    // as audit provenance, but regex does not replace the visual extraction merely
+    // because Gemini confidence is lower.
+    const winningField = findSourceField(sources, key, gemini.normalizedValue);
+    return buildFoundResult(
+      winningField,
+      gemini,
+      "gemini-visual-priority-conflict-with-ocr",
+      {
         observations,
-        agreementCount: 0,
+        agreementCount: 1,
         conflict: true,
-        winnerSource: null,
+        winnerSource: "gemini-image",
         candidateSources: ["gemini-image", "regex/raw-ocr"],
-        fusionMethod: "low-confidence-conflict-requires-review",
+        fusionMethod: "visual-primary-with-ocr-conflict",
+        regexCandidate: regex.value,
+        regexConfidence: regex.confidence,
         fallbackUsed: false,
       },
-    };
+    );
   }
 
   // Gemini value exists by itself: use it directly.
