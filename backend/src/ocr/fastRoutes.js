@@ -7,6 +7,8 @@ import path from "node:path";
 import { authenticate } from "../middleware/auth.js";
 import { getOcrConfig } from "./config.js";
 import { repairNumericFields } from "./numericFieldRepair.js";
+import { interpretOcrFields } from "./ocrFieldInterpreter.js";
+import { fuseFieldSources } from "./fieldFusion.js";
 import { interpretPackageWithGemini } from "./geminiPackageInterpreter.js";
 import { interpretPackageWithGrok } from "./grokPackageInterpreter.js";
 import { reconcileSemanticResults } from "./semanticConsensus.js";
@@ -122,47 +124,23 @@ function evidenceScore(key, field, item) {
   return best;
 }
 
-function candidateEvidence(key, field, evidence) {
-  let best = null;
-  for (const item of evidence) {
-    const score = evidenceScore(key, field, item);
-    if (score <= 0) continue;
-    if (!best || score > best.score || (score === best.score && item.confidence > best.item.confidence)) best = { item, score };
-  }
-  return best;
-}
-
-function regexEvidence(pattern, evidence) {
-  for (const item of evidence) {
-    const match = text(item.text).match(pattern);
-    if (match) return { value: match[0].trim(), item };
-  }
-  return null;
-}
-
-function regexRepairFields(fields, evidence, rawText) {
-  const next = Object.fromEntries(Object.entries(fields || {}).map(([key, field]) => [key, { ...(field || {}) }]));
-  const fallbackEvidence = [{ text: rawText, confidence: 0.65, imageIndex: 0, evidenceIndex: -1 }];
-
-  const emailCandidate = regexEvidence(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i, evidence) || regexEvidence(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i, fallbackEvidence);
-  const currentEmail = text(next.consumerCareEmail?.value);
-  if (!EMAIL_RE.test(currentEmail) && emailCandidate) {
-    next.consumerCareEmail = { ...(next.consumerCareEmail || {}), value: emailCandidate.value, displayValue: emailCandidate.value, raw: emailCandidate.item.text, evidence: emailCandidate.item.text, confidence: Math.max(Number(next.consumerCareEmail?.confidence || 0), Number(emailCandidate.item.confidence || 0) * 0.92), status: "found", imageIndex: Number.isInteger(emailCandidate.item.imageIndex) ? emailCandidate.item.imageIndex : 0, evidenceIndex: Number.isInteger(emailCandidate.item.evidenceIndex) ? emailCandidate.item.evidenceIndex : -1, boundingBox: emailCandidate.item.boundingBox || null, imageWidth: emailCandidate.item.imageWidth || null, imageHeight: emailCandidate.item.imageHeight || null, source: "REGEX_OCR_REPAIR", verification: "email-format-validated" };
-  } else if (currentEmail && !EMAIL_RE.test(currentEmail)) {
-    next.consumerCareEmail = { ...(next.consumerCareEmail || {}), value: null, displayValue: "", status: "ambiguous", verification: "rejected-invalid-email" };
-  }
-
-  const currentPhone = text(next.consumerCarePhone?.value);
-  const phoneCandidate = regexEvidence(MOBILE_RE, evidence) || regexEvidence(TOLL_FREE_RE, evidence) || regexEvidence(MOBILE_RE, fallbackEvidence) || regexEvidence(TOLL_FREE_RE, fallbackEvidence);
-  if ((!currentPhone || (!MOBILE_RE.test(currentPhone) && !TOLL_FREE_RE.test(currentPhone))) && phoneCandidate) {
-    next.consumerCarePhone = { ...(next.consumerCarePhone || {}), value: phoneCandidate.value, displayValue: phoneCandidate.value, raw: phoneCandidate.item.text, evidence: phoneCandidate.item.text, confidence: Math.max(Number(next.consumerCarePhone?.confidence || 0), Number(phoneCandidate.item.confidence || 0) * 0.92), status: "found", imageIndex: Number.isInteger(phoneCandidate.item.imageIndex) ? phoneCandidate.item.imageIndex : 0, evidenceIndex: Number.isInteger(phoneCandidate.item.evidenceIndex) ? phoneCandidate.item.evidenceIndex : -1, boundingBox: phoneCandidate.item.boundingBox || null, imageWidth: phoneCandidate.item.imageWidth || null, imageHeight: phoneCandidate.item.imageHeight || null, source: "REGEX_OCR_REPAIR", verification: "phone-format-validated" };
-  }
-
-  const numericRepaired = repairNumericFields(next, evidence, rawText);
-  next.netQuantity = numericRepaired.netQuantity || next.netQuantity;
-  next.unit = numericRepaired.unit || next.unit;
-  next.mrp = numericRepaired.mrp || next.mrp;
-  return next;
+function runDeterministicExtraction(rapid) {
+  const startedAt = Date.now();
+  const parsed = interpretOcrFields({
+    detections: rapid.evidence,
+    rawText: rapid.rawText,
+  });
+  const fields = repairNumericFields(parsed?.fields || {}, rapid.evidence, rapid.rawText);
+  return {
+    enabled: true,
+    provider: "regex/raw-ocr",
+    model: "deterministic OCR field interpreter",
+    sourceKind: "deterministic_regex",
+    fields,
+    suggestedCategory: null,
+    packageAssessment: null,
+    timingMs: Date.now() - startedAt,
+  };
 }
 
 function resolveEvidenceForFields(fields, evidence) {
@@ -310,34 +288,154 @@ function buildDeclarationEvidence(fields) {
   });
 }
 
-async function runSemanticProviders({ images, rapid, categoryOptions, signal }) {
+async function runSemanticImageProviders({ images, categoryOptions, signal }) {
   const startedAt = Date.now();
-  const providers = [{ name: "gemini", fn: interpretPackageWithGemini }, { name: "grok", fn: interpretPackageWithGrok }];
-  const settled = await Promise.all(providers.map(async ({ name, fn }) => {
+  const providers = [
+    { name: "gemini", sourceKind: "gemini_image", fn: interpretPackageWithGemini, mode: "image" },
+    { name: "grok", sourceKind: "grok_image", fn: interpretPackageWithGrok, mode: "image" },
+  ];
+
+  const settled = await Promise.all(providers.map(async ({ name, sourceKind, fn, mode }) => {
     const providerStarted = Date.now();
     try {
-      const result = await fn({ images, detections: rapid.evidence, rawText: rapid.rawText, categoryOptions, signal });
-      return { ...result, provider: result?.provider || name, timingMs: result?.timingMs ?? Date.now() - providerStarted };
+      const result = await fn({
+        images,
+        categoryOptions,
+        signal,
+        mode,
+      });
+      return {
+        ...result,
+        provider: result?.provider || name,
+        sourceKind: result?.sourceKind || sourceKind,
+        timingMs: result?.timingMs ?? Date.now() - providerStarted,
+      };
     } catch (error) {
-      return { enabled: false, provider: name, model: null, reason: error?.message || `${name} provider failed.`, timingMs: Date.now() - providerStarted };
+      return {
+        enabled: false,
+        provider: name,
+        model: null,
+        mode,
+        sourceKind,
+        reason: error?.message || (name + " provider failed."),
+        timingMs: Date.now() - providerStarted,
+      };
     }
   }));
-  const consensus = reconcileSemanticResults(settled, categoryOptions);
-  const assessments = settled
+
+  return {
+    providers: settled,
+    timingMs: Date.now() - startedAt,
+  };
+}
+
+function buildPackageConsistency(providers) {
+  const assessments = providers
     .filter((provider) => provider?.enabled && provider?.packageAssessment)
-    .map((provider) => ({ provider: provider.provider, ...provider.packageAssessment }));
+    .map((provider) => ({ provider: provider.provider, mode: provider.mode, ...provider.packageAssessment }));
   const assessmentGroups = new Map();
+
   for (const item of assessments) {
     if (!assessmentGroups.has(item.status)) assessmentGroups.set(item.status, []);
     assessmentGroups.get(item.status).push(item);
   }
+
   const ranked = [...assessmentGroups.entries()]
-    .sort((a, b) => b[1].length - a[1].length || Math.max(...b[1].map((item) => Number(item.confidence) || 0)) - Math.max(...a[1].map((item) => Number(item.confidence) || 0)));
+    .sort((a, b) =>
+      b[1].length - a[1].length ||
+      Math.max(...b[1].map((item) => Number(item.confidence) || 0)) -
+      Math.max(...a[1].map((item) => Number(item.confidence) || 0))
+    );
+
   const topAssessment = ranked[0];
-  const packageConsistency = topAssessment && topAssessment[1].length >= 2
-    ? { status: topAssessment[0], confidence: Math.max(...topAssessment[1].map((item) => Number(item.confidence) || 0)), providers: assessments, evidence: topAssessment[1].map((item) => `${item.provider}: ${item.evidence}`).join(" | ") }
-    : { status: "uncertain", confidence: 0, providers: assessments, evidence: assessments.length ? assessments.map((item) => `${item.provider}: ${item.status} ${item.evidence}`).join(" | ") : "No package consistency assessment returned." };
-  return { ...consensus, packageConsistency, timingMs: Date.now() - startedAt, timing: Object.fromEntries(settled.map((provider) => [provider.provider, provider.timingMs || 0])) };
+  return topAssessment && topAssessment[1].length >= 2
+    ? {
+        status: topAssessment[0],
+        confidence: Math.max(...topAssessment[1].map((item) => Number(item.confidence) || 0)),
+        providers: assessments,
+        evidence: topAssessment[1].map((item) => item.provider + ": " + item.evidence).join(" | "),
+      }
+    : {
+        status: "uncertain",
+        confidence: 0,
+        providers: assessments,
+        evidence: assessments.length
+          ? assessments.map((item) => item.provider + ": " + item.status + " " + item.evidence).join(" | ")
+          : "No package consistency assessment returned.",
+      };
+}
+
+async function runSemanticFusion({ images, rapid, categoryOptions, signal, imageProviders, imageSemanticTimingMs }) {
+  const startedAt = Date.now();
+  const geminiNormalizationStartedAt = Date.now();
+  let geminiNormalization;
+
+  try {
+    geminiNormalization = await interpretPackageWithGemini({
+      images,
+      detections: rapid.evidence,
+      rawText: rapid.rawText,
+      categoryOptions,
+      signal,
+      mode: "ocr_normalization",
+    });
+  } catch (error) {
+    geminiNormalization = {
+      enabled: false,
+      provider: "gemini",
+      model: null,
+      mode: "ocr_normalization",
+      sourceKind: "gemini_ocr_normalization",
+      reason: error?.message || "Gemini OCR normalization failed.",
+    };
+  }
+
+  geminiNormalization = {
+    ...geminiNormalization,
+    timingMs: geminiNormalization?.timingMs ?? Date.now() - geminiNormalizationStartedAt,
+    sourceKind: geminiNormalization?.sourceKind || "gemini_ocr_normalization",
+  };
+
+  const deterministic = runDeterministicExtraction(rapid);
+  const sources = [...imageProviders, geminiNormalization, deterministic];
+  const imageConsensus = reconcileSemanticResults(imageProviders, categoryOptions);
+  const fusedFields = fuseFieldSources(sources);
+
+  const enabledAiProviders = sources
+    .filter((source) => source?.enabled && source?.sourceKind !== "deterministic_regex")
+    .map((source) => String(source.provider || "unknown"));
+  const providerCount = new Set(enabledAiProviders).size;
+
+  const providers = sources
+    .filter((source) => source?.sourceKind !== "deterministic_regex")
+    .map((source) => ({
+      provider: source?.provider || "unknown",
+      model: source?.model || null,
+      mode: source?.mode || null,
+      sourceKind: source?.sourceKind || "unknown",
+      enabled: Boolean(source?.enabled),
+      reason: source?.enabled ? null : source?.reason || "Provider unavailable.",
+      timingMs: source?.timingMs || 0,
+    }));
+
+  const postRapidMs = Date.now() - startedAt;
+  return {
+    enabled: providerCount > 0,
+    providerCount,
+    providers,
+    fields: fusedFields,
+    suggestedCategory: imageConsensus.suggestedCategory,
+    packageConsistency: buildPackageConsistency(imageProviders),
+    timingMs: postRapidMs,
+    timing: {
+      geminiImageMs: imageProviders.find((item) => item.sourceKind === "gemini_image")?.timingMs || 0,
+      grokImageMs: imageProviders.find((item) => item.sourceKind === "grok_image")?.timingMs || 0,
+      geminiOcrNormalizationMs: geminiNormalization.timingMs || 0,
+      deterministicRegexMs: deterministic.timingMs || 0,
+      imageParallelMs: imageSemanticTimingMs,
+      postRapidMs,
+    },
+  };
 }
 
 async function analyze(req, res) {
@@ -350,10 +448,18 @@ async function analyze(req, res) {
     const images = await readImages(packageFiles);
     let categoryOptions = [];
     try { categoryOptions = JSON.parse(req.body?.categoryOptions || "[]"); if (!Array.isArray(categoryOptions)) categoryOptions = []; } catch { categoryOptions = []; }
-    const rapid = await runRapid(images);
-    const semantic = await runSemanticProviders({ images, rapid, categoryOptions, signal: undefined });
-    const repaired = regexRepairFields(semantic.fields, rapid.evidence, rapid.rawText);
-    const validated = validateFieldFormats(repaired);
+    const imageSemanticPromise = runSemanticImageProviders({ images, categoryOptions, signal: undefined });
+    const rapidPromise = runRapid(images);
+    const [rapid, imageSemantic] = await Promise.all([rapidPromise, imageSemanticPromise]);
+    const semantic = await runSemanticFusion({
+      images,
+      rapid,
+      categoryOptions,
+      signal: undefined,
+      imageProviders: imageSemantic.providers,
+      imageSemanticTimingMs: imageSemantic.timingMs,
+    });
+    const validated = validateFieldFormats(semantic.fields);
     const fields = attachEvidence(validated, rapid.evidence);
     const submittedBarcode = text(req.body?.barcodeGtin).replace(/\D/g, "");
     if (submittedBarcode) fields.barcode = { value: submittedBarcode, displayValue: submittedBarcode, raw: submittedBarcode, evidence: submittedBarcode, confidence: 1, status: "found", source: "BARCODE_SCAN", verification: "scanner-authoritative" };
@@ -372,8 +478,51 @@ async function analyze(req, res) {
     };
     const finalResult = await applyEvidenceConfidence(structured, { barcodeImageProvided: Boolean(barcodeFile) });
     const totalMs = Date.now() - startedAt;
-    console.log(`[ocr:fast] images=${packageFiles.length} evidence=${rapid.evidence.length} paddle=${rapid.timingMs}ms semantic=${semantic.timingMs}ms gemini=${semantic.timing?.gemini || 0}ms grok=${semantic.timing?.grok || 0}ms providers=${semantic.providerCount} package=${semantic.packageConsistency?.status || "uncertain"} total=${totalMs}ms parallel=true`);
-    return res.json({ result: finalResult, provider: "rapidocr", model: "RapidOCR", detectionProvider: "rapidocr", detectionProviders: ["rapidocr"], rawText: rapid.rawText, semantic: { provider: "consensus", providers: semantic.providers, providerCount: semantic.providerCount, enabled: semantic.enabled }, aiSuggestedCategory: semantic.suggestedCategory || null, aiSemanticEnabled: semantic.enabled, aiSemanticError: semantic.enabled ? null : semantic.providers.map((item) => `${item.provider}: ${item.reason || "unavailable"}`).join(" | "), timing: { uploadMs: 0, rapidMs: rapid.timingMs, semanticMs: semantic.timingMs, geminiMs: semantic.timing?.gemini || 0, grokMs: semantic.timing?.grok || 0, totalMs, parallelMs: Math.max(rapid.timingMs, semantic.timingMs) } });
+    console.log(
+      "[ocr:fast] images=" + packageFiles.length +
+      " evidence=" + rapid.evidence.length +
+      " rapid=" + rapid.timingMs + "ms" +
+      " imageSemanticParallel=" + (semantic.timing?.imageParallelMs || 0) + "ms" +
+      " geminiImage=" + (semantic.timing?.geminiImageMs || 0) + "ms" +
+      " grokImage=" + (semantic.timing?.grokImageMs || 0) + "ms" +
+      " geminiOcrNormalization=" + (semantic.timing?.geminiOcrNormalizationMs || 0) + "ms" +
+      " deterministicRegex=" + (semantic.timing?.deterministicRegexMs || 0) + "ms" +
+      " providers=" + semantic.providerCount +
+      " package=" + (semantic.packageConsistency?.status || "uncertain") +
+      " total=" + totalMs + "ms" +
+      " imageRapidParallel=true"
+    );
+    return res.json({
+      result: finalResult,
+      provider: "rapidocr",
+      model: "RapidOCR",
+      detectionProvider: "rapidocr",
+      detectionProviders: ["rapidocr"],
+      rawText: rapid.rawText,
+      semantic: {
+        provider: "consensus",
+        providers: semantic.providers,
+        providerCount: semantic.providerCount,
+        enabled: semantic.enabled,
+      },
+      aiSuggestedCategory: semantic.suggestedCategory || null,
+      aiSemanticEnabled: semantic.enabled,
+      aiSemanticError: semantic.enabled
+        ? null
+        : semantic.providers.map((item) => item.provider + ": " + (item.reason || "unavailable")).join(" | "),
+      timing: {
+        uploadMs: 0,
+        rapidMs: rapid.timingMs,
+        imageSemanticMs: semantic.timing?.imageParallelMs || 0,
+        geminiImageMs: semantic.timing?.geminiImageMs || 0,
+        grokImageMs: semantic.timing?.grokImageMs || 0,
+        geminiOcrNormalizationMs: semantic.timing?.geminiOcrNormalizationMs || 0,
+        deterministicRegexMs: semantic.timing?.deterministicRegexMs || 0,
+        semanticMs: semantic.timing?.postRapidMs || semantic.timingMs,
+        totalMs,
+        parallelMs: Math.max(rapid.timingMs, semantic.timing?.imageParallelMs || 0) + (semantic.timing?.postRapidMs || 0),
+      },
+    });
   } catch (error) {
     console.error("[ocr:fast]", error);
     return res.status(error.statusCode || 502).json({ error: { code: error.code || "OCR_FAST_ERROR", message: error.message || "Fast OCR analysis failed." } });
