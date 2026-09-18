@@ -21,6 +21,14 @@ function bullet(value) {
   return `\\pard\\li360\\fi-180\\sa50 \\bullet\\tab ${text(value)}\\par`;
 }
 
+function parseOcrData(product) {
+  if (product?.ocrData && typeof product.ocrData === "object") return product.ocrData;
+  if (typeof product?.ocrData === "string") {
+    try { return JSON.parse(product.ocrData); } catch { return null; }
+  }
+  return null;
+}
+
 function notice(lines) {
   return `\\pard\\sb120\\sa120\\brdrt\\brdrs\\brdrw10\\brdrb\\brdrs\\brdrw10\\brdrl\\brdrs\\brdrw10\\brdrr\\brdrs\\brdrw10\\li120\\ri120\\fs20\\b IMPORTANT LEGAL NOTICE\\b0\\par ${lines.map((line) => `${text(line)}\\par`).join("")}\\pard\\fs22`;
 }
@@ -31,6 +39,19 @@ export function downloadProductRtf({ product, user, violations = [], penaltySumm
   const officer = inspection?.worker?.name || product?.owner?.name || user?.name || "Not recorded";
   const location = [shop?.address, shop?.city, shop?.state].filter(Boolean).join(", ") || "Not recorded";
   const status = product?.complianceStatus || "NEEDS_REVIEW";
+  const stored = parseOcrData(product);
+  const compliance = stored?.compliance && typeof stored.compliance === "object" ? stored.compliance : null;
+  const review = stored?.complianceReview && typeof stored.complianceReview === "object" ? stored.complianceReview : {};
+  const allFindings = Array.isArray(compliance?.findings) ? compliance.findings : [];
+  const officerDecisionMap = review.officerDecisionMap && typeof review.officerDecisionMap === "object" ? review.officerDecisionMap : {};
+  const decisionFor = (finding) => {
+    const id = String(finding?.findingId || "");
+    if (review.acceptedFindingIds?.map?.(String).includes(id)) return "ACCEPTED";
+    const raw = officerDecisionMap[id]?.decision ?? officerDecisionMap[id];
+    return raw ? String(raw).replace(/_/g, " ").toUpperCase() : (String(finding?.status || "").toUpperCase() === "UNABLE_TO_VERIFY" ? "PENDING" : "NOT REVIEWED");
+  };
+  const decisionCounts = review.officerDecisionCounts && typeof review.officerDecisionCounts === "object" ? review.officerDecisionCounts : {};
+  const manualViolations = Array.isArray(review.manualViolations) ? review.manualViolations : [];
   const hasUnknown = Boolean(penaltySummary?.hasUnknown);
   const minValue = hasUnknown ? "Not fully determinable" : penaltySummary ? `Rs. ${Number(penaltySummary.minTotal || 0).toLocaleString("en-IN")}` : "Not calculated";
   const maxValue = hasUnknown ? "Not fully determinable" : penaltySummary ? `Rs. ${Number(penaltySummary.maxTotal || 0).toLocaleString("en-IN")}` : "Not calculated";
@@ -61,6 +82,23 @@ export function downloadProductRtf({ product, user, violations = [], penaltySumm
   } else {
     parts.push(bullet("No accepted violations recorded."));
   }
+  parts.push(heading("Officer Review Ledger"));
+  parts.push(field("Officer Passed", decisionCounts.passed ?? compliance?.summary?.passed ?? 0));
+  parts.push(field("Officer Violations", Number(decisionCounts.violations || 0) + manualViolations.length));
+  parts.push(field("Not Applicable", decisionCounts.notApplicable ?? compliance?.summary?.notApplicable ?? 0));
+  parts.push(field("Unable to Verify", decisionCounts.unresolved ?? compliance?.summary?.unableToVerify ?? 0));
+  parts.push(field("Out of Scope", decisionCounts.outOfScope ?? compliance?.summary?.outOfScope ?? 0));
+  parts.push(field("Officer Decisions Recorded", decisionCounts.recorded ?? 0));
+  if (allFindings.length) {
+    allFindings.forEach((finding, index) => {
+      parts.push(bullet(`${index + 1}. Rule ${finding?.ruleNumber || finding?.ruleCode || "Unknown"} · ${decisionFor(finding)} · ${finding?.message || finding?.violationReason || "No finding message recorded."}`));
+    });
+  } else {
+    parts.push(bullet("No Rules Engine findings were retained."));
+  }
+  manualViolations.forEach((finding, index) => {
+    parts.push(bullet(`Manual violation ${index + 1}: Rule ${finding?.ruleNumber || finding?.ruleCode || "Unknown"} · ${finding?.message || finding?.violationReason || "Officer-recorded violation"}`));
+  });
   parts.push(heading("Penalty Reference"));
   parts.push(field("Occurrence Reference", penaltySummary?.occurrence || "Not recorded"));
   parts.push(field("Minimum Indicated", minValue));
