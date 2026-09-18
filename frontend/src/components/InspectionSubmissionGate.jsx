@@ -4,6 +4,7 @@ const EMPTY_STATUS = {
   unableToVerify: 0,
   passed: 0,
   violations: 0,
+  notApplicable: 0,
   outOfScope: 0,
   officerResolvedCount: 0,
   totalUnresolved: 0,
@@ -42,6 +43,7 @@ export default function InspectionSubmissionGate({ status: incomingStatus }) {
     status.unableToVerify,
     status.passed,
     status.violations,
+    status.notApplicable,
     status.outOfScope,
     status.officerResolvedCount,
     status.totalUnresolved,
@@ -67,7 +69,8 @@ export default function InspectionSubmissionGate({ status: incomingStatus }) {
       <div className="ocr-status-grid">
         <div><strong>Unable to Verify</strong><span>{status.unableToVerify}</span></div>
         <div><strong>Passed</strong><span>{status.passed}</span></div>
-        <div><strong>Violations</strong><span>{status.violations + status.manualViolations}</span></div>
+        <div><strong>Violations</strong><span>{status.violations}</span></div>
+        <div><strong>Not applicable</strong><span>{status.notApplicable}</span></div>
         <div><strong>Out of Scope</strong><span>{status.outOfScope}</span></div>
         <div><strong>Officer decisions recorded</strong><span>{status.officerResolvedCount} / {status.totalUnresolved}</span></div>
         <div><strong>Officer review</strong><span>{reviewRecorded ? "Recorded" : "Not recorded"}</span></div>
