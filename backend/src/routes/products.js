@@ -180,7 +180,7 @@ router.post("/ecommerce/analyze-url", async (req, res) => {
     }
     let ocr = null;
     if (downloadableCount > 0) {
-      try { const ocrResponse = await fetch(`${process.env.PADDLE_OCR_URL || "http://localhost:8081"}/api/ocr/analyze`, { method: "POST", body: ocrForm, signal: AbortSignal.timeout(30000) }); const ocrPayload = await ocrResponse.json().catch(() => ({})); if (ocrResponse.ok && ocrPayload.result) ocr = ocrPayload.result; } catch {}
+      try { const ocrResponse = await fetch(`${process.env.RAPID_OCR_URL || process.env.PADDLE_OCR_URL || "http://localhost:8080"}/api/ocr/analyze`, { method: "POST", body: ocrForm, signal: AbortSignal.timeout(30000) }); const ocrPayload = await ocrResponse.json().catch(() => ({})); if (ocrResponse.ok && ocrPayload.result) ocr = ocrPayload.result; } catch {}
     }
     const result = await evaluateEcommerce({ listing, ocr, overrides: {} });
     res.json({ ...result, source: "public_listing_url" });
