@@ -21,7 +21,21 @@ function ProductDetails() {
   const rejectedFindingIds = Array.isArray(complianceReview.rejectedFindingIds) ? new Set(complianceReview.rejectedFindingIds.map(String)) : new Set();
   const unableToVerifyDecisions = complianceReview.unableToVerifyDecisions && typeof complianceReview.unableToVerifyDecisions === "object" ? complianceReview.unableToVerifyDecisions : {};
   const visibleFindings = allFindings;
-  const violations = visibleFindings.filter((finding) => String(finding?.status || "").toUpperCase() === "VIOLATION" && acceptedFindingIds.has(String(finding.findingId)));
+  const acceptedViolations = visibleFindings.filter(
+    (finding) =>
+      String(finding?.status || "").toUpperCase() === "VIOLATION" &&
+      acceptedFindingIds.has(String(finding.findingId)),
+  );
+  const resolvedOfficerViolations = Array.isArray(complianceReview.resolvedOfficerViolations)
+    ? complianceReview.resolvedOfficerViolations
+    : [];
+  const manualViolations = Array.isArray(complianceReview.manualViolations)
+    ? complianceReview.manualViolations
+    : Array.isArray(stored?.officerReview?.manualViolations)
+      ? stored.officerReview.manualViolations
+      : [];
+  const violations = [...acceptedViolations, ...resolvedOfficerViolations, ...manualViolations]
+    .filter((finding, index, list) => list.findIndex((item) => String(item?.findingId) === String(finding?.findingId)) === index);
   const penaltySummary = useMemo(() => calculatePenalty(violations, activeRules, occurrence), [violations, activeRules, occurrence]); const complianceError = stored?.complianceError || null;
   const findingDecision = (finding) => {
     const id = String(finding?.findingId || "");
