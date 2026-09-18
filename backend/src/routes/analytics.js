@@ -152,9 +152,11 @@ router.get("/intelligence", async (req, res) => {
     const from = normalize(req.query.from);
     const to = normalize(req.query.to);
     const verifiedOnly = String(req.query.verified || "false").toLowerCase() === "true";
+    const scope = String(req.query.scope || "state").toLowerCase() === "mine" ? "mine" : "state";
     const now = new Date();
 
     const where = {
+      ...(scope === "mine" ? { workerId: req.user.id } : {}),
       ...(verifiedOnly ? { isVerified: true } : {}),
       ...(district || state ? { shop: {
         ...(district ? { city: { contains: district, mode: "insensitive" } } : {}),
@@ -284,7 +286,7 @@ router.get("/intelligence", async (req, res) => {
     }));
 
     res.json({
-      filters: { manufacturer, product, gtin, batch, violation, district, state, from, to, verifiedOnly },
+      filters: { manufacturer, product, gtin, batch, violation, district, state, from, to, verifiedOnly, scope },
       counts: {
         inspections: inspections.length,
         recordedViolations: recordedViolations.length,
@@ -304,7 +306,7 @@ router.get("/intelligence", async (req, res) => {
       myInspections,
       reportInspections,
       verifiedInspectionIds: verifiedViolations.map((x) => x.id),
-      scope: "STATEWIDE",
+      scope: scope === "mine" ? "OWN" : "STATEWIDE",
     });
   } catch (error) {
     console.error(error);
