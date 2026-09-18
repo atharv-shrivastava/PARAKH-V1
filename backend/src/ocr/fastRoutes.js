@@ -242,7 +242,8 @@ function canonicalDateValue(value) {
   const raw = text(value).replace(/\s+/g, "");
   if (!raw) return "";
   const match = raw.match(/\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?|\d{1,2}[\/-]\d{2,4}/);
-  return match ? match[0].replaceAll("-", "/") : raw.toLowerCase();
+  if (!match) return raw.toLowerCase();
+  return match[0].split(/[\/-]/).map((part) => String(Number(part))).join("/");
 }
 
 function repairDateAssignments(fields) {
@@ -266,7 +267,7 @@ function repairDateAssignments(fields) {
     // The same printed date can legitimately serve multiple roles only when
     // the evidence supports both labels. Never invent an expiry/best-before
     // assignment from an unlabeled duplicate date.
-    if (primaryExplicit && !secondaryExplicit) {
+    if (!secondaryExplicit && (primaryExplicit || primaryType === "packing" || primaryType === "manufacture")) {
       next[secondaryKey] = {
         ...secondary,
         value: null,
