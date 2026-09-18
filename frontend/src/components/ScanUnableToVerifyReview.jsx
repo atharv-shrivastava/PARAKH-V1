@@ -21,44 +21,6 @@ function clearReviewStorage() {
   } catch {}
 }
 
-function syncComplianceSummaryDom(compliance, unresolvedCount, passCount, failCount) {
-  const summary = compliance?.summary;
-  if (!summary) return;
-
-  const totalRules = Number(summary.totalRulesEvaluated || 0);
-  const basePassed = Number(summary.passed || 0);
-  const baseViolations = Number(summary.violations || 0);
-  const baseUnableToVerify = Number(summary.unableToVerify || 0);
-
-  const remainingUnableToVerify = Math.max(0, baseUnableToVerify - passCount - failCount);
-  const passed = basePassed + passCount;
-  const violations = baseViolations + failCount;
-
-  const summaryElement = Array.from(document.querySelectorAll(".ocr-summary"))
-    .find((element) => /^Rules:\\s*\\d+/i.test(String(element.textContent || "").trim()));
-
-  if (summaryElement) {
-    summaryElement.textContent =
-      `Rules: ${totalRules} · Passed: ${passed} · Violations: ${violations} · Unable to verify: ${remainingUnableToVerify}`;
-  }
-
-  // Keep the registration gate in sync with the same live review state.
-  const reviewCount = document.querySelectorAll(".rule-review-dropdown").length;
-  if (reviewCount > 0) {
-    document.dispatchEvent(new CustomEvent("parakh:unable-review-updated", {
-      detail: {
-        totalRules,
-        passed,
-        violations,
-        unableToVerify: remainingUnableToVerify,
-        unresolvedCount,
-        passCount,
-        failCount,
-      },
-    }));
-  }
-}
-
 function syncRegistrationDom(unresolvedCount, failCount) {
   const button = Array.from(document.querySelectorAll("button[type=submit]"))
     .find((candidate) => /Register Offline Product/i.test(candidate.textContent || ""));
@@ -224,6 +186,15 @@ export default function ScanUnableToVerifyReview() {
       clearReviewStorage();
       setCompliance(null);
       setDecisions({});
+      window.dispatchEvent(new CustomEvent("parakh:unable-review-updated", {
+        detail: {
+          compliance: null,
+          decisions: {},
+          unresolvedCount: 0,
+          passCount: 0,
+          failCount: 0,
+        },
+      }));
     };
 
     document.addEventListener("click", handleResetClick, true);
@@ -242,8 +213,46 @@ export default function ScanUnableToVerifyReview() {
 
   useEffect(() => {
     syncRegistrationDom(unresolvedCount, failCount);
-    syncComplianceSummaryDom(compliance, unresolvedCount, passCount, failCount);
-  }, [compliance, unresolvedCount, passCount, failCount]);
+    if (!compliance) return;
+
+    const decisionsById = { ...decisions };
+    const transformedFindings = (Array.isArray(compliance.findings) ? compliance.findings : []).map((finding) => {
+      const decision = decisionsById[finding.findingId];
+      if (findingStatus(finding) !== "UNABLE_TO_VERIFY" || !decision) return finding;
+      const reason = finding.message || finding.violationReason || "Unable to verify this rule.";
+      return {
+        ...finding,
+        status: decision === "FAIL" ? "VIOLATION" : "PASS",
+        severity: decision === "FAIL" ? (finding.severity || "REVIEW") : finding.severity,
+        message: reason + (decision === "FAIL" ? " Inspector marked Fail." : " Inspector marked Pass."),
+        violationReason: decision === "FAIL"
+          ? (finding.violationReason || reason) + " Inspector marked Fail."
+          : finding.violationReason,
+      };
+    });
+
+    const baseSummary = compliance.summary || {};
+    const effectiveCompliance = {
+      ...compliance,
+      findings: transformedFindings,
+      summary: {
+        ...baseSummary,
+        unableToVerify: Math.max(0, Number(baseSummary.unableToVerify || 0) - passCount - failCount),
+        passed: Number(baseSummary.passed || 0) + passCount,
+        violations: Number(baseSummary.violations || 0) + failCount,
+      },
+    };
+
+    window.dispatchEvent(new CustomEvent("parakh:unable-review-updated", {
+      detail: {
+        compliance: effectiveCompliance,
+        decisions: decisionsById,
+        unresolvedCount,
+        passCount,
+        failCount,
+      },
+    }));
+  }, [compliance, decisions, unresolvedCount, passCount, failCount]);
 
   if (!compliance || !unable.length) return null;
 
@@ -277,7 +286,7 @@ export default function ScanUnableToVerifyReview() {
             <summary>
               <span>
                 <strong>Rule {ruleNumber}</strong>
-                <small>{title} · Unable to verify</small>
+                <small>{title} · {decision === "PASS" ? "Inspector marked Pass" : decision === "FAIL" ? "Inspector marked Fail" : "Unable to verify"}</small>
               </span>
             </summary>
             <div className="rule-review-dropdown-body">
