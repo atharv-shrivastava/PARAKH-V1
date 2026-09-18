@@ -103,6 +103,7 @@ FIELD-SPECIFIC RULES
 PRODUCT NAME / BRAND
 - productName = the consumer-facing marketed product name printed on the package.
 - brandName = the brand identity. Keep brand and product name separate when the package clearly distinguishes them.
+- If the package has one prominent consumer-facing identity and no separate product name is visibly distinguished, use that identity for BOTH productName and brandName rather than leaving productName blank.
 - A concise brand-led product name and the same name with a generic descriptor such as "toothpaste", "shampoo", "soap", "biscuit", "juice", "flour", "oil", "cream", "lotion" may represent the same product identity. Prefer the concise printed marketed name.
 - Never use slogans, ingredients, claims, FSSAI numbers, addresses, MRP, dates, weight, barcode, batch/lot/inkjet codes as productName.
 - Compact codes such as BAAYZ011, LOT12345, MFG270826, #0326 are presumed production/traceability codes, not product names, unless the image unmistakably presents them as a consumer-facing brand.
@@ -118,8 +119,11 @@ MANUFACTURER / PACKER / MARKETER / IMPORTER
 
 NET QUANTITY / UNIT
 - Extract declared net quantity, not serving size, nutrition quantity, ingredient percentage, pack count in a recipe, or recommended intake.
-- Keep the numeric quantity and unit together when practical, for example "500 g".
-- Distinguish mass, volume and count. Examples: 500 g, 1 kg, 200 ml, 1 L, 10 pcs.
+- netQuantity MUST contain the numeric amount only, for example "500", "1", "200".
+- unit MUST contain the printed unit only, for example "g", "kg", "ml", "L", "pcs".
+- NEVER put the unit inside netQuantity. "500 g" must become netQuantity="500" and unit="g".
+- If the package visibly prints the quantity and unit together, split them into the two fields while preserving the exact printed quantity in raw/evidence.
+- Distinguish mass, volume and count. Examples: 500 + g, 1 + kg, 200 + ml, 1 + L, 10 + pcs.
 - Do not infer a unit that is not printed.
 
 MRP / CURRENCY
@@ -181,11 +185,13 @@ Use these as evidence-confidence anchors, not mathematical probabilities:
 Do not assign high confidence simply because two fields look semantically related.
 
 MULTILINGUAL DISPLAY RULES
-- \`value\` is the canonical value used by downstream systems.
-- \`displayValue\` is the human-readable value for the selected display language.
+- `value` is the canonical value used by downstream systems.
+- `displayValue` is the human-readable value for the selected display language.
 - Preserve legal names, addresses, phone numbers, emails, GTIN/barcodes, license IDs, batch codes, dates, MRP and quantity numerics exactly.
-- Translate generic product descriptions only when safe. If localization could alter identity, keep displayValue equal to value.
-- When target language is English, displayValue should normally equal value.
+- For productName and brandName, when the USER DISPLAY LANGUAGE is English and the printed text is in Devanagari or another Indian script, provide a faithful English transliteration in `value` and `displayValue` when the identity is clear. Preserve the exact printed script in `raw` and `evidence`.
+- Do not invent an English translation that changes the product identity. Transliteration is preferred over semantic translation for names.
+- For generic commodity descriptions, use English when the target language is English.
+- When target language is English, avoid returning Hindi/Devanagari script in productName or brandName unless the exact script is essential to the legal identity.
 
 CATEGORY SUGGESTION
 - Suggested category is separate from compliance extraction.
@@ -236,6 +242,30 @@ export function normalizeSemanticResult(parsed, categoryOptions = []) {
       ...(Number.isInteger(value?.evidenceIndex) ? { evidenceIndex: value.evidenceIndex } : {}),
     };
   }
+  const quantityValue = text(normalized.netQuantity?.value || "");
+  const unitValue = text(normalized.unit?.value || "");
+  const splitMatch = quantityValue.match(/^([0-9]+(?:[.,][0-9]+)?)\s*([a-zA-Zµμ%]+)$/);
+  if (splitMatch) {
+    const numericValue = splitMatch[1].replace(/,/g, "");
+    normalized.netQuantity = {
+      ...normalized.netQuantity,
+      value: numericValue,
+      displayValue: numericValue,
+      status: normalized.netQuantity.status === "absent" ? "found" : normalized.netQuantity.status,
+    };
+    if (!unitValue) {
+      normalized.unit = {
+        ...normalized.unit,
+        value: splitMatch[2],
+        displayValue: splitMatch[2],
+        raw: normalized.netQuantity.raw || null,
+        evidence: normalized.netQuantity.evidence || null,
+        confidence: normalized.netQuantity.confidence,
+        status: "found",
+      };
+    }
+  }
+
   const suggestion = parsed?.suggestedCategory || {};
   const allowed = categoryOptions.find((item) => String(item.id) === String(suggestion.categoryId));
   return {
