@@ -106,7 +106,7 @@ function calculateReviewedCompliance({ compliance, ocr, acceptedFindingIds, offi
     resolvedNotApplicable,
     recordedManualViolations,
     officerDecisionCounts: {
-      violations: resolvedOfficerViolations.length,
+      violations: acceptedViolations.length + resolvedOfficerViolations.length,
       passed: resolvedPresent.length,
       notApplicable: resolvedNotApplicable.length,
       outOfScope: 0,
