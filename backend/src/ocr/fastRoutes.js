@@ -271,6 +271,55 @@ function repairDateAssignments(fields) {
       verification: "date-role-not-explicitly-supported",
     };
   }
+  // Never allow one printed date to populate multiple roles unless each role
+  // has its own visible label/context. This catches cross-field duplication from
+  // either Gemini or deterministic OCR extraction.
+  const dateRoles = ["dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate"];
+  const byDate = new Map();
+  for (const key of dateRoles) {
+    const field = next[key];
+    if (field?.status !== "found" || !field?.value) continue;
+    const canonical = canonicalDateValue(field.value);
+    if (!canonical) continue;
+    const bucket = byDate.get(canonical) || [];
+    bucket.push(key);
+    byDate.set(canonical, bucket);
+  }
+
+  for (const [, keys] of byDate) {
+    if (keys.length < 2) continue;
+    const explicitKeys = keys.filter((key) => dateHasExplicitLabel(next[key], roleMap[key]));
+    if (explicitKeys.length === 1) {
+      for (const key of keys) {
+        if (key === explicitKeys[0]) continue;
+        next[key] = {
+          ...next[key],
+          value: null,
+          displayValue: "",
+          raw: null,
+          evidence: null,
+          confidence: 0,
+          status: "ambiguous",
+          verification: "duplicate-date-role-cleared",
+        };
+      }
+    } else if (explicitKeys.length !== keys.length) {
+      for (const key of keys) {
+        if (explicitKeys.includes(key)) continue;
+        next[key] = {
+          ...next[key],
+          value: null,
+          displayValue: "",
+          raw: null,
+          evidence: null,
+          confidence: 0,
+          status: "ambiguous",
+          verification: "duplicate-date-role-cleared",
+        };
+      }
+    }
+  }
+
   const pairings = [
     ["dateOfPacking", "expiryDate", "packing", "expiry"],
     ["dateOfPacking", "bestBefore", "packing", "bestBefore"],
