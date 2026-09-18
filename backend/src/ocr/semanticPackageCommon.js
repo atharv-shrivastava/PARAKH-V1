@@ -46,7 +46,7 @@ export function buildSemanticSchema(categoryOptions = []) {
         required: ["categoryId", "categoryName", "categoryPath", "confidence", "reason"],
       },
     },
-    required: FIELD_KEYS,
+    required: [...FIELD_KEYS, "suggestedCategory"],
   };
 }
 
@@ -194,11 +194,12 @@ MULTILINGUAL DISPLAY RULES
 - When target language is English, avoid returning Hindi/Devanagari script in productName or brandName unless the exact script is essential to the legal identity.
 
 CATEGORY SUGGESTION
-- Suggested category is separate from compliance extraction.
-- Use ONLY one supplied category option when confidently supported by the visible product identity.
-- Never invent a category id.
-- Do not create more than the user-facing hierarchy represented by the supplied options.
-- When uncertain, return categoryId="" and explain briefly in reason.
+- Suggested category is separate from compliance extraction and MUST always be returned.
+- Use ONLY one supplied final-category option when it is supported by the visible product identity and commodity type.
+- Never invent a category id or pretend an unavailable category is selectable.
+- Prefer the most specific supplied final category that matches the visible product identity.
+- If no supplied final category is suitable, return categoryId="" with categoryName="" and categoryPath="", confidence=0, and explain briefly in reason.
+- Do not omit suggestedCategory even when the answer is "not determined".
 
 RESPONSE CONTRACT
 Return EVERY field in FIELD_KEYS as an object.
@@ -266,16 +267,18 @@ export function normalizeSemanticResult(parsed, categoryOptions = []) {
     }
   }
 
-  const suggestion = parsed?.suggestedCategory || {};
+  const suggestion = parsed?.suggestedCategory && typeof parsed.suggestedCategory === "object"
+    ? parsed.suggestedCategory
+    : {};
   const allowed = categoryOptions.find((item) => String(item.id) === String(suggestion.categoryId));
   return {
     fields: normalized,
     suggestedCategory: {
-      categoryId: allowed ? String(allowed.id) : text(suggestion.categoryId) || null,
-      categoryName: allowed ? text(allowed.name) : text(suggestion.categoryName) || null,
-      categoryPath: allowed ? text(allowed.path) : text(suggestion.categoryPath) || null,
-      confidence: confidence(suggestion.confidence),
-      reason: text(suggestion.reason) || null,
+      categoryId: allowed ? String(allowed.id) : "",
+      categoryName: allowed ? text(allowed.name) : "",
+      categoryPath: allowed ? text(allowed.path) : "",
+      confidence: allowed ? confidence(suggestion.confidence) : 0,
+      reason: text(suggestion.reason) || (allowed ? "Suggested from visible package identity and supplied final categories." : "No supplied offline final category confidently matched the visible package."),
     },
   };
 }
