@@ -2,15 +2,20 @@ import { useEffect, useMemo, useState } from "react";
 
 const REVIEW_KEY = "parakhOfficerReviewAcknowledged";
 
+const EMPTY_STATUS = {
+  unableToVerify: 0,
+  passed: 0,
+  violations: 0,
+  outOfScope: 0,
+  officerResolvedCount: 0,
+  totalUnresolved: 0,
+  officerReviewRecorded: false,
+  manualViolations: 0,
+  selectedViolations: 0,
+};
+
 function readStatus() {
-  const text = document.body?.innerText || "";
-  const unableMatch = text.match(/Unable to verify\s*(\d+)/i);
-  const violationMatch = text.match(/Selected engine violations:\s*(\d+)\s*of\s*(\d+)/i);
-  return {
-    unableToVerify: unableMatch ? Number(unableMatch[1]) : 0,
-    selectedViolations: violationMatch ? Number(violationMatch[1]) : 0,
-    totalViolations: violationMatch ? Number(violationMatch[2]) : 0,
-  };
+  return window.__parakhOfficerSummary || EMPTY_STATUS;
 }
 
 export default function InspectionSubmissionGate() {
@@ -22,79 +27,81 @@ export default function InspectionSubmissionGate() {
 
   useEffect(() => {
     if (!active) return undefined;
-    const refresh = () => {
-      const next = readStatus();
+
+    const handleSummary = (event) => {
+      const next = event.detail || EMPTY_STATUS;
       setStatus(next);
       setMessage("");
-      if (next.unableToVerify === 0 && next.totalViolations === 0) {
+      if (next.officerReviewRecorded) {
         sessionStorage.removeItem(REVIEW_KEY);
         setReviewed(false);
       }
     };
+
     const resetForNewScan = () => {
       sessionStorage.removeItem(REVIEW_KEY);
       setReviewed(false);
-      setStatus(readStatus());
+      setStatus(EMPTY_STATUS);
       setMessage("");
     };
-    refresh();
-    const observer = new MutationObserver(refresh);
-    observer.observe(document.body, { childList: true, subtree: true });
+
+    handleSummary({ detail: readStatus() });
+    window.addEventListener("parakh:officer-summary", handleSummary);
+    window.addEventListener("parakh:compliance-result", resetForNewScan);
+
     const submitGuard = (event) => {
       const form = event.target;
       if (!(form instanceof HTMLFormElement) || !form.classList.contains("registration-form")) return;
       const next = readStatus();
-      const engineViolationsResolved = next.totalViolations === 0 || next.selectedViolations === next.totalViolations;
-      if (!engineViolationsResolved) {
+      if (next.totalUnresolved > 0 || !next.officerReviewRecorded) {
         event.preventDefault();
         event.stopPropagation();
-        setMessage(`Review all ${next.totalViolations - next.selectedViolations} engine violation${next.totalViolations - next.selectedViolations === 1 ? "" : "s"} before submission.`);
-        return;
-      }
-      if (next.unableToVerify > 0 && !reviewed) {
-        event.preventDefault();
-        event.stopPropagation();
-        setMessage(`Review all ${next.unableToVerify} Unable to Verify findings. Keep them as review findings or record an explicit inspector violation before submission.`);
+        setMessage(`Review all ${next.totalUnresolved} remaining Unable to Verify findings before submission.`);
       }
     };
+
     document.addEventListener("submit", submitGuard, true);
-    window.addEventListener("parakh:compliance-result", resetForNewScan);
     return () => {
-      observer.disconnect();
       document.removeEventListener("submit", submitGuard, true);
+      window.removeEventListener("parakh:officer-summary", handleSummary);
       window.removeEventListener("parakh:compliance-result", resetForNewScan);
     };
-  }, [active, reviewed]);
+  }, [active]);
 
   if (!active) return null;
 
-  const ready = reviewed && (status.totalViolations === 0 || status.selectedViolations === status.totalViolations) && status.unableToVerify === 0;
+  const ready = status.officerReviewRecorded && status.totalUnresolved === 0;
 
   return (
     <section className="scan-review inspection-submission-review officer-review-card" style={{ marginTop: 16 }}>
       <div className="section-heading">
         <div>
           <h2>Officer submission review</h2>
-          <p>Submission is blocked until engine violations are explicitly resolved and all Unable to Verify findings have been reviewed.</p>
+          <p>Submission is blocked until all Unable to Verify findings have been explicitly resolved by the officer.</p>
         </div>
         <strong>{ready ? "Ready for submission" : "Review required"}</strong>
       </div>
 
       <div className="ocr-status-grid">
         <div><strong>Unable to Verify</strong><span>{status.unableToVerify}</span></div>
-        <div><strong>Engine violations selected</strong><span>{status.selectedViolations} / {status.totalViolations}</span></div>
-        <div><strong>Officer review</strong><span>{reviewed ? "Recorded" : "Not recorded"}</span></div>
+        <div><strong>Passed</strong><span>{status.passed}</span></div>
+        <div><strong>Violations</strong><span>{status.violations + status.manualViolations}</span></div>
+        <div><strong>Out of Scope</strong><span>{status.outOfScope}</span></div>
+        <div><strong>Officer decisions recorded</strong><span>{status.officerResolvedCount} / {status.totalUnresolved}</span></div>
+        <div><strong>Officer review</strong><span>{status.officerReviewRecorded ? "Recorded" : "Not recorded"}</span></div>
       </div>
 
-      {status.unableToVerify > 0 && <button type="button" className="secondary-button" onClick={() => { sessionStorage.setItem(REVIEW_KEY, "true"); setReviewed(true); setMessage("Officer review recorded. The unresolved findings remain explicitly classified as Unable to Verify unless an inspector adds a violation."); }}>
-        Mark current unresolved findings as reviewed / Unable to Verify
-      </button>}
+      {!ready && (
+        <div className="status-message review-required-card" style={{ marginTop: 10 }}>
+          Resolve the remaining Unable to Verify findings using the officer resolution controls above.
+        </div>
+      )}
 
-      {status.totalViolations > 0 && status.selectedViolations < status.totalViolations && <div className="status-message review-required-card" style={{ marginTop: 10 }}>
-        {status.totalViolations - status.selectedViolations} engine violation{status.totalViolations - status.selectedViolations === 1 ? "" : "s"} still require explicit officer selection.
-      </div>}
-
-      {message && <div className="status-message review-required-card" style={{ marginTop: 10 }}>{message}</div>}
+      {message && (
+        <div className="status-message review-required-card" style={{ marginTop: 10 }}>
+          {message}
+        </div>
+      )}
     </section>
   );
 }
