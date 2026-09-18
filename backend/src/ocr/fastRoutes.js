@@ -10,7 +10,6 @@ import { repairNumericFields } from "./numericFieldRepair.js";
 import { interpretOcrFields } from "./ocrFieldInterpreter.js";
 import { fuseFieldSources } from "./fieldFusion.js";
 import { interpretPackageWithGemini } from "./geminiPackageInterpreter.js";
-import { interpretPackageWithGrok } from "./grokPackageInterpreter.js";
 import { reconcileSemanticResults } from "./semanticConsensus.js";
 import { applyEvidenceConfidence } from "./evidenceConfidence.js";
 
@@ -368,185 +367,102 @@ function buildDeclarationEvidence(fields) {
   });
 }
 
-async function runSemanticImageProviders({ images, categoryOptions, signal }) {
+async function runSemanticImageProvider({ images, categoryOptions, signal }) {
   const startedAt = Date.now();
-  const providers = [
-    { name: "gemini", sourceKind: "gemini_image", fn: interpretPackageWithGemini, mode: "image" },
-    { name: "grok", sourceKind: "grok_image", fn: interpretPackageWithGrok, mode: "image" },
-  ];
-
-  const settled = await Promise.all(providers.map(async ({ name, sourceKind, fn, mode }) => {
-    const providerStarted = Date.now();
-    try {
-      const result = await fn({
-        images,
-        categoryOptions,
-        signal,
-        mode,
-      });
-      return {
-        ...result,
-        provider: result?.provider || name,
-        sourceKind: result?.sourceKind || sourceKind,
-        timingMs: result?.timingMs ?? Date.now() - providerStarted,
-      };
-    } catch (error) {
-      return {
-        enabled: false,
-        provider: name,
-        model: null,
-        mode,
-        sourceKind,
-        reason: error?.message || (name + " provider failed."),
-        timingMs: Date.now() - providerStarted,
-      };
-    }
-  }));
-
-  return {
-    providers: settled,
-    timingMs: Date.now() - startedAt,
-  };
+  try {
+    const result = await interpretPackageWithGemini({
+      images,
+      categoryOptions,
+      signal,
+      mode: "image",
+    });
+    return {
+      ...result,
+      provider: result?.provider || "gemini",
+      sourceKind: result?.sourceKind || "gemini_image",
+      timingMs: result?.timingMs ?? Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      enabled: false,
+      provider: "gemini",
+      model: null,
+      mode: "image",
+      sourceKind: "gemini_image",
+      reason: error?.message || "Gemini image extraction failed.",
+      timingMs: Date.now() - startedAt,
+    };
+  }
 }
 
 function buildPackageConsistency(providers) {
   const assessments = providers
     .filter((provider) => provider?.enabled && provider?.packageAssessment)
-    .map((provider) => ({ provider: provider.provider, mode: provider.mode, ...provider.packageAssessment }));
-  const assessmentGroups = new Map();
-
-  for (const item of assessments) {
-    if (!assessmentGroups.has(item.status)) assessmentGroups.set(item.status, []);
-    assessmentGroups.get(item.status).push(item);
-  }
-
-  const ranked = [...assessmentGroups.entries()]
-    .sort((a, b) =>
-      b[1].length - a[1].length ||
-      Math.max(...b[1].map((item) => Number(item.confidence) || 0)) -
-      Math.max(...a[1].map((item) => Number(item.confidence) || 0))
-    );
-
-  const topAssessment = ranked[0];
-  return topAssessment && topAssessment[1].length >= 2
-    ? {
-        status: topAssessment[0],
-        confidence: Math.max(...topAssessment[1].map((item) => Number(item.confidence) || 0)),
-        providers: assessments,
-        evidence: topAssessment[1].map((item) => item.provider + ": " + item.evidence).join(" | "),
-      }
-    : {
-        status: "uncertain",
-        confidence: 0,
-        providers: assessments,
-        evidence: assessments.length
-          ? assessments.map((item) => item.provider + ": " + item.status + " " + item.evidence).join(" | ")
-          : "No package consistency assessment returned.",
-      };
-}
-
-async function runSemanticFusion({ images, rapid, categoryOptions, signal }) {
-  const startedAt = Date.now();
-
-  // After RapidOCR returns, run all independent post-OCR operations together:
-  // 1) Gemini reads the original images on its own.
-  // 2) Gemini normalizes the RAW RapidOCR text/detections using the images.
-  // 3) Regex/deterministic extraction runs directly on the RAW RapidOCR output.
-  //
-  // Crucially, Gemini's normalization input never contains regex-extracted fields.
-  const imageSemanticPromise = runSemanticImageProviders({
-    images,
-    categoryOptions,
-    signal,
-  });
-
-  const geminiNormalizationPromise = (async () => {
-    const normalizationStartedAt = Date.now();
-    try {
-      const result = await interpretPackageWithGemini({
-        images,
-        detections: rapid.evidence,
-        rawText: rapid.rawText,
-        categoryOptions,
-        signal,
-        mode: "ocr_normalization",
-      });
-      return {
-        ...result,
-        timingMs: result?.timingMs ?? Date.now() - normalizationStartedAt,
-        sourceKind: result?.sourceKind || "gemini_ocr_normalization",
-      };
-    } catch (error) {
-      return {
-        enabled: false,
-        provider: "gemini",
-        model: null,
-        mode: "ocr_normalization",
-        sourceKind: "gemini_ocr_normalization",
-        reason: error?.message || "Gemini OCR normalization failed.",
-        timingMs: Date.now() - normalizationStartedAt,
-      };
-    }
-  })();
-
-  const deterministicPromise = Promise.resolve().then(() => runDeterministicExtraction(rapid));
-
-  const [imageSemantic, geminiNormalization, deterministic] = await Promise.all([
-    imageSemanticPromise,
-    geminiNormalizationPromise,
-    deterministicPromise,
-  ]);
-
-  const imageProviders = imageSemantic.providers || [];
-
-  // Field fusion is intentionally a three-source vote:
-  // Gemini image extraction + Gemini raw-OCR normalization + regex/raw-OCR.
-  // Grok remains available for package-level semantic cross-checking, but it
-  // is not allowed to override this three-source declaration field vote.
-  const fusionSources = [
-    imageProviders.find((source) => source?.sourceKind === "gemini_image"),
-    geminiNormalization,
-    deterministic,
-  ].filter(Boolean);
-
-  const imageConsensus = reconcileSemanticResults(imageProviders, categoryOptions);
-  const fusedFields = fuseFieldSources(fusionSources);
-
-  const enabledAiProviders = [...imageProviders, geminiNormalization]
-    .filter((source) => source?.enabled)
-    .map((source) => String(source.provider || "unknown"));
-  const providerCount = new Set(enabledAiProviders).size;
-
-  const providers = [...imageProviders, geminiNormalization]
-    .map((source) => ({
-      provider: source?.provider || "unknown",
-      model: source?.model || null,
-      mode: source?.mode || null,
-      sourceKind: source?.sourceKind || "unknown",
-      enabled: Boolean(source?.enabled),
-      reason: source?.enabled ? null : source?.reason || "Provider unavailable.",
-      timingMs: source?.timingMs || 0,
+    .map((provider) => ({
+      provider: provider.provider,
+      mode: provider.mode,
+      ...provider.packageAssessment,
     }));
 
-  const postRapidMs = Date.now() - startedAt;
+  const top = assessments[0];
+  if (!top) {
+    return {
+      status: "uncertain",
+      confidence: 0,
+      providers: [],
+      evidence: "No package consistency assessment returned.",
+    };
+  }
+
   return {
-    enabled: providerCount > 0,
+    status: top.status || "uncertain",
+    confidence: Number(top.confidence) || 0,
+    providers: assessments,
+    evidence: top.evidence || "Single visual semantic assessment.",
+  };
+}
+
+async function runSemanticFusion({ images, rapid, categoryOptions, signal, geminiImage }) {
+  const startedAt = Date.now();
+  const deterministic = runDeterministicExtraction(rapid);
+
+  // The two evidence paths are intentionally independent:
+  //   A) Gemini receives the original images only.
+  //   B) Regex receives only RAW RapidOCR output.
+  //
+  // They are fused only after both results exist.
+  const fusionSources = [geminiImage, deterministic].filter(Boolean);
+  const fusedFields = fuseFieldSources(fusionSources);
+
+  const providers = fusionSources.map((source) => ({
+    provider: source?.provider || "unknown",
+    model: source?.model || null,
+    mode: source?.mode || null,
+    sourceKind: source?.sourceKind || "unknown",
+    enabled: Boolean(source?.enabled),
+    reason: source?.enabled ? null : source?.reason || "Provider unavailable.",
+    timingMs: source?.timingMs || 0,
+  }));
+
+  const providerCount = geminiImage?.enabled ? 1 : 0;
+  const postRapidMs = Date.now() - startedAt;
+
+  return {
+    enabled: Boolean(geminiImage?.enabled),
     providerCount,
     providers,
     fields: fusedFields,
-    suggestedCategory: imageConsensus.suggestedCategory,
-    packageConsistency: buildPackageConsistency(imageProviders),
+    suggestedCategory: geminiImage?.suggestedCategory || null,
+    packageConsistency: buildPackageConsistency([geminiImage]),
     timingMs: postRapidMs,
     timing: {
-      geminiImageMs: imageProviders.find((item) => item.sourceKind === "gemini_image")?.timingMs || 0,
-      grokImageMs: imageProviders.find((item) => item.sourceKind === "grok_image")?.timingMs || 0,
-      geminiOcrNormalizationMs: geminiNormalization.timingMs || 0,
+      geminiImageMs: geminiImage?.timingMs || 0,
       deterministicRegexMs: deterministic.timingMs || 0,
-      postRapidParallelMs: imageSemantic.timingMs || 0,
       postRapidMs,
     },
   };
 }
+
 async function analyze(req, res) {
   const startedAt = Date.now();
   const packageFiles = Array.isArray(req.files?.images) ? req.files.images : [];
@@ -557,14 +473,24 @@ async function analyze(req, res) {
     const images = await readImages(packageFiles);
     let categoryOptions = [];
     try { categoryOptions = JSON.parse(req.body?.categoryOptions || "[]"); if (!Array.isArray(categoryOptions)) categoryOptions = []; } catch { categoryOptions = []; }
-    // RapidOCR is the gate for the semantic stage. We do not invoke Gemini
-    // until the raw OCR payload is available.
-    const rapid = await runRapid(images);
+    // Run the two independent evidence paths in parallel:
+    // Gemini sees only the original images.
+    // RapidOCR independently produces raw OCR; regex runs after OCR returns.
+    const geminiPromise = runSemanticImageProvider({
+      images,
+      categoryOptions,
+      signal: undefined,
+    });
+    const rapidPromise = runRapid(images);
+
+    const [rapid, geminiImage] = await Promise.all([rapidPromise, geminiPromise]);
+
     const semantic = await runSemanticFusion({
       images,
       rapid,
       categoryOptions,
       signal: undefined,
+      geminiImage,
     });
     const validated = validateFieldFormats(semantic.fields);
     const dateReconciled = repairDateAssignments(validated);
@@ -580,7 +506,7 @@ async function analyze(req, res) {
       semanticReconciliation: { providerCount: semantic.providerCount, providers: semantic.providers },
       aiSemantic: { providerCount: semantic.providerCount, providers: semantic.providers, suggestedCategory: semantic.suggestedCategory || null, packageConsistency: semantic.packageConsistency || null },
       suggestedCategory: semantic.suggestedCategory || null,
-      warnings: semantic.providerCount < 2 ? ["Only one semantic AI provider was available; review single-provider findings carefully."] : [],
+      warnings: semantic.providerCount === 0 ? ["Gemini visual extraction was unavailable; review OCR-only findings carefully."] : [],
       needsReview: semantic.packageConsistency?.status !== "single_package" || Object.values(fields).some((field) => field?.status === "ambiguous" || field?.status === "unreadable" || (field?.status === "found" && Number(field?.confidence || 0) < 0.6)),
       packageConsistency: semantic.packageConsistency || { status: "uncertain", confidence: 0, providers: [], evidence: "Package consistency could not be established." },
     };
@@ -590,16 +516,12 @@ async function analyze(req, res) {
       "[ocr:fast] images=" + packageFiles.length +
       " evidence=" + rapid.evidence.length +
       " rapid=" + rapid.timingMs + "ms" +
-      " postOcrParallel=" + (semantic.timing?.postRapidParallelMs || 0) + "ms" +
       " geminiImage=" + (semantic.timing?.geminiImageMs || 0) + "ms" +
-      " grokImage=" + (semantic.timing?.grokImageMs || 0) + "ms" +
-      " geminiOcrNormalization=" + (semantic.timing?.geminiOcrNormalizationMs || 0) + "ms" +
       " deterministicRegex=" + (semantic.timing?.deterministicRegexMs || 0) + "ms" +
       " providers=" + semantic.providerCount +
       " package=" + (semantic.packageConsistency?.status || "uncertain") +
       " total=" + totalMs + "ms" +
-      " rapidFirst=true" +
-      " postOcrParallel=true"
+      " ocrGeminiParallel=true"
     );
     return res.json({
       result: finalResult,
@@ -622,14 +544,12 @@ async function analyze(req, res) {
       timing: {
         uploadMs: 0,
         rapidMs: rapid.timingMs,
-        imageSemanticMs: semantic.timing?.postRapidParallelMs || 0,
+        imageSemanticMs: semantic.timing?.geminiImageMs || 0,
         geminiImageMs: semantic.timing?.geminiImageMs || 0,
-        grokImageMs: semantic.timing?.grokImageMs || 0,
-        geminiOcrNormalizationMs: semantic.timing?.geminiOcrNormalizationMs || 0,
         deterministicRegexMs: semantic.timing?.deterministicRegexMs || 0,
         semanticMs: semantic.timing?.postRapidMs || semantic.timingMs,
         totalMs,
-        parallelMs: rapid.timingMs + (semantic.timing?.postRapidMs || 0),
+        parallelMs: Math.max(rapid.timingMs, semantic.timing?.geminiImageMs || 0) + (semantic.timing?.postRapidMs || 0),
       },
     });
   } catch (error) {
