@@ -74,6 +74,9 @@ function buildListingStructuredOcr(listing) {
     consumerCareEmail: structuredListingField(listing?.consumerCareEmail),
     countryOfOrigin: structuredListingField(listing?.countryOfOrigin),
     fssaiLicenseNumber: structuredListingField(listing?.fssaiLicenseNumber),
+    "ecommerce.countryOfOriginFilter": structuredListingField(
+      listing?.filterEvidence === true ? true : listing?.filterEvidence === false ? false : ""
+    ),
     rawText: String(listing?.listingText || "").trim(),
     otherDeclarations: [],
     extractionSources: { listingData: true },
