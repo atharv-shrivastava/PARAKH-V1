@@ -509,7 +509,7 @@ async function analyze(req, res) {
       "[ocr:fast] images=" + packageFiles.length +
       " evidence=" + rapid.evidence.length +
       " rapid=" + rapid.timingMs + "ms" +
-      " imageSemanticParallel=" + (semantic.timing?.imageParallelMs || 0) + "ms" +
+      " postOcrParallel=" + (semantic.timing?.postRapidParallelMs || 0) + "ms" +
       " geminiImage=" + (semantic.timing?.geminiImageMs || 0) + "ms" +
       " grokImage=" + (semantic.timing?.grokImageMs || 0) + "ms" +
       " geminiOcrNormalization=" + (semantic.timing?.geminiOcrNormalizationMs || 0) + "ms" +
@@ -517,7 +517,8 @@ async function analyze(req, res) {
       " providers=" + semantic.providerCount +
       " package=" + (semantic.packageConsistency?.status || "uncertain") +
       " total=" + totalMs + "ms" +
-      " imageRapidParallel=true"
+      " rapidFirst=true" +
+      " postOcrParallel=true"
     );
     return res.json({
       result: finalResult,
@@ -540,14 +541,14 @@ async function analyze(req, res) {
       timing: {
         uploadMs: 0,
         rapidMs: rapid.timingMs,
-        imageSemanticMs: semantic.timing?.imageParallelMs || 0,
+        imageSemanticMs: semantic.timing?.postRapidParallelMs || 0,
         geminiImageMs: semantic.timing?.geminiImageMs || 0,
         grokImageMs: semantic.timing?.grokImageMs || 0,
         geminiOcrNormalizationMs: semantic.timing?.geminiOcrNormalizationMs || 0,
         deterministicRegexMs: semantic.timing?.deterministicRegexMs || 0,
         semanticMs: semantic.timing?.postRapidMs || semantic.timingMs,
         totalMs,
-        parallelMs: Math.max(rapid.timingMs, semantic.timing?.imageParallelMs || 0) + (semantic.timing?.postRapidMs || 0),
+        parallelMs: rapid.timingMs + (semantic.timing?.postRapidMs || 0),
       },
     });
   } catch (error) {
