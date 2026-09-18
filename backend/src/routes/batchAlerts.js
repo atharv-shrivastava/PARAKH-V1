@@ -7,6 +7,10 @@ const router = express.Router();
 router.use(authenticate);
 
 const norm = (value) => String(value || "").trim();
+const normalizeProductId = (value) => {
+  const raw = norm(value);
+  return raw.replace(/^PARAKH-/i, "").toLowerCase();
+};
 const isAdmin = (req) => String(req.user?.role || "").toUpperCase() === "ADMIN";
 
 async function upsertVerifiedBatchAlert({ productId, batchNumber, title, message, severity, userId, incidentId }) {
@@ -74,13 +78,18 @@ router.get("/", async (req, res) => {
 
 router.post("/incidents", async (req, res) => {
   try {
-    const productId = norm(req.body?.productId);
+    const productId = normalizeProductId(req.body?.productId);
     const batchNumber = norm(req.body?.batchNumber);
     const title = norm(req.body?.title) || "Serious batch incident reported";
     const description = norm(req.body?.description);
     const severity = norm(req.body?.severity).toUpperCase() || "HIGH";
     if (!productId || !batchNumber || !description) {
       return res.status(400).json({ error: "productId, batchNumber and description are required" });
+    }
+
+    const product = await prisma.product.findUnique({ where: { id: productId }, select: { id: true } });
+    if (!product) {
+      return res.status(400).json({ error: "Product not found. Enter the raw Product ID or the PARAKH ID shown on the product record." });
     }
 
     const report = await prisma.batchIncidentReport.create({
