@@ -332,7 +332,13 @@ router.post("/", async (req, res) => {
     let parsedImages = [];
     try { if (Array.isArray(imageUrls)) parsedImages = imageUrls.filter((x) => typeof x === "string" && x); else if (imageUrls) parsedImages = JSON.parse(imageUrls); if (!Array.isArray(parsedImages)) throw new Error("imageUrls must be an array"); } catch { return res.status(400).json({ error: "Invalid imageUrls payload" }); }
     let parsedOcrData = ocrData; if (typeof ocrData === "string") { try { parsedOcrData = JSON.parse(ocrData); } catch {} }
-    const review = calculateReviewedCompliance({ compliance: parsedOcrData?.compliance, ocr: parsedOcrData?.ocr, acceptedFindingIds });
+    const review = calculateReviewedCompliance({
+      compliance: parsedOcrData?.compliance,
+      ocr: parsedOcrData?.ocr,
+      acceptedFindingIds,
+      officerReview: parsedOcrData?.officerReview,
+      manualViolations: parsedOcrData?.manualViolations || parsedOcrData?.officerReview?.manualViolations,
+    });
     const verification = verifyProduct({ brandName, productName, netQuantity, unit, mrp: parsedMrp });
     const hasEngineReviewData = Boolean(parsedOcrData?.compliance);
     const finalStatus = hasEngineReviewData ? review.status : (new Set(["OKAY", "VIOLATION", "NEEDS_REVIEW"]).has(complianceStatus) ? complianceStatus : verification.status);
