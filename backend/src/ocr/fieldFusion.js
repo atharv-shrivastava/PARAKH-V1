@@ -238,6 +238,40 @@ function fuseField(key, sources) {
     );
   }
 
+  // If there is only one usable source and it did not clear the high-confidence
+  // threshold, fill the field using the explicit fallback order:
+  // Gemini image -> Gemini raw-OCR normalization -> regex/raw-OCR.
+  // This is deliberately not applied to genuine multi-source conflicts.
+  if (!conflict) {
+    const fallback = pickFallbackObservation(found);
+    if (fallback) {
+      const fallbackSource = sources.find(
+        (source) =>
+          source?.enabled &&
+          source?.fields?.[key] &&
+          canonicalValue(key, source.fields[key].value) === fallback.normalizedValue,
+      );
+      const fallbackField = fallbackSource?.fields?.[key] || null;
+
+      return buildFoundResult(
+        fallbackField,
+        fallback,
+        "fallback-priority",
+        {
+          observations,
+          agreementCount,
+          conflict: false,
+          winnerSource: fallback.source,
+          candidateSources: [fallback.source],
+          voteSupport: Number(fallback.voteSupport.toFixed(4)),
+          margin: null,
+          fallbackUsed: true,
+          fallbackOrder: SOURCE_PRIORITY,
+        },
+      );
+    }
+  }
+
   // A true unresolved conflict must stay unresolved. Do not silently pick a
   // lower-priority source just to make the UI look complete.
   return {
