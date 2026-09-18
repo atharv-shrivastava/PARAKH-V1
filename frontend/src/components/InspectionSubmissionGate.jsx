@@ -23,11 +23,11 @@ export default function InspectionSubmissionGate({ status: incomingStatus }) {
     const submitGuard = (event) => {
       const form = event.target;
       if (!(form instanceof HTMLFormElement) || !form.classList.contains("registration-form")) return;
-      if (status.totalUnresolved > 0 || !status.officerReviewRecorded) {
+      if (Number(status.unableToVerify || 0) > 0) {
         event.preventDefault();
         event.stopPropagation();
         setMessage(
-          `Review all ${status.totalUnresolved} remaining Unable to Verify findings before submission.`,
+          `Review all ${Number(status.unableToVerify || 0)} remaining Unable to Verify findings before submission.`,
         );
       }
     };
@@ -49,7 +49,9 @@ export default function InspectionSubmissionGate({ status: incomingStatus }) {
 
   if (!active) return null;
 
-  const reviewRecorded = status.totalUnresolved === 0 && status.officerResolvedCount === status.totalUnresolved;
+  // The current Unable to Verify count is the single source of truth.
+  // totalUnresolved is the initial review workload and must not gate readiness.
+  const reviewRecorded = Number(status.unableToVerify || 0) === 0;
   const ready = reviewRecorded;
 
   return (
