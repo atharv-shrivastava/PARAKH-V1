@@ -170,4 +170,9 @@ export function installComplianceStatusDrilldown() {
   const observer = new MutationObserver(() => scheduleEnhance());
   observer.observe(document.body, { childList: true, subtree: true });
   window.addEventListener("parakh:compliance-result", scheduleEnhance);
+  window.addEventListener("parakh:unable-review-updated", (event) => {
+    latestCompliance = event.detail?.compliance || latestCompliance;
+    activeStatus = null;
+    scheduleEnhance();
+  });
 }
