@@ -22,7 +22,17 @@ function buildGeminiPrompt({ mode, detections, rawText, categoryOptions }) {
       "\n- Do NOT rely on regex output, deterministic parser output, DataKart, listing metadata, product catalog knowledge, or inferred product records." +
       "\n- Read every declaration directly from the package image." +
       "\n- Because no RapidOCR geometry was supplied in this pass, set imageIndex=-1 and evidenceIndex=-1 for every field." +
-      "\n- A field that cannot be read from the image must be absent, unreadable, or ambiguous rather than guessed.";
+      "\n- A field that cannot be read from the image must be absent, unreadable, or ambiguous rather than guessed." +
+      "\n- DATE ROLE DISAMBIGUATION IS MANDATORY:" +
+      "\n  * Identify manufacturing date, packing/pre-packing date, best-before, and expiry/use-by separately." +
+      "\n  * Never copy the same date into multiple date fields unless the image visibly shows separate labels/occurrences supporting each field." +
+      "\n  * A bare date such as 03/26 is NOT evidence that it is an expiry date." +
+      "\n  * Assign packing date only when the image context supports labels such as packed on, packing date, PKD, date of packing, or equivalent." +
+      "\n  * Assign expiry only when the image context supports expiry, EXP, expires, use by, or equivalent." +
+      "\n  * Assign best-before only when best before, use within, shelf life, or equivalent is visible; a duration such as \'24 months from packing\' is not itself an expiry date." +
+      "\n  * Use nearby printed labels, line grouping, and visual position to associate a date with its field." +
+      "\n  * If the date role cannot be determined from the image, leave that specific date field absent or ambiguous instead of guessing." +
+      "\n  * Preserve the exact printed date format in the field value."
   }
 
   return basePrompt + "\n\nEXTRACTION MODE: RAPIDOCR NORMALIZATION WITH VISUAL RECHECK" +
