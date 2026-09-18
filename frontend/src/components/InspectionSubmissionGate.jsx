@@ -3,13 +3,18 @@ import { useEffect, useMemo, useState } from "react";
 const REVIEW_KEY = "parakhOfficerReviewAcknowledged";
 
 function readStatus() {
-  const text = document.body?.innerText || "";
-  const unableMatch = text.match(/Unable to verify\s*(\d+)/i);
-  const violationMatch = text.match(/Selected engine violations:\s*(\d+)\s*of\s*(\d+)/i);
+  const synced = window.__parakhScanSummary;
+  if (synced && typeof synced === "object") return synced;
+
+  const bodyText = document.body?.innerText || "";
+  const unableMatch = bodyText.match(/Unable to verify\s*:?\s*(\d+)/i);
+  const violationMatch = bodyText.match(/Selected engine violations:\s*(\d+)\s*\/\s*(\d+)/i);
+
   return {
     unableToVerify: unableMatch ? Number(unableMatch[1]) : 0,
     selectedViolations: violationMatch ? Number(violationMatch[1]) : 0,
     totalViolations: violationMatch ? Number(violationMatch[2]) : 0,
+    reviewed: false,
   };
 }
 
@@ -58,17 +63,30 @@ export default function InspectionSubmissionGate() {
       }
     };
     document.addEventListener("submit", submitGuard, true);
+    const handleScanSummaryUpdated = (event) => {
+      const next = event.detail || readStatus();
+      setStatus(next);
+      setMessage("");
+
+      if (next.unableToVerify === 0 && next.totalViolations === next.selectedViolations && next.reviewed) {
+        sessionStorage.setItem(REVIEW_KEY, "true");
+        setReviewed(true);
+      }
+    };
+
     window.addEventListener("parakh:compliance-result", resetForNewScan);
+    window.addEventListener("parakh:scan-summary-updated", handleScanSummaryUpdated);
     return () => {
       observer.disconnect();
       document.removeEventListener("submit", submitGuard, true);
       window.removeEventListener("parakh:compliance-result", resetForNewScan);
+      window.removeEventListener("parakh:scan-summary-updated", handleScanSummaryUpdated);
     };
   }, [active, reviewed]);
 
   if (!active) return null;
 
-  const ready = reviewed && (status.totalViolations === 0 || status.selectedViolations === status.totalViolations) && status.unableToVerify === 0;
+  const ready = (status.reviewed || reviewed) && (status.totalViolations === 0 || status.selectedViolations === status.totalViolations) && status.unableToVerify === 0;
 
   return (
     <section className="scan-review inspection-submission-review officer-review-card" style={{ marginTop: 16 }}>
