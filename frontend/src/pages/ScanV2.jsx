@@ -159,6 +159,32 @@ export default function ScanV2() {
   const barcodeCompare = datakartVerification?.comparison?.comparisons || {};
   const scannerGtin = barcodeResult?.found ? barcodeResult.gtin : null;
 
+  useEffect(() => {
+    const detail = {
+      unableToVerify: liveComplianceSummary.unableToVerify,
+      passed: liveComplianceSummary.passed,
+      violations: liveComplianceSummary.violations,
+      outOfScope: liveComplianceSummary.outOfScope,
+      officerResolvedCount,
+      totalUnresolved: unresolvedFindings.length,
+      officerReviewRecorded,
+      manualViolations: manualViolations.length,
+      selectedViolations: selectedViolations.length,
+    };
+    window.__parakhOfficerSummary = detail;
+    window.dispatchEvent(new CustomEvent("parakh:officer-summary", { detail }));
+  }, [
+    liveComplianceSummary.unableToVerify,
+    liveComplianceSummary.passed,
+    liveComplianceSummary.violations,
+    liveComplianceSummary.outOfScope,
+    officerResolvedCount,
+    unresolvedFindings.length,
+    officerReviewRecorded,
+    manualViolations.length,
+    selectedViolations.length,
+  ]);
+
   function update(key, value) { setForm((current) => ({ ...current, [key]: value })); }
   function resetVerificationState() { dataKartControllerRef.current?.abort(); dataKartControllerRef.current = null; setBarcodeResult(null); setDatakartVerification({ ...EMPTY_DATAKART }); setVerificationConfidence(null); }
   function resetAnalysisState() { setOcr(null); setCompliance(null); setComplianceError(null); setAcceptedFindingIds([]); setFindingResolutions({}); setManualViolations([]); setManualViolationReason(""); setManualRuleNumber(""); setProviderInfo(null); setAiSuggestedCategory(null); setSelectedCategoryId(""); setShowRegistration(false); setUseExtractedData(false); setForm(EMPTY_FORM); window.sessionStorage.removeItem("parakhDeclarationEvidence"); resetVerificationState(); }
