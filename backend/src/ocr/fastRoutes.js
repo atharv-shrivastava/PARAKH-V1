@@ -10,7 +10,6 @@ import { repairNumericFields } from "./numericFieldRepair.js";
 import { interpretOcrFields } from "./ocrFieldInterpreter.js";
 import { fuseFieldSources } from "./fieldFusion.js";
 import { interpretPackageWithGemini } from "./geminiPackageInterpreter.js";
-import { reconcileSemanticResults } from "./semanticConsensus.js";
 import { applyEvidenceConfidence } from "./evidenceConfidence.js";
 
 const router = express.Router();
