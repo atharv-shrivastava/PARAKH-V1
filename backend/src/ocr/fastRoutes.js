@@ -246,6 +246,31 @@ function canonicalDateValue(value) {
 
 function repairDateAssignments(fields) {
   const next = Object.fromEntries(Object.entries(fields || {}).map(([key, field]) => [key, { ...(field || {}) }]));
+
+  // A date role is only valid when the package evidence contains the role label/context.
+  // In particular, a bare "03/26" must never become an expiry date just because the
+  // field name is expiryDate. The printed date remains available in raw OCR evidence.
+  const roleMap = {
+    dateOfManufacture: "manufacture",
+    dateOfPacking: "packing",
+    bestBefore: "bestBefore",
+    expiryDate: "expiry",
+  };
+  for (const [key, role] of Object.entries(roleMap)) {
+    const field = next[key];
+    if (field?.status !== "found" || !field?.value) continue;
+    if (dateHasExplicitLabel(field, role)) continue;
+    next[key] = {
+      ...field,
+      value: null,
+      displayValue: "",
+      raw: null,
+      evidence: null,
+      confidence: 0,
+      status: "ambiguous",
+      verification: "date-role-not-explicitly-supported",
+    };
+  }
   const pairings = [
     ["dateOfPacking", "expiryDate", "packing", "expiry"],
     ["dateOfPacking", "bestBefore", "packing", "bestBefore"],
