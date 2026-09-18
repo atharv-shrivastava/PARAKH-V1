@@ -46,6 +46,27 @@ function Layout() {
   const navigate = useNavigate();
   const { t } = useLanguage();
   const [scanReviewReady, setScanReviewReady] = useState(false);
+  const [officerSummary, setOfficerSummary] = useState(() => window.__parakhOfficerSummary || {
+    unableToVerify: 0,
+    passed: 0,
+    violations: 0,
+    outOfScope: 0,
+    officerResolvedCount: 0,
+    totalUnresolved: 0,
+    officerReviewRecorded: false,
+    manualViolations: 0,
+    selectedViolations: 0,
+  });
+
+  useEffect(() => {
+    const handleOfficerSummary = (event) => {
+      const next = event.detail || window.__parakhOfficerSummary;
+      if (next) setOfficerSummary(next);
+    };
+    window.addEventListener("parakh:officer-summary", handleOfficerSummary);
+    if (window.__parakhOfficerSummary) setOfficerSummary(window.__parakhOfficerSummary);
+    return () => window.removeEventListener("parakh:officer-summary", handleOfficerSummary);
+  }, []);
 
   useEffect(() => {
     const syncReviewState = () => {
@@ -88,7 +109,7 @@ function Layout() {
       <Outlet />
       {location.pathname === "/scan" && scanReviewReady && <>
         <Rule23Assessment />
-        <InspectionSubmissionGate />
+        <InspectionSubmissionGate status={officerSummary} />
       </>}
     </main>
   </div>;
