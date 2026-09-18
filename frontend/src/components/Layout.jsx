@@ -50,6 +50,7 @@ function Layout() {
     unableToVerify: 0,
     passed: 0,
     violations: 0,
+    notApplicable: 0,
     outOfScope: 0,
     officerResolvedCount: 0,
     totalUnresolved: 0,
@@ -59,13 +60,29 @@ function Layout() {
   });
 
   useEffect(() => {
+    const syncOfficerSummary = () => {
+      const next = window.__parakhOfficerSummary;
+      if (next) setOfficerSummary((current) => {
+        const currentKey = JSON.stringify(current);
+        const nextKey = JSON.stringify(next);
+        return currentKey === nextKey ? current : next;
+      });
+    };
     const handleOfficerSummary = (event) => {
-      const next = event.detail || window.__parakhOfficerSummary;
-      if (next) setOfficerSummary(next);
+      if (event.detail) setOfficerSummary(event.detail);
+      else syncOfficerSummary();
     };
     window.addEventListener("parakh:officer-summary", handleOfficerSummary);
-    if (window.__parakhOfficerSummary) setOfficerSummary(window.__parakhOfficerSummary);
-    return () => window.removeEventListener("parakh:officer-summary", handleOfficerSummary);
+    syncOfficerSummary();
+
+    // The scan page and Layout mount together. The event can therefore fire
+    // before the parent listener is attached on a fresh scan. This tiny
+    // fallback keeps the outer cards synchronized even in that first render.
+    const interval = window.setInterval(syncOfficerSummary, 100);
+    return () => {
+      window.removeEventListener("parakh:officer-summary", handleOfficerSummary);
+      window.clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
