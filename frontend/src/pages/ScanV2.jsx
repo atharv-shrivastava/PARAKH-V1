@@ -68,7 +68,7 @@ function isSelectableFinalCategory(category) {
   return !names.some((name) => PLACEHOLDER_CATEGORY_NAMES.has(name));
 }
 function fieldLabel(key) { return FIELD_LABELS[key] || String(key || "").replace(/([A-Z])/g, " $1").replace(/^./, (char) => char.toUpperCase()).trim(); }
-function fieldValue(result, key) { const field = result?.[key]; if (field?.status !== "found") return ""; return String(field.displayValue ?? field.value ?? ""); }
+function fieldValue(result, key) { const field = result?.[key]; if (!field || typeof field !== "object") return ""; const candidate = field.displayValue ?? field.value ?? field.canonicalValue ?? ""; return candidate == null ? "" : String(candidate); }
 function normalizeDigits(value) { return String(value ?? "").replace(/\D/g, "").trim(); }
 function validGtin(value) {
   const digits = normalizeDigits(value);
