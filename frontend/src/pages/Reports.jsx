@@ -25,8 +25,24 @@ function Reports() {
       const response = await apiFetch(`${API_URL}/products/${product.id}`); const full = await response.json(); if (!response.ok) throw new Error(full.error || "Could not load product report");
       let stored = null; try { stored = full.ocrData ? JSON.parse(full.ocrData) : null; } catch {}
       const allFindings = Array.isArray(stored?.compliance?.findings) ? stored.compliance.findings : [];
-      const acceptedIds = Array.isArray(stored?.complianceReview?.acceptedFindingIds) ? new Set(stored.complianceReview.acceptedFindingIds.map(String)) : null;
-      const violations = allFindings.filter((finding) => String(finding?.status || "").toUpperCase() === "VIOLATION" && (!acceptedIds || acceptedIds.has(String(finding?.findingId))));
+      const acceptedIds = Array.isArray(stored?.complianceReview?.acceptedFindingIds)
+        ? new Set(stored.complianceReview.acceptedFindingIds.map(String))
+        : null;
+      const acceptedViolations = allFindings.filter(
+        (finding) =>
+          String(finding?.status || "").toUpperCase() === "VIOLATION" &&
+          (!acceptedIds || acceptedIds.has(String(finding?.findingId))),
+      );
+      const resolvedOfficerViolations = Array.isArray(stored?.complianceReview?.resolvedOfficerViolations)
+        ? stored.complianceReview.resolvedOfficerViolations
+        : [];
+      const manualViolations = Array.isArray(stored?.complianceReview?.manualViolations)
+        ? stored.complianceReview.manualViolations
+        : Array.isArray(stored?.officerReview?.manualViolations)
+          ? stored.officerReview.manualViolations
+          : [];
+      const violations = [...acceptedViolations, ...resolvedOfficerViolations, ...manualViolations]
+        .filter((finding, index, list) => list.findIndex((item) => String(item?.findingId) === String(finding?.findingId)) === index);
       const penaltySummary = calculatePenalty(violations, activeRules, "SECOND");
       if (editable) await downloadProductRtf({ product: full, user, violations, penaltySummary }); else await downloadProductPdf({ product: full, user, violations, penaltySummary });
     } catch (err) { setError(err.message || (editable ? "Could not generate the editable report" : "Could not generate the PDF")); }
