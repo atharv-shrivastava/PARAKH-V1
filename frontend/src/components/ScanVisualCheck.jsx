@@ -8,7 +8,12 @@ const MAX_ANALYSIS_SIDE = 1200;
 // Temporary presentation gate: hide the Declaration Map UI only on 2026-09-19.
 // All declaration extraction, storage, and evidence mapping logic remains active.
 const DECLARATION_MAP_DISABLED_ON = "2026-09-19";
-const todayKey = new Date().toISOString().slice(0, 10);
+const now = new Date();
+const todayKey = [
+  now.getFullYear(),
+  String(now.getMonth() + 1).padStart(2, "0"),
+  String(now.getDate()).padStart(2, "0"),
+].join("-");
 const SHOW_DECLARATION_MAP = todayKey !== DECLARATION_MAP_DISABLED_ON;
 const REQUIRED_TYPES = new Set(["PRODUCT_NAME", "MANUFACTURER", "ADDRESS", "PACKER", "IMPORTER", "NET_QUANTITY", "MRP", "DATE_OF_MANUFACTURE", "DATE_OF_PACKING", "BEST_BEFORE", "EXPIRY_DATE", "CONSUMER_CARE"]);
 const TYPE_LABELS = { PRODUCT_NAME: "Product name", MANUFACTURER: "Manufacturer", ADDRESS: "Manufacturer address", PACKER: "Packer", IMPORTER: "Importer", NET_QUANTITY: "Net quantity", MRP: "MRP", DATE_OF_MANUFACTURE: "Manufacturing date", DATE_OF_PACKING: "Packing date", BEST_BEFORE: "Best before", EXPIRY_DATE: "Expiry date", CONSUMER_CARE: "Consumer care" };
