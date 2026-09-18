@@ -22,25 +22,99 @@ function verifyProduct({ brandName, productName, netQuantity, unit, mrp }) {
 
 function visibility(req) { return req.user.role === "ADMIN" ? {} : { ownerId: req.user.id }; }
 
-function calculateReviewedCompliance({ compliance, ocr, acceptedFindingIds }) {
+function calculateReviewedCompliance({ compliance, ocr, acceptedFindingIds, officerReview, manualViolations }) {
   const findings = Array.isArray(compliance?.findings) ? compliance.findings : [];
-  const engineViolations = findings.filter((finding) => finding?.status === "VIOLATION");
+  const engineViolations = findings.filter((finding) => String(finding?.status || "").toUpperCase() === "VIOLATION");
+  const unresolvedFindings = findings.filter((finding) => {
+    const status = String(finding?.status || "").toUpperCase();
+    return status === "UNABLE_TO_VERIFY" || status === "UNVERIFIED";
+  });
+
   const hasReviewSelection = Array.isArray(acceptedFindingIds);
   const acceptedSet = hasReviewSelection ? new Set(acceptedFindingIds.map(String)) : null;
-  const acceptedViolations = acceptedSet ? engineViolations.filter((finding) => acceptedSet.has(String(finding.findingId))) : engineViolations;
-  const rejectedViolations = hasReviewSelection ? engineViolations.filter((finding) => !acceptedSet.has(String(finding.findingId))) : [];
-  const needsReview = Boolean(ocr?.needsReview) || Number(compliance?.summary?.unableToVerify || 0) > 0;
-  const status = acceptedViolations.length > 0 ? "VIOLATION" : needsReview ? "NEEDS_REVIEW" : "OKAY";
-  const reason = acceptedViolations.length > 0
-    ? `Inspector accepted ${acceptedViolations.length} Rules Engine violation(s): ${acceptedViolations.map((x) => x.message || x.violationReason || x.ruleCode).join(" | ")}`
+  const acceptedViolations = acceptedSet
+    ? engineViolations.filter((finding) => acceptedSet.has(String(finding.findingId)))
+    : engineViolations;
+  const rejectedViolations = hasReviewSelection
+    ? engineViolations.filter((finding) => !acceptedSet.has(String(finding.findingId)))
+    : [];
+
+  const decisions = officerReview?.resolvedFindings && typeof officerReview.resolvedFindings === "object"
+    ? officerReview.resolvedFindings
+    : {};
+  const decisionEntries = Object.entries(decisions).filter(([, review]) => review?.decision);
+  const decisionMap = new Map(decisionEntries.map(([id, review]) => [String(id), review]));
+
+  const resolvedOfficerViolations = unresolvedFindings
+    .filter((finding) => decisionMap.get(String(finding.findingId))?.decision === "VIOLATION_CONFIRMED")
+    .map((finding) => ({
+      ...finding,
+      status: "VIOLATION",
+      violationReason:
+        decisionMap.get(String(finding.findingId))?.note ||
+        finding.violationReason ||
+        finding.message ||
+        "Confirmed by officer review.",
+    }));
+
+  const resolvedPresent = unresolvedFindings.filter(
+    (finding) => decisionMap.get(String(finding.findingId))?.decision === "VERIFIED_PRESENT",
+  );
+  const resolvedNotApplicable = unresolvedFindings.filter(
+    (finding) => decisionMap.get(String(finding.findingId))?.decision === "NOT_APPLICABLE",
+  );
+  const unresolvedRemaining = unresolvedFindings.filter(
+    (finding) => !decisionMap.get(String(finding.findingId)),
+  );
+
+  const recordedManualViolations = Array.isArray(manualViolations)
+    ? manualViolations.filter((finding) => finding && finding.findingId)
+    : [];
+
+  const needsReview = Boolean(ocr?.needsReview) || unresolvedRemaining.length > 0;
+  const allConfirmedViolations = [...acceptedViolations, ...resolvedOfficerViolations, ...recordedManualViolations];
+  const status = allConfirmedViolations.length > 0 ? "VIOLATION" : needsReview ? "NEEDS_REVIEW" : "OKAY";
+
+  const reason = allConfirmedViolations.length > 0
+    ? [
+        acceptedViolations.length
+          ? `Inspector accepted ${acceptedViolations.length} Rules Engine violation(s): ${acceptedViolations.map((x) => x.message || x.violationReason || x.ruleCode).join(" | ")}`
+          : "",
+        resolvedOfficerViolations.length
+          ? `Officer confirmed ${resolvedOfficerViolations.length} previously-unable finding(s) as violation(s): ${resolvedOfficerViolations.map((x) => x.violationReason || x.ruleCode).join(" | ")}`
+          : "",
+        recordedManualViolations.length
+          ? `Officer recorded ${recordedManualViolations.length} manual violation(s): ${recordedManualViolations.map((x) => x.message || x.violationReason || x.ruleCode).join(" | ")}`
+          : "",
+      ].filter(Boolean).join(" | ")
     : needsReview
-      ? "Inspector review remains required because one or more OCR/rule checks could not be verified."
+      ? "Inspector review remains required because one or more rule findings still cannot be verified."
       : hasReviewSelection && rejectedViolations.length > 0
         ? "Rules Engine findings were reviewed; detected violations were not accepted by the inspector."
         : "Automated OCR and Rules Engine assessment completed; final legal verification remains with the inspector.";
-  return { status, reason, engineViolations, acceptedViolations, rejectedViolations };
-}
 
+  return {
+    status,
+    reason,
+    engineViolations,
+    acceptedViolations,
+    rejectedViolations,
+    unresolvedFindings,
+    unresolvedRemaining,
+    resolvedOfficerViolations,
+    resolvedPresent,
+    resolvedNotApplicable,
+    recordedManualViolations,
+    officerDecisionCounts: {
+      violations: resolvedOfficerViolations.length,
+      passed: resolvedPresent.length,
+      outOfScope: resolvedNotApplicable.length,
+      unresolved: unresolvedRemaining.length,
+      recorded: decisionEntries.length,
+    },
+    officerDecisionMap: Object.fromEntries(decisionEntries),
+  };
+}
 function sourceValue(value) { return String(value || "OFFLINE").toUpperCase() === "ECOMMERCE" ? "ECOMMERCE" : "OFFLINE"; }
 
 const historySelect = {
