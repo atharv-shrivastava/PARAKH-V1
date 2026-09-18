@@ -54,8 +54,73 @@ function barcodeState(status = "NONE", error = null) { return { attempted: true,
 
 export default function ScanV2() {
   const videoRef = useRef(null); const controllerRef = useRef(null); const dataKartControllerRef = useRef(null); const analysisRunRef = useRef(0);
-  const [categories, setCategories] = useState([]); const [images, setImages] = useState([]); const [ocr, setOcr] = useState(null); const [compliance, setCompliance] = useState(null); const [complianceError, setComplianceError] = useState(null); const [acceptedFindingIds, setAcceptedFindingIds] = useState([]); const [manualViolations, setManualViolations] = useState([]); const [manualViolationReason, setManualViolationReason] = useState(""); const [manualRuleNumber, setManualRuleNumber] = useState(""); const [selectedCategoryId, setSelectedCategoryId] = useState(""); const [form, setForm] = useState(EMPTY_FORM); const [providerInfo, setProviderInfo] = useState(null); const [aiSuggestedCategory, setAiSuggestedCategory] = useState(null); const [cameraOpen, setCameraOpen] = useState(false); const [cameraError, setCameraError] = useState(""); const [analyzing, setAnalyzing] = useState(false); const [analysisElapsedMs, setAnalysisElapsedMs] = useState(0); const [analysisDurationMs, setAnalysisDurationMs] = useState(null); const [saving, setSaving] = useState(false); const [showRegistration, setShowRegistration] = useState(false); const [useExtractedData, setUseExtractedData] = useState(false); const [editingImageIndex, setEditingImageIndex] = useState(null); const [message, setMessage] = useState(""); const [barcodeFile, setBarcodeFile] = useState(null); const [barcodePreviewUrl, setBarcodePreviewUrl] = useState(""); const [manualGtin, setManualGtin] = useState(""); const [barcodeResult, setBarcodeResult] = useState(null); const [datakartVerification, setDatakartVerification] = useState(EMPTY_DATAKART); const [verificationConfidence, setVerificationConfidence] = useState(null);
+  const [categories, setCategories] = useState([]); const [images, setImages] = useState([]); const [ocr, setOcr] = useState(null); const [compliance, setCompliance] = useState(null); const [complianceError, setComplianceError] = useState(null); const [acceptedFindingIds, setAcceptedFindingIds] = useState([]); const [manualViolations, setManualViolations] = useState([]); const [manualViolationReason, setManualViolationReason] = useState(""); const [manualRuleNumber, setManualRuleNumber] = useState(""); const [selectedCategoryId, setSelectedCategoryId] = useState(""); const [form, setForm] = useState(EMPTY_FORM); const [providerInfo, setProviderInfo] = useState(null); const [aiSuggestedCategory, setAiSuggestedCategory] = useState(null); const [cameraOpen, setCameraOpen] = useState(false); const [cameraError, setCameraError] = useState(""); const [analyzing, setAnalyzing] = useState(false); const [analysisElapsedMs, setAnalysisElapsedMs] = useState(0); const [analysisDurationMs, setAnalysisDurationMs] = useState(null); const [saving, setSaving] = useState(false); const [showRegistration, setShowRegistration] = useState(false); const [useExtractedData, setUseExtractedData] = useState(false); const [editingImageIndex, setEditingImageIndex] = useState(null); const [message, setMessage] = useState(""); const [barcodeFile, setBarcodeFile] = useState(null); const [barcodePreviewUrl, setBarcodePreviewUrl] = useState(""); const [manualGtin, setManualGtin] = useState(""); const [barcodeResult, setBarcodeResult] = useState(null); const [datakartVerification, setDatakartVerification] = useState(EMPTY_DATAKART); const [verificationConfidence, setVerificationConfidence] = useState(null); const [unableReviewSync, setUnableReviewSync] = useState({ unresolvedCount: 0, passCount: 0, failCount: 0 });
   useEffect(() => { apiFetch(`${API_URL}/categories/tree/all?sourceType=OFFLINE`).then(async (r) => { if (!r.ok) throw new Error("Unable to load offline categories"); return r.json(); }).then(setCategories).catch((e) => setMessage(e.message)); }, []);
+
+  useEffect(() => {
+    const handleReviewSync = (event) => {
+      const detail = event.detail || {};
+      const nextCompliance = detail.compliance;
+      setUnableReviewSync({
+        unresolvedCount: Number(detail.unresolvedCount || 0),
+        passCount: Number(detail.passCount || 0),
+        failCount: Number(detail.failCount || 0),
+      });
+
+      if (nextCompliance) {
+        const decisions = detail.decisions || {};
+        const failIds = Object.entries(decisions)
+          .filter(([, decision]) => decision === "FAIL")
+          .map(([findingId]) => findingId);
+        const reviewFindingIds = Object.keys(decisions);
+
+        setCompliance(nextCompliance);
+        setAcceptedFindingIds((current) => [
+          ...current.filter((id) => !reviewFindingIds.includes(id)),
+          ...failIds,
+        ]);
+      } else {
+        setCompliance(null);
+        setAcceptedFindingIds([]);
+      }
+    };
+
+    window.addEventListener("parakh:unable-review-updated", handleReviewSync);
+    return () => window.removeEventListener("parakh:unable-review-updated", handleReviewSync);
+  }, []);
+
+  useEffect(() => {
+    const engineFindings = Array.isArray(compliance?.findings)
+      ? compliance.findings.filter((finding) => finding.status === "VIOLATION")
+      : [];
+
+    const detail = {
+      unableToVerify: Math.max(0, Number(compliance?.summary?.unableToVerify || 0)),
+      selectedViolations: accepted.length,
+      totalViolations: engineFindings.length,
+      reviewed: unableReviewSync.unresolvedCount === 0
+        && (unableReviewSync.passCount + unableReviewSync.failCount > 0),
+    };
+
+    window.__parakhScanSummary = detail;
+    window.dispatchEvent(new CustomEvent("parakh:scan-summary-updated", { detail }));
+
+    return () => {
+      delete window.__parakhScanSummary;
+    };
+  }, [compliance, accepted.length, unableReviewSync]);
+
+  useEffect(() => {
+    if (!compliance && !ocr) {
+      setUnableReviewSync({ unresolvedCount: 0, passCount: 0, failCount: 0 });
+      window.__parakhScanSummary = {
+        unableToVerify: 0,
+        selectedViolations: 0,
+        totalViolations: 0,
+        reviewed: false,
+      };
+    }
+  }, [compliance, ocr]);
   useEffect(() => () => { controllerRef.current?.abort(); dataKartControllerRef.current?.abort(); if (videoRef.current?.srcObject) videoRef.current.srcObject.getTracks().forEach((track) => track.stop()); }, []);
   useEffect(() => { if (!analyzing) return undefined; const started = Date.now(); setAnalysisElapsedMs(0); const timer = window.setInterval(() => setAnalysisElapsedMs(Date.now() - started), 100); return () => window.clearInterval(timer); }, [analyzing]);
   const finalCategories = flattenCategories(categories).filter(isSelectableFinalCategory);
@@ -64,7 +129,7 @@ export default function ScanV2() {
   const selectedViolations = [...accepted, ...manualViolations]; const barcodeCompare = datakartVerification?.comparison?.comparisons || {}; const scannerGtin = barcodeResult?.found ? barcodeResult.gtin : null;
   function update(key, value) { setForm((current) => ({ ...current, [key]: value })); }
   function resetVerificationState() { dataKartControllerRef.current?.abort(); dataKartControllerRef.current = null; setBarcodeResult(null); setDatakartVerification({ ...EMPTY_DATAKART }); setVerificationConfidence(null); }
-  function resetAnalysisState() { setOcr(null); setCompliance(null); setComplianceError(null); setAcceptedFindingIds([]); setManualViolations([]); setManualViolationReason(""); setManualRuleNumber(""); setProviderInfo(null); setAiSuggestedCategory(null); setSelectedCategoryId(""); setShowRegistration(false); setUseExtractedData(false); setForm(EMPTY_FORM); window.sessionStorage.removeItem("parakhDeclarationEvidence"); resetVerificationState(); }
+  function resetAnalysisState() { setOcr(null); setCompliance(null); setUnableReviewSync({ unresolvedCount: 0, passCount: 0, failCount: 0 }); setComplianceError(null); setAcceptedFindingIds([]); setManualViolations([]); setManualViolationReason(""); setManualRuleNumber(""); setProviderInfo(null); setAiSuggestedCategory(null); setSelectedCategoryId(""); setShowRegistration(false); setUseExtractedData(false); setForm(EMPTY_FORM); window.sessionStorage.removeItem("parakhDeclarationEvidence"); resetVerificationState(); }
   function resetScan() { analysisRunRef.current += 1; controllerRef.current?.abort(); dataKartControllerRef.current?.abort(); controllerRef.current = null; dataKartControllerRef.current = null; if (videoRef.current?.srcObject) videoRef.current.srcObject.getTracks().forEach((track) => track.stop()); if (videoRef.current) videoRef.current.srcObject = null; if (barcodePreviewUrl) URL.revokeObjectURL(barcodePreviewUrl); setImages((current) => { current.forEach((item) => URL.revokeObjectURL(item.url)); return []; }); setCameraOpen(false); setCameraError(""); setBarcodeFile(null); setBarcodePreviewUrl(""); setManualGtin(""); setBarcodeResult(null); setDatakartVerification({ ...EMPTY_DATAKART }); setVerificationConfidence(null); setEditingImageIndex(null); resetAnalysisState(); setAnalyzing(false); setAnalysisElapsedMs(0); setAnalysisDurationMs(null); setSaving(false); setMessage("Scan reset. Add new package images to begin again."); }
   function addFiles(input) { const files = Array.from(input || []).filter((file) => file instanceof File && file.type.startsWith("image/")); if (!files.length) return; resetAnalysisState(); setImages((current) => [...current, ...files.slice(0, MAX_IMAGES - current.length).map((file) => ({ file, url: URL.createObjectURL(file) }))]); setMessage("Images ready. Use Edit on any image to rotate or crop before analysis."); }
   function applyEditedImage(index, file) { setImages((current) => current.map((item, imageIndex) => { if (imageIndex !== index) return item; URL.revokeObjectURL(item.url); return { file, url: URL.createObjectURL(file) }; })); resetAnalysisState(); setEditingImageIndex(null); setMessage("Edited image applied. Analyze again to use the corrected image."); }
