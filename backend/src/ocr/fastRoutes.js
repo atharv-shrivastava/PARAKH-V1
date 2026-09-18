@@ -531,7 +531,13 @@ async function analyze(req, res) {
       aiSemantic: { providerCount: semantic.providerCount, providers: semantic.providers, suggestedCategory: semantic.suggestedCategory || null, packageConsistency: semantic.packageConsistency || null },
       suggestedCategory: semantic.suggestedCategory || null,
       warnings: semantic.providerCount === 0 ? ["Gemini visual extraction was unavailable; review OCR-only findings carefully."] : [],
-      needsReview: semantic.packageConsistency?.status !== "single_package" || Object.values(fields).some((field) => field?.status === "ambiguous" || field?.status === "unreadable" || (field?.status === "found" && Number(field?.confidence || 0) < 0.6)),
+      // Low confidence never erases a non-empty extracted value and therefore
+      // does not by itself force review. Review is driven by ambiguity/unreadability
+      // where no usable value survived fusion.
+      needsReview: semantic.packageConsistency?.status !== "single_package" || Object.values(fields).some((field) => {
+        const value = text(field?.value);
+        return !value && (field?.status === "ambiguous" || field?.status === "unreadable");
+      }),
       packageConsistency: semantic.packageConsistency || { status: "uncertain", confidence: 0, providers: [], evidence: "Package consistency could not be established." },
     };
     const finalResult = await applyEvidenceConfidence(structured, { barcodeImageProvided: Boolean(barcodeFile) });
