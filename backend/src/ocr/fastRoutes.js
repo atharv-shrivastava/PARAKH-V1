@@ -11,6 +11,8 @@ import { interpretPackageWithGemini } from "./geminiPackageInterpreter.js";
 import { interpretPackageWithGrok } from "./grokPackageInterpreter.js";
 import { reconcileSemanticResults } from "./semanticConsensus.js";
 import { applyEvidenceConfidence } from "./evidenceConfidence.js";
+import { interpretOcrFields } from "./ocrFieldInterpreter.js";
+import { normalizeLegalMetrologyFields } from "./legalMetrologyRegex.js";
 
 const router = express.Router();
 const config = getOcrConfig();
@@ -212,6 +214,153 @@ function attachEvidence(fields, evidence) {
   return output;
 }
 
+
+function fieldHasValue(field) {
+  return Boolean(field && field.status === "found" && text(field.value));
+}
+
+function comparableFieldValue(key, field) {
+  const value = normalizeComparable(field?.value ?? field?.displayValue ?? field?.raw ?? "");
+  if (!value) return "";
+  if (["mrp", "netQuantity"].includes(key)) {
+    const numbers = numberTokens(value);
+    if (numbers.length) return numbers.join("|");
+  }
+  return value;
+}
+
+function fieldsAgree(key, a, b) {
+  const left = comparableFieldValue(key, a);
+  const right = comparableFieldValue(key, b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  if (["mrp", "netQuantity", "unit", "batchNumber", "consumerCarePhone", "consumerCareEmail", "fssaiLicenseNumber", "barcode"].includes(key)) {
+    return false;
+  }
+  return left.includes(right) || right.includes(left);
+}
+
+function prepareDeterministicOcrFields(rapid) {
+  const interpreted = interpretOcrFields({
+    detections: rapid.evidence,
+    rawText: rapid.rawText,
+  });
+  const repaired = repairNumericFields(
+    interpreted?.fields || {},
+    rapid.evidence,
+    rapid.rawText,
+  );
+  return normalizeLegalMetrologyFields({
+    ...repaired,
+    rawText: rapid.rawText,
+    declarationEvidence: rapid.evidence,
+  });
+}
+
+function withSelectedSource(field, source, extra = {}) {
+  if (!field) return field;
+  return {
+    ...field,
+    source,
+    ...extra,
+  };
+}
+
+function mergeFieldSources({ consensusFields = {}, providerResults = [], ocrFields = {} }) {
+  const gemini = providerResults.find((provider) => provider?.enabled && String(provider.provider).toLowerCase() === "gemini")?.fields || {};
+  const grok = providerResults.find((provider) => provider?.enabled && String(provider.provider).toLowerCase() === "grok")?.fields || {};
+  const output = {};
+
+  const allKeys = new Set([
+    ...Object.keys(consensusFields || {}),
+    ...Object.keys(gemini || {}),
+    ...Object.keys(grok || {}),
+    ...Object.keys(ocrFields || {}),
+  ]);
+
+  for (const key of allKeys) {
+    const consensus = consensusFields?.[key];
+    const geminiField = gemini?.[key];
+    const grokField = grok?.[key];
+    const ocrField = ocrFields?.[key];
+
+    if (fieldHasValue(consensus)) {
+      const crossChecked = fieldHasValue(ocrField) && fieldsAgree(key, consensus, ocrField);
+      const selected = crossChecked
+        ? {
+            ...consensus,
+            confidence: Math.min(
+              0.98,
+              Math.max(
+                Number(consensus.confidence || 0),
+                Number(consensus.confidence || 0) * 0.78 + Number(ocrField.confidence || 0) * 0.22,
+              ),
+            ),
+            raw: consensus.raw || ocrField.raw || ocrField.value,
+            evidence: consensus.evidence || ocrField.evidence || ocrField.raw || ocrField.value,
+            imageIndex: Number.isInteger(consensus.imageIndex) ? consensus.imageIndex : ocrField.imageIndex,
+            evidenceIndex: Number.isInteger(consensus.evidenceIndex) ? consensus.evidenceIndex : ocrField.evidenceIndex,
+          }
+        : consensus;
+      output[key] = withSelectedSource(
+        selected,
+        crossChecked ? "SEMANTIC_CONSENSUS_OCR_CROSSCHECK" : (consensus.source || "SEMANTIC_CONSENSUS"),
+        crossChecked ? { verification: "semantic-consensus-confirmed-by-ocr" } : {},
+      );
+      continue;
+    }
+
+    if (fieldHasValue(geminiField)) {
+      const crossChecked = fieldHasValue(ocrField) && fieldsAgree(key, geminiField, ocrField);
+      const confidence = crossChecked
+        ? Math.min(
+            0.96,
+            Math.max(
+              Number(geminiField.confidence || 0),
+              Number(geminiField.confidence || 0) * 0.76 + Number(ocrField.confidence || 0) * 0.24 + 0.04,
+            ),
+          )
+        : Number(geminiField.confidence || 0);
+
+      output[key] = withSelectedSource(
+        {
+          ...geminiField,
+          confidence,
+          raw: geminiField.raw || ocrField?.raw || ocrField?.value || null,
+          evidence: geminiField.evidence || ocrField?.evidence || ocrField?.raw || ocrField?.value || null,
+          imageIndex: Number.isInteger(geminiField.imageIndex) ? geminiField.imageIndex : ocrField?.imageIndex,
+          evidenceIndex: Number.isInteger(geminiField.evidenceIndex) ? geminiField.evidenceIndex : ocrField?.evidenceIndex,
+        },
+        crossChecked ? "GEMINI_OCR_CROSSCHECK" : "GEMINI_FALLBACK",
+        crossChecked ? { verification: "gemini-confirmed-by-ocr" } : { verification: geminiField.verification || "gemini-fallback" },
+      );
+      continue;
+    }
+
+    if (fieldHasValue(grokField)) {
+      output[key] = withSelectedSource(
+        grokField,
+        "GROK_FALLBACK",
+        { verification: grokField.verification || "grok-fallback" },
+      );
+      continue;
+    }
+
+    if (fieldHasValue(ocrField)) {
+      output[key] = withSelectedSource(
+        ocrField,
+        "OCR_REGEX_FALLBACK",
+        { verification: ocrField.verification || "ocr-regex-fallback" },
+      );
+      continue;
+    }
+
+    output[key] = consensus || geminiField || grokField || ocrField;
+  }
+
+  return output;
+}
+
 function buildDeclarationEvidence(fields) {
   const map = { productName: "PRODUCT_NAME", manufacturer: "MANUFACTURER", manufacturerAddress: "ADDRESS", packer: "PACKER", packerAddress: "ADDRESS", importer: "IMPORTER", importerAddress: "ADDRESS", netQuantity: "NET_QUANTITY", mrp: "MRP", dateOfManufacture: "DATE_OF_MANUFACTURE", dateOfPacking: "DATE_OF_PACKING", bestBefore: "BEST_BEFORE", expiryDate: "EXPIRY_DATE", consumerCarePhone: "CONSUMER_CARE", consumerCareEmail: "CONSUMER_CARE" };
   return Object.entries(fields || {}).flatMap(([key, field]) => {
@@ -233,7 +382,7 @@ async function runSemanticProviders({ images, rapid, categoryOptions, signal }) 
     }
   }));
   const consensus = reconcileSemanticResults(settled, categoryOptions);
-  return { ...consensus, timingMs: Date.now() - startedAt, timing: Object.fromEntries(settled.map((provider) => [provider.provider, provider.timingMs || 0])) };
+  return { ...consensus, providerResults: settled, timingMs: Date.now() - startedAt, timing: Object.fromEntries(settled.map((provider) => [provider.provider, provider.timingMs || 0])) };
 }
 
 async function analyze(req, res) {
@@ -248,7 +397,13 @@ async function analyze(req, res) {
     try { categoryOptions = JSON.parse(req.body?.categoryOptions || "[]"); if (!Array.isArray(categoryOptions)) categoryOptions = []; } catch { categoryOptions = []; }
     const rapid = await runRapid(images);
     const semantic = await runSemanticProviders({ images, rapid, categoryOptions, signal: undefined });
-    const repaired = regexRepairFields(semantic.fields, rapid.evidence, rapid.rawText);
+    const ocrFields = prepareDeterministicOcrFields(rapid);
+    const cascadedFields = mergeFieldSources({
+      consensusFields: semantic.fields,
+      providerResults: semantic.providerResults,
+      ocrFields,
+    });
+    const repaired = regexRepairFields(cascadedFields, rapid.evidence, rapid.rawText);
     const validated = validateFieldFormats(repaired);
     const fields = attachEvidence(validated, rapid.evidence);
     const submittedBarcode = text(req.body?.barcodeGtin).replace(/\D/g, "");
@@ -260,6 +415,7 @@ async function analyze(req, res) {
       rawOcrEvidence: rapid.evidence,
       otherDeclarations: rapid.evidence.map((item) => item.text),
       semanticReconciliation: { providerCount: semantic.providerCount, providers: semantic.providers },
+      extractionSources: { rapidOcr: ocrFields, providerResults: semantic.providerResults },
       aiSemantic: { providerCount: semantic.providerCount, providers: semantic.providers, suggestedCategory: semantic.suggestedCategory || null },
       suggestedCategory: semantic.suggestedCategory || null,
       warnings: semantic.providerCount < 2 ? ["Only one semantic AI provider was available; review single-provider findings carefully."] : [],
