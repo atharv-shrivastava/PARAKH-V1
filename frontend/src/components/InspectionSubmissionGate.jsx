@@ -12,58 +12,44 @@ const EMPTY_STATUS = {
   selectedViolations: 0,
 };
 
-function readStatus() {
-  return window.__parakhOfficerSummary || EMPTY_STATUS;
-}
-
-export default function InspectionSubmissionGate() {
-  const [status, setStatus] = useState(() => readStatus());
+export default function InspectionSubmissionGate({ status: incomingStatus }) {
   const [message, setMessage] = useState("");
-
   const active = useMemo(() => window.location.pathname.includes("/scan"), []);
+  const status = incomingStatus || EMPTY_STATUS;
 
   useEffect(() => {
     if (!active) return undefined;
 
-    const handleSummary = (event) => {
-      const next = event.detail || EMPTY_STATUS;
-      setStatus(next);
-      setMessage("");
-      if (next.officerReviewRecorded) {
-      }
-    };
-
-    const resetForNewScan = () => {
-      setStatus(EMPTY_STATUS);
-      setMessage("");
-    };
-
-    handleSummary({ detail: readStatus() });
-    window.addEventListener("parakh:officer-summary", handleSummary);
-    window.addEventListener("parakh:compliance-result", resetForNewScan);
-
     const submitGuard = (event) => {
       const form = event.target;
       if (!(form instanceof HTMLFormElement) || !form.classList.contains("registration-form")) return;
-      const next = readStatus();
-      if (next.totalUnresolved > 0 || !next.officerReviewRecorded) {
+      if (status.totalUnresolved > 0 || !status.officerReviewRecorded) {
         event.preventDefault();
         event.stopPropagation();
-        setMessage(`Review all ${next.totalUnresolved} remaining Unable to Verify findings before submission.`);
+        setMessage(
+          `Review all ${status.totalUnresolved} remaining Unable to Verify findings before submission.`,
+        );
       }
     };
 
     document.addEventListener("submit", submitGuard, true);
-    return () => {
-      document.removeEventListener("submit", submitGuard, true);
-      window.removeEventListener("parakh:officer-summary", handleSummary);
-      window.removeEventListener("parakh:compliance-result", resetForNewScan);
-    };
-  }, [active]);
+    return () => document.removeEventListener("submit", submitGuard, true);
+  }, [active, status]);
+
+  useEffect(() => {
+    setMessage("");
+  }, [
+    status.unableToVerify,
+    status.passed,
+    status.violations,
+    status.outOfScope,
+    status.officerResolvedCount,
+    status.totalUnresolved,
+  ]);
 
   if (!active) return null;
 
-  const ready = status.officerReviewRecorded && status.totalUnresolved === 0;
+  const ready = status.totalUnresolved === 0 && status.officerReviewRecorded;
 
   return (
     <section className="scan-review inspection-submission-review officer-review-card" style={{ marginTop: 16 }}>
