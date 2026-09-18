@@ -15,7 +15,7 @@ const RULE_ENGINE_FIELDS = [
   "expiryDate", "batchNumber", "consumerCarePhone", "consumerCareEmail", "countryOfOrigin", "fssaiLicenseNumber",
 ];
 
-const CONFIDENCE_WEIGHTS = { semanticConsensus: 0.60, paddleocr: 0.40 };
+const CONFIDENCE_WEIGHTS = { semanticConsensus: 1.00, ocrCorroboration: 0.00 };
 const HIGH_CONFIDENCE_THRESHOLD = 0.70;
 const RULE_ENGINE_MIN_CONFIDENCE = 0.30;
 
@@ -152,9 +152,11 @@ export async function applyEvidenceConfidence(result, options = {}) {
     const paddleocr = paddleEvidenceScore(fieldValue);
     const registeredValue = dataKart?.[FIELD_MAP[fieldKey]];
     const dataKartMatchState = dataKartMatch(fieldKey, fieldValue.value, registeredValue);
-    const fused = Math.max(0, Math.min(1,
-      CONFIDENCE_WEIGHTS.semanticConsensus * (semanticConsensus ?? 0) + CONFIDENCE_WEIGHTS.paddleocr * paddleocr,
-    ));
+    // Field fusion has already resolved the independent Gemini visual
+    // evidence against OCR/regex corroboration. Do not apply a second
+    // confidence formula that penalizes a correct Gemini value merely because
+    // its text could not be matched to an OCR rectangle.
+    const fused = Math.max(0, Math.min(1, semanticConsensus ?? 0));
     const verification = dataKartMatchState === true ? "MATCH" : dataKartMatchState === false ? "MISMATCH" : "UNVERIFIED";
     const nextField = {
       ...fieldValue,
@@ -186,7 +188,7 @@ export async function applyEvidenceConfidence(result, options = {}) {
     weights: { ...CONFIDENCE_WEIGHTS },
     highConfidenceThreshold: HIGH_CONFIDENCE_THRESHOLD,
     ruleEngineMinimumConfidence: RULE_ENGINE_MIN_CONFIDENCE,
-    method: "Semantic consensus (Gemini + Grok, 60%) + PaddleOCR evidence quality (40%). Fields with usable values at 30% or higher remain eligible for Rules Engine evaluation; below 30% is withheld. DataKart is reference verification only and never contributes to Rules Engine input.",
+    method: "Independent Gemini visual extraction is fused with deterministic OCR/regex corroboration at field level. OCR geometry is evidence metadata and does not reduce a valid visual extraction when no trustworthy box match exists. Fields with usable values at 30% or higher remain eligible for Rules Engine evaluation; below 30% is withheld. DataKart is reference verification only and never contributes to Rules Engine input.",
     dataKartAvailable: Boolean(dataKart),
     dataKartError,
     dataKartMatchedGtin,
