@@ -1,11 +1,17 @@
 import { FIELD_KEYS, confidence, text } from "./semanticPackageCommon.js";
 
 const SOURCE_WEIGHTS = {
-  gemini_image: 0.92,
-  gemini_ocr_normalization: 0.82,
-  grok_image: 0.88,
-  deterministic_regex: 0.62,
+  gemini_image: 1,
+  gemini_ocr_normalization: 0.9,
+  deterministic_regex: 0.8,
+  grok_image: 0.7,
 };
+
+const SOURCE_PRIORITY = [
+  "gemini_image",
+  "gemini_ocr_normalization",
+  "deterministic_regex",
+];
 
 const DATE_FIELDS = new Set(["dateOfManufacture", "dateOfPacking", "bestBefore", "expiryDate"]);
 const PHONE_FIELDS = new Set(["consumerCarePhone"]);
@@ -27,7 +33,10 @@ function canonicalValue(key, value) {
 
   if (CURRENCY_FIELDS.has(key)) {
     const match = raw.replace(/,/g, "").match(/\d+(?:\.\d+)?/);
-    return match ? match[0] : raw.toLowerCase().replace(/\b(?:mrp|maximum retail price|retail price|rs\.?|inr)\b/g, "").trim();
+    return match ? match[0] : raw
+      .toLowerCase()
+      .replace(/\b(?:mrp|maximum retail price|retail price|rs\.?|inr)\b/g, "")
+      .trim();
   }
 
   if (QUANTITY_FIELDS.has(key)) {
@@ -51,7 +60,12 @@ function canonicalValue(key, value) {
 }
 
 function sourceWeight(source) {
-  return Number(SOURCE_WEIGHTS[source?.sourceKind] ?? 0.50);
+  return Number(SOURCE_WEIGHTS[source?.sourceKind] ?? 0.5);
+}
+
+function sourceRank(sourceKind) {
+  const index = SOURCE_PRIORITY.indexOf(sourceKind);
+  return index === -1 ? SOURCE_PRIORITY.length : index;
 }
 
 function sourceLabel(source) {
@@ -86,6 +100,31 @@ function statusWhenEmpty(fields) {
   return "absent";
 }
 
+function pickFallbackObservation(observations) {
+  for (const sourceKind of SOURCE_PRIORITY) {
+    const candidate = observations
+      .filter((item) => item.sourceKind === sourceKind && item.normalizedValue && item.status === "found")
+      .sort((a, b) => b.confidence - a.confidence)[0];
+    if (candidate) return candidate;
+  }
+  return null;
+}
+
+function buildFoundResult(winningField, winner, verification, fusion) {
+  return {
+    ...(winningField || {}),
+    value: winner.value,
+    displayValue: winningField?.displayValue || winner.value,
+    raw: winningField?.raw ?? winner.value,
+    evidence: winningField?.evidence ?? winner.evidence ?? winner.value,
+    confidence: Number(Math.min(0.99, Math.max(0, winner.confidence)).toFixed(3)),
+    status: "found",
+    source: "FIELD_FUSION",
+    verification,
+    fusion,
+  };
+}
+
 function fuseField(key, sources) {
   const observations = [];
   for (const source of sources) {
@@ -94,6 +133,8 @@ function fuseField(key, sources) {
   }
 
   const found = observations.filter((item) => item.normalizedValue && item.status === "found");
+
+  // Nothing usable from any source: the field stays empty.
   if (!found.length) {
     return {
       value: null,
@@ -104,7 +145,13 @@ function fuseField(key, sources) {
       status: statusWhenEmpty(observations),
       source: "FIELD_FUSION",
       verification: "no-supported-value",
-      fusion: { observations, agreementCount: 0, conflict: false, winnerSource: null },
+      fusion: {
+        observations,
+        agreementCount: 0,
+        conflict: false,
+        winnerSource: null,
+        fallbackUsed: false,
+      },
     };
   }
 
@@ -118,89 +165,110 @@ function fuseField(key, sources) {
     .map(([normalizedValue, members]) => ({
       normalizedValue,
       members,
+      agreementCount: members.length,
+      voteSupport: members.reduce((sum, member) => sum + member.confidence, 0),
       weightedSupport: members.reduce((sum, member) => sum + member.weightedSupport, 0),
       maxConfidence: Math.max(...members.map((member) => member.confidence)),
+      bestPriority: Math.min(...members.map((member) => sourceRank(member.sourceKind))),
     }))
-    .sort((a, b) => b.weightedSupport - a.weightedSupport || b.members.length - a.members.length || b.maxConfidence - a.maxConfidence);
+    .sort((a, b) =>
+      b.agreementCount - a.agreementCount ||
+      b.voteSupport - a.voteSupport ||
+      b.weightedSupport - a.weightedSupport ||
+      a.bestPriority - b.bestPriority ||
+      b.maxConfidence - a.maxConfidence
+    );
 
-  const winner = rankedGroups[0];
+  const winnerGroup = rankedGroups[0];
   const runnerUp = rankedGroups[1] || null;
-  const agreementCount = winner.members.length;
   const conflict = rankedGroups.length > 1;
+  const agreementCount = winnerGroup.agreementCount;
 
-  const bestMember = [...winner.members].sort(
-    (a, b) => b.confidence - a.confidence || b.weightedSupport - a.weightedSupport,
+  const bestMember = [...winnerGroup.members].sort(
+    (a, b) =>
+      b.confidence - a.confidence ||
+      sourceRank(a.sourceKind) - sourceRank(b.sourceKind),
   )[0];
 
-  const margin = runnerUp ? winner.weightedSupport - runnerUp.weightedSupport : Infinity;
-  const strongLoneWinner = agreementCount === 1 && (!runnerUp || (margin >= 0.20 && bestMember.confidence >= 0.75));
-  const conflictingButSupported = agreementCount >= 2 && (!runnerUp || margin >= 0.10);
+  // Two or three agreeing sources form the normal vote winner.
+  const consensusWinner = agreementCount >= 2;
 
-  if (conflict && !strongLoneWinner && !conflictingButSupported) {
-    return {
-      value: null,
-      displayValue: "",
-      raw: rankedGroups
-        .slice(0, 3)
-        .flatMap((group) => group.members.map((member) => member.source + ": " + member.value))
-        .join(" | "),
-      evidence: rankedGroups
-        .slice(0, 3)
-        .flatMap((group) => group.members.map((member) => member.source + ": " + (member.evidence || member.value)))
-        .join(" | "),
-      confidence: 0,
-      status: "ambiguous",
-      source: "FIELD_FUSION",
-      verification: "conflicting-evidence",
-      fusion: {
-        observations,
-        agreementCount,
-        conflict: true,
-        margin: Number.isFinite(margin) ? Number(margin.toFixed(4)) : null,
-        winnerSource: null,
-        candidates: rankedGroups.slice(0, 3).map((group) => ({
-          value: group.members[0]?.value ?? null,
-          support: Number(group.weightedSupport.toFixed(4)),
-          sources: group.members.map((member) => member.source),
-        })),
-      },
-    };
-  }
+  // A single source can still win when it is genuinely high-confidence.
+  // This prevents a strong Gemini reading from being displaced merely because
+  // regex found a different pattern in the raw OCR.
+  const runnerConfidence = runnerUp?.maxConfidence ?? 0;
+  const highConfidenceWinner =
+    agreementCount === 1 &&
+    bestMember.confidence >= 0.85 &&
+    (runnerConfidence === 0 || bestMember.confidence - runnerConfidence >= 0.10);
 
-  const agreementBoost = agreementCount >= 3 ? 0.14 : agreementCount === 2 ? 0.08 : 0;
-  const conflictAdjustment = conflict && agreementCount === 1 ? 0.05 : 0;
-  const fusedConfidence = Math.min(
-    0.99,
-    Math.max(0, bestMember.confidence + agreementBoost - conflictAdjustment),
-  );
+  if (consensusWinner || highConfidenceWinner) {
+    const agreementBoost = agreementCount >= 3 ? 0.10 : agreementCount === 2 ? 0.06 : 0;
+    const winningConfidence = Math.min(0.99, bestMember.confidence + agreementBoost);
 
-  const winningSource = sources.find(
-    (source) => source?.enabled && source?.fields?.[key] && canonicalValue(key, source.fields[key].value) === winner.normalizedValue,
-  );
-  const winningField = winningSource?.fields?.[key] || null;
+    const winningSource = sources.find(
+      (source) =>
+        source?.enabled &&
+        source?.fields?.[key] &&
+        canonicalValue(key, source.fields[key].value) === winnerGroup.normalizedValue,
+    );
+    const winningField = winningSource?.fields?.[key] || null;
 
-  return {
-    ...(winningField || {}),
-    value: bestMember.value,
-    displayValue: winningField?.displayValue || bestMember.value,
-    raw: winningField?.raw ?? bestMember.value,
-    evidence: winningField?.evidence ?? bestMember.evidence ?? bestMember.value,
-    confidence: Number(fusedConfidence.toFixed(3)),
-    status: "found",
-    source: "FIELD_FUSION",
-    verification:
+    return buildFoundResult(
+      winningField,
+      { ...bestMember, confidence: winningConfidence },
       agreementCount >= 2
         ? "agreement-" + agreementCount + "-sources"
         : conflict
-          ? "strongest-supported-candidate"
+          ? "high-confidence-single-source"
           : "single-supported-source",
+      {
+        observations,
+        agreementCount,
+        conflict,
+        winnerSource: bestMember.source,
+        candidateSources: winnerGroup.members.map((member) => member.source),
+        voteSupport: Number(winnerGroup.voteSupport.toFixed(4)),
+        margin: runnerUp
+          ? Number((winnerGroup.voteSupport - runnerUp.voteSupport).toFixed(4))
+          : null,
+        fallbackUsed: false,
+        fallbackOrder: SOURCE_PRIORITY,
+      },
+    );
+  }
+
+  // A true unresolved conflict must stay unresolved. Do not silently pick a
+  // lower-priority source just to make the UI look complete.
+  return {
+    value: null,
+    displayValue: "",
+    raw: rankedGroups
+      .slice(0, 3)
+      .flatMap((group) => group.members.map((member) => member.source + ": " + member.value))
+      .join(" | "),
+    evidence: rankedGroups
+      .slice(0, 3)
+      .flatMap((group) => group.members.map((member) => member.source + ": " + (member.evidence || member.value)))
+      .join(" | "),
+    confidence: 0,
+    status: "ambiguous",
+    source: "FIELD_FUSION",
+    verification: "conflicting-evidence",
     fusion: {
       observations,
       agreementCount,
-      conflict,
-      margin: Number.isFinite(margin) ? Number(margin.toFixed(4)) : null,
-      winnerSource: bestMember.source,
-      candidateSources: winner.members.map((member) => member.source),
+      conflict: true,
+      winnerSource: null,
+      winnerCandidate: bestMember.value,
+      winnerConfidence: bestMember.confidence,
+      fallbackUsed: false,
+      fallbackOrder: SOURCE_PRIORITY,
+      candidates: rankedGroups.slice(0, 3).map((group) => ({
+        value: group.members[0]?.value ?? null,
+        support: Number(group.voteSupport.toFixed(4)),
+        sources: group.members.map((member) => member.source),
+      })),
     },
   };
 }
@@ -211,4 +279,4 @@ export function fuseFieldSources(sources = [], categoryKeys = FIELD_KEYS) {
   return output;
 }
 
-export { SOURCE_WEIGHTS, canonicalValue };
+export { SOURCE_WEIGHTS, SOURCE_PRIORITY, canonicalValue };
