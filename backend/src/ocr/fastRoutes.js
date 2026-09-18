@@ -64,7 +64,7 @@ async function readImages(files) {
 
 async function runRapid(images) {
   const form = new FormData();
-  const ocrUrl = process.env.NODE_ENV === "production" ? (process.env.RAPID_OCR_URL || "http://localhost:8081") : "http://localhost:8081";
+  const ocrUrl = process.env.RAPID_OCR_URL || process.env.PADDLE_OCR_URL || "http://localhost:8080";
   images.forEach((image, index) => form.append("images", new Blob([Buffer.from(image.base64, "base64")], { type: image.mediaType }), `parakh-${index + 1}.${ext(image.mediaType)}`));
   const startedAt = Date.now();
   let response;
