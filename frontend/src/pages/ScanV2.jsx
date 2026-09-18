@@ -155,7 +155,7 @@ export default function ScanV2() {
   const selectedViolations = [...accepted, ...resolvedViolations, ...manualViolations]
     .filter((finding, index, list) => list.findIndex((item) => item.findingId === finding.findingId) === index);
   const officerResolvedCount = unresolvedFindings.length - unresolvedRemaining.length;
-  const officerReviewRecorded = unresolvedFindings.length === 0 || unresolvedRemaining.length === 0;
+  const officerReviewRecorded = unresolvedRemaining.length === 0;
   const barcodeCompare = datakartVerification?.comparison?.comparisons || {};
   const scannerGtin = barcodeResult?.found ? barcodeResult.gtin : null;
 
