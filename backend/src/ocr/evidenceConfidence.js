@@ -22,7 +22,7 @@ const RULE_ENGINE_MIN_CONFIDENCE = 0.30;
 // External web data is reference evidence only. Keep this allow-list narrow:
 // package-specific declarations such as addresses, dates, expiry and batch
 // numbers must never be populated from the web.
-const WEB_FALLBACK_FIELDS = new Set(["mrp"]);
+const WEB_FALLBACK_FIELDS = new Set(["mrp", "netQuantity", "unit"]);
 
 function clamp01(value) {
   const number = Number(value);
@@ -186,18 +186,52 @@ export async function applyEvidenceConfidence(result, options = {}) {
   next.ruleEngineInput = buildRuleEngineInput(next);
   next.majorityVote = next.ruleEngineInput;
 
-  if (WEB_FALLBACK_FIELDS.has("mrp") && webMrpRange && next.mrp && typeof next.mrp === "object") {
-    // Keep the package-extracted value untouched. Web data is only attached
-    // as reference evidence and never becomes package evidence or Rules Engine input.
-    next.mrp = {
-      ...next.mrp,
-      webFallback: {
-        ...webMrpRange,
-        source: "WEB_REFERENCE",
-        reason: webFallbackReason,
-        referenceOnly: true,
-      },
-    };
+  if (webMrpRange && typeof webMrpRange === "object") {
+    // Keep package extraction authoritative. Web results are reference-only
+    // hints for selected product-level fields and never become legal evidence.
+    if (WEB_FALLBACK_FIELDS.has("mrp") && next.mrp && typeof next.mrp === "object") {
+      next.mrp = {
+        ...next.mrp,
+        webFallback: {
+          status: webMrpRange.status || "NOT_FOUND",
+          min: webMrpRange.min ?? null,
+          max: webMrpRange.max ?? null,
+          currency: webMrpRange.currency || "INR",
+          source: "WEB_REFERENCE",
+          reason: webFallbackReason,
+          referenceOnly: true,
+          disclaimer: webMrpRange.disclaimer || "Reference only; not package evidence.",
+        },
+      };
+    }
+
+    const quantityCandidates = Array.isArray(webMrpRange.netQuantityCandidates)
+      ? webMrpRange.netQuantityCandidates
+      : [];
+    if (quantityCandidates.length) {
+      if (WEB_FALLBACK_FIELDS.has("netQuantity") && next.netQuantity && typeof next.netQuantity === "object") {
+        next.netQuantity = {
+          ...next.netQuantity,
+          webFallback: {
+            candidates: quantityCandidates,
+            source: "WEB_REFERENCE",
+            reason: webFallbackReason,
+            referenceOnly: true,
+          },
+        };
+      }
+      if (WEB_FALLBACK_FIELDS.has("unit") && next.unit && typeof next.unit === "object") {
+        next.unit = {
+          ...next.unit,
+          webFallback: {
+            candidates: [...new Set(quantityCandidates.map((item) => item.unit).filter(Boolean))],
+            source: "WEB_REFERENCE",
+            reason: webFallbackReason,
+            referenceOnly: true,
+          },
+        };
+      }
+    }
   }
 
   next.evidenceConfidence = {
