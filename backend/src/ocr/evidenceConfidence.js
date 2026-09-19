@@ -19,6 +19,11 @@ const CONFIDENCE_WEIGHTS = { semanticConsensus: 1.00, ocrCorroboration: 0.00 };
 const HIGH_CONFIDENCE_THRESHOLD = 0.70;
 const RULE_ENGINE_MIN_CONFIDENCE = 0.30;
 
+// External web data is reference evidence only. Keep this allow-list narrow:
+// package-specific declarations such as addresses, dates, expiry and batch
+// numbers must never be populated from the web.
+const WEB_FALLBACK_FIELDS = new Set(["mrp"]);
+
 function clamp01(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return null;
@@ -121,6 +126,7 @@ export async function applyEvidenceConfidence(result, options = {}) {
   let dataKartMatchedGtin = null;
   let dataKartError = null;
   let webMrpRange = null;
+  let webFallbackReason = null;
   if (barcode) {
     try {
       const lookup = await fetchDataKartByGtin(barcode);
@@ -131,8 +137,12 @@ export async function applyEvidenceConfidence(result, options = {}) {
     }
   }
 
-  const shouldSearchWebMrp = Boolean(barcode) && !dataKart && !dataKartError;
+  // No usable barcode should not stop product-level reference lookup.
+  // When a GTIN exists but DataKart does not have it, the same MRP web fallback
+  // remains available. In both cases, the fallback is field-scoped.
+  const shouldSearchWebMrp = !barcode || (Boolean(barcode) && !dataKart && !dataKartError);
   if (shouldSearchWebMrp) {
+    webFallbackReason = barcode ? "GTIN_NOT_FOUND" : "NO_USABLE_BARCODE";
     try {
       webMrpRange = await searchMrpRange({
         productName: result?.productName?.value,
@@ -176,11 +186,17 @@ export async function applyEvidenceConfidence(result, options = {}) {
   next.ruleEngineInput = buildRuleEngineInput(next);
   next.majorityVote = next.ruleEngineInput;
 
-  if (next.mrp && webMrpRange?.min != null && webMrpRange?.max != null && next.mrp.value != null) {
+  if (WEB_FALLBACK_FIELDS.has("mrp") && webMrpRange && next.mrp && typeof next.mrp === "object") {
+    // Keep the package-extracted value untouched. Web data is only attached
+    // as reference evidence and never becomes package evidence or Rules Engine input.
     next.mrp = {
       ...next.mrp,
-      webMarketRange: webMrpRange,
-      value: `${next.mrp.value} · web MRP range ₹${webMrpRange.min}–₹${webMrpRange.max}`,
+      webFallback: {
+        ...webMrpRange,
+        source: "WEB_REFERENCE",
+        reason: webFallbackReason,
+        referenceOnly: true,
+      },
     };
   }
 
@@ -193,6 +209,12 @@ export async function applyEvidenceConfidence(result, options = {}) {
     dataKartError,
     dataKartMatchedGtin,
     webMrpRange,
+    webFallback: {
+      enabled: Boolean(webFallbackReason),
+      reason: webFallbackReason,
+      fields: [...WEB_FALLBACK_FIELDS],
+      referenceOnly: true,
+    },
     fields: details,
   };
 
