@@ -63,8 +63,9 @@
     "rules-engine": {
       "root": "rules-engine",
       "framework": "node",
-      "entrypoint": "src/server.ts",
-      "installCommand": "npm install --no-audit --no-fund"
+      "entrypoint": "server.mjs",
+      "installCommand": "npm install --no-audit --no-fund",
+      "buildCommand": "npm run build"
     }
   },
   "rewrites": [
