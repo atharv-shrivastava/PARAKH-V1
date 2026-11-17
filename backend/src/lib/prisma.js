@@ -3,7 +3,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../../generated/prisma/client.ts";
 
 // Prefer the runtime/pooler URL when provided. Keep DIRECT_URL as a local/CLI fallback.
-const connectionString = process.env.DATABASE_URL || process.env.DIRECT_URL || "";
+const connectionString = process.env.DATABASE_URL || process.env.DIRECT_URL || "postgresql://postgres:unset@127.0.0.1:5432/parakh?schema=public";
 
 if (!connectionString) {
   throw new Error("DATABASE_URL or DIRECT_URL must be configured for PARAKH backend database access.");
