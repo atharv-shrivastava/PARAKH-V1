@@ -112,14 +112,17 @@ async function runRapid(images) {
     chunks.push(Buffer.from("\r\n", "utf8"));
   }
   chunks.push(Buffer.from("--" + boundary + "--\r\n", "utf8"));
-  const multipartBody = Buffer.concat(chunks);
+  const multipartBytes = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
   const startedAt = Date.now();
-  console.log("[ocr:rapid] sending images=" + images.length + " bytes=" + totalImageBytes + " multipartBytes=" + multipartBody.length);
+  console.log("[ocr:rapid] sending images=" + images.length + " bytes=" + totalImageBytes + " multipartBytes=" + multipartBytes);
 
   const response = await requestRapid(ocrUrl + "/api/ocr/analyze", {
     method: "POST",
-    headers: { "Content-Type": "multipart/form-data; boundary=" + boundary, "Content-Length": String(multipartBody.length) },
-    bodyFactory: () => Buffer.concat(chunks),
+    headers: { "Content-Type": "multipart/form-data; boundary=" + boundary, "Content-Length": String(multipartBytes) },
+    // Blob snapshots its parts and exposes a fresh stream for each fetch.
+    // This avoids passing a Node Buffer/ArrayBuffer that Vercel's service
+    // transport may detach while forwarding the first attempt.
+    bodyFactory: () => new Blob(chunks),
   }, "upload", 3);
 
   const responseText = await response.text();
