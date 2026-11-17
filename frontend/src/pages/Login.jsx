@@ -23,7 +23,6 @@ function Login() {
       const response = await fetch(`${API_URL}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
       const data = await response.json();
       if (!response.ok) {
-        if (data.requiresEmailVerification) { navigate(`/verify-email?email=${encodeURIComponent(data.email || email.trim().toLowerCase())}`, { replace: true }); return; }
         throw new Error(data.error || "Login failed");
       }
       saveSession(data.token, data.user);

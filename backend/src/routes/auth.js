@@ -8,10 +8,11 @@ const router = express.Router();
 const OTP_TTL_MS = 10 * 60 * 1000;
 const RESEND_COOLDOWN_MS = 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 
 function normalizeEmail(email) { return String(email || "").trim().toLowerCase(); }
 
-async function issueOtp(user, purpose = "verification") {
+async function issuePasswordResetOtp(user) {
   const now = new Date();
   if (user.emailVerificationLastSentAt && now.getTime() - user.emailVerificationLastSentAt.getTime() < RESEND_COOLDOWN_MS) {
     const retryAfter = Math.ceil((RESEND_COOLDOWN_MS - (now.getTime() - user.emailVerificationLastSentAt.getTime())) / 1000);
@@ -19,14 +20,24 @@ async function issueOtp(user, purpose = "verification") {
     error.status = 429;
     throw error;
   }
-  const { otp, hash } = createEmailOtp(`${purpose}:${user.email}`);
+  const { otp, hash } = createEmailOtp("reset:" + user.email);
   await sendVerificationEmail({
     to: user.email,
     name: user.name,
     otp,
-    ...(purpose === "reset" ? { subject: "Reset your PARAKH password", heading: "Reset your PARAKH password", intro: "Your password reset code is:" } : {})
+    subject: "Reset your PARAKH password",
+    heading: "Reset your PARAKH password",
+    intro: "Your password reset code is:"
   });
-  await prisma.user.update({ where: { id: user.id }, data: { emailVerificationOtpHash: hash, emailVerificationOtpExpiresAt: new Date(Date.now() + OTP_TTL_MS), emailVerificationLastSentAt: now, emailVerificationAttempts: 0 } });
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      emailVerificationOtpHash: hash,
+      emailVerificationOtpExpiresAt: new Date(Date.now() + OTP_TTL_MS),
+      emailVerificationLastSentAt: now,
+      emailVerificationAttempts: 0
+    }
+  });
 }
 
 router.post("/register", async (req, res) => {
@@ -34,46 +45,58 @@ router.post("/register", async (req, res) => {
     const name = String(req.body.name || "").trim();
     const email = normalizeEmail(req.body.email);
     const password = String(req.body.password || "");
-    if (!name || !email || password.length < 6) return res.status(400).json({ error: "Name, email and a password of at least 6 characters are required" });
+    if (!name || !email || password.length < 6) {
+      return res.status(400).json({ error: "Name, email and a password of at least 6 characters are required" });
+    }
+
     const exists = await prisma.user.findUnique({ where: { email } });
     if (exists) return res.status(409).json({ error: "An account with this email already exists" });
-    const user = await prisma.user.create({ data: { name, email, role: "USER", passwordHash: makePasswordHash(password), emailVerified: false } });
-    try { await issueOtp(user); } catch (mailError) { await prisma.user.delete({ where: { id: user.id } }).catch(() => {}); throw mailError; }
-    res.status(201).json({ id: user.id, name: user.name, email: user.email, role: user.role, emailVerified: false, requiresEmailVerification: true });
-  } catch (error) { console.error(error); res.status(error?.status || 500).json({ error: error?.code === "P2002" ? "An account with this email already exists" : (error?.message || "Registration failed") }); }
+
+    const token = crypto.randomBytes(32).toString("hex");
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        role: "USER",
+        passwordHash: makePasswordHash(password),
+        emailVerified: false,
+        sessions: {
+          create: {
+            token,
+            expiresAt: new Date(Date.now() + SESSION_TTL_MS)
+          }
+        }
+      }
+    });
+
+    res.status(201).json({
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        emailVerified: user.emailVerified
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(error?.status || 500).json({
+      error: error?.code === "P2002"
+        ? "An account with this email already exists"
+        : (error?.message || "Registration failed")
+    });
+  }
 });
 
-router.post("/verify-email", async (req, res) => {
-  try {
-    const email = normalizeEmail(req.body.email); const otp = String(req.body.otp || "").trim();
-    if (!email || !/^\d{6}$/.test(otp)) return res.status(400).json({ error: "Enter the 6-digit verification code" });
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) return res.status(404).json({ error: "No account found for this email" });
-    if (user.emailVerified) return res.json({ message: "Email is already verified" });
-    if (!user.emailVerificationOtpHash || !user.emailVerificationOtpExpiresAt || user.emailVerificationOtpExpiresAt < new Date()) return res.status(400).json({ error: "This code has expired. Request a new verification code." });
-    if (user.emailVerificationAttempts >= MAX_OTP_ATTEMPTS) return res.status(429).json({ error: "Too many incorrect attempts. Request a new verification code." });
-    const valid = verifyEmailOtp(`verification:${email}`, otp, user.emailVerificationOtpHash);
-    if (!valid) { await prisma.user.update({ where: { id: user.id }, data: { emailVerificationAttempts: { increment: 1 } } }); return res.status(400).json({ error: "Invalid verification code" }); }
-    await prisma.user.update({ where: { id: user.id }, data: { emailVerified: true, emailVerificationOtpHash: null, emailVerificationOtpExpiresAt: null, emailVerificationLastSentAt: null, emailVerificationAttempts: 0 } });
-    res.json({ message: "Email verified successfully" });
-  } catch (error) { console.error(error); res.status(500).json({ error: error?.message || "Email verification failed" }); }
-});
 
-router.post("/resend-verification", async (req, res) => {
-  try {
-    const email = normalizeEmail(req.body.email); const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) return res.status(404).json({ error: "No account found for this email" });
-    if (user.emailVerified) return res.json({ message: "Email is already verified" });
-    await issueOtp(user); res.json({ message: "A new verification code has been sent" });
-  } catch (error) { console.error(error); res.status(error?.status || 500).json({ error: error?.message || "Unable to resend verification code" }); }
-});
 
 router.post("/forgot-password", async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);
     if (!email) return res.status(400).json({ error: "Email is required" });
     const user = await prisma.user.findUnique({ where: { email } });
-    if (user) await issueOtp(user, "reset");
+    if (user) await issuePasswordResetOtp(user);
     res.json({ message: "If an account exists for that email, a reset code has been sent" });
   } catch (error) { console.error(error); res.status(error?.status || 500).json({ error: error?.message || "Unable to send reset code" }); }
 });
@@ -100,9 +123,8 @@ router.post("/login", async (req, res) => {
     const email = normalizeEmail(req.body.email); const password = String(req.body.password || "");
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user || !checkPassword(password, user.passwordHash)) return res.status(401).json({ error: "Invalid email or password" });
-    if (!user.emailVerified) return res.status(403).json({ error: "Please verify your email before signing in", requiresEmailVerification: true, email: user.email });
     const token = crypto.randomBytes(32).toString("hex");
-    await prisma.session.create({ data: { token, userId: user.id, expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) } });
+    await prisma.session.create({ data: { token, userId: user.id, expiresAt: new Date(Date.now() + SESSION_TTL_MS) } });
     res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, emailVerified: user.emailVerified } });
   } catch (error) { console.error(error); res.status(500).json({ error: error?.message || "Login failed" }); }
 });
