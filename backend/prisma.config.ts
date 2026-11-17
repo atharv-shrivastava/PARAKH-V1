@@ -10,6 +10,6 @@ export default defineConfig({
   },
 
   datasource: {
-    url: env("DIRECT_URL"),
+    url: process.env.DIRECT_URL || "postgresql://postgres:unset@127.0.0.1:5432/parakh?schema=public",
   },
 });
