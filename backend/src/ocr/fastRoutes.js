@@ -62,9 +62,17 @@ async function readImages(files) {
 
 async function requestRapid(url, options, label, attempts = 3) {
   let lastError = null;
+  const { bodyFactory, ...fetchOptions } = options;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await fetch(url, { ...options, signal: AbortSignal.timeout(label === "upload" ? 90000 : 15000) });
+      // Fetch may consume/detach a typed-array request body. Build a new body
+      // for every attempt instead of reusing the previous attempt's buffer.
+      const requestOptions = {
+        ...fetchOptions,
+        signal: AbortSignal.timeout(label === "upload" ? 90000 : 15000),
+      };
+      if (typeof bodyFactory === "function") requestOptions.body = bodyFactory();
+      return await fetch(url, requestOptions);
     } catch (error) {
       lastError = error;
       const cause = error?.cause;
@@ -111,7 +119,7 @@ async function runRapid(images) {
   const response = await requestRapid(ocrUrl + "/api/ocr/analyze", {
     method: "POST",
     headers: { "Content-Type": "multipart/form-data; boundary=" + boundary, "Content-Length": String(multipartBody.length) },
-    body: multipartBody,
+    bodyFactory: () => Buffer.concat(chunks),
   }, "upload", 3);
 
   const responseText = await response.text();
