@@ -20,11 +20,50 @@ import ecommerceOcrRouter from "./routes/ecommerceOcr.js";
 import fontSizeVisionRouter from "./routes/fontSizeVision.js";
 
 const app = express();
+
+async function checkBoundService(service, envName) {
+  const baseUrl = process.env[envName];
+  if (!baseUrl) return { service, status: "unconfigured" };
+
+  try {
+    const response = await fetch(new URL("/health", baseUrl), {
+      signal: AbortSignal.timeout(6000),
+    });
+    const body = await response.json().catch(() => null);
+    return {
+      service,
+      status: response.ok ? "ok" : "error",
+      httpStatus: response.status,
+      details: body,
+    };
+  } catch (error) {
+    return {
+      service,
+      status: "unreachable",
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: "25mb" }));
 
 app.get("/", (_req, res) => res.json({ message: "PARAKH backend is running" }));
 app.get("/health", (_req, res) => res.json({ status: "ok", service: "parakh-backend" }));
+app.get("/api/health", async (_req, res) => {
+  const services = await Promise.all([
+    checkBoundService("rapidocr", "RAPID_OCR_URL"),
+    checkBoundService("opencv-vision", "OPENCV_VISION_URL"),
+    checkBoundService("rules-engine", "RULES_ENGINE_URL"),
+  ]);
+  const ready = services.every((item) => item.status === "ok");
+  res.status(ready ? 200 : 503).json({
+    status: ready ? "ok" : "degraded",
+    service: "parakh-v1-unified",
+    databaseConfigured: Boolean(process.env.DATABASE_URL),
+    services,
+  });
+});
 app.use("/api/auth", authRouter);
 app.use("/api/categories", categoriesRouter);
 app.use("/api/products", productDedupRouter);
