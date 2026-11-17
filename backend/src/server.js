@@ -29,12 +29,14 @@ async function checkBoundService(service, envName) {
     const response = await fetch(new URL("/health", baseUrl), {
       signal: AbortSignal.timeout(6000),
     });
-    const body = await response.json().catch(() => null);
+    const responseText = await response.text();
+    let body = null;
+    try { body = JSON.parse(responseText); } catch {}
     return {
       service,
       status: response.ok ? "ok" : "error",
       httpStatus: response.status,
-      details: body,
+      details: body ?? responseText.slice(0, 600),
     };
   } catch (error) {
     return {
