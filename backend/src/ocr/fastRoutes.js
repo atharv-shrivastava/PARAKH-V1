@@ -61,13 +61,37 @@ async function readImages(files) {
 }
 
 async function runRapid(images) {
-  const form = new FormData();
   const ocrUrl = process.env.NODE_ENV === "production" ? (process.env.RAPID_OCR_URL || "http://localhost:8081") : "http://localhost:8081";
-  images.forEach((image, index) => form.append("images", new Blob([Buffer.from(image.base64, "base64")], { type: image.mediaType }), `parakh-${index + 1}.${ext(image.mediaType)}`));
+
+  // Build multipart bytes and the matching boundary ourselves. The Node FormData
+  // encoder can be rewritten by Vercel's service proxy, leaving FastAPI with a
+  // Content-Type boundary that does not match the body.
+  const boundary = `parakh-${crypto.randomUUID()}`;
+  const chunks = [];
+  for (let index = 0; index < images.length; index += 1) {
+    const image = images[index];
+    const filename = `parakh-${index + 1}.${ext(image.mediaType)}`;
+    chunks.push(Buffer.from(
+      `--${boundary}\\r\\nContent-Disposition: form-data; name="images"; filename="${filename}"\\r\\nContent-Type: ${image.mediaType}\\r\\n\\r\\n`,
+      "utf8"
+    ));
+    chunks.push(Buffer.from(image.base64, "base64"));
+    chunks.push(Buffer.from("\\r\\n", "utf8"));
+  }
+  chunks.push(Buffer.from(`--${boundary}--\\r\\n`, "utf8"));
+  const multipartBody = Buffer.concat(chunks);
+
   const startedAt = Date.now();
   let response;
-  try { response = await fetch(`${ocrUrl}/api/ocr/analyze`, { method: "POST", body: form }); }
-  catch (error) { throw Object.assign(new Error(`Could not reach RapidOCR: ${error.message}`), { statusCode: 502 }); }
+  try {
+    response = await fetch(`${ocrUrl}/api/ocr/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+      body: multipartBody,
+    });
+  } catch (error) {
+    throw Object.assign(new Error(`Could not reach RapidOCR: ${error.message}`), { statusCode: 502 });
+  }
   const responseText = await response.text();
   let data = {};
   try { data = JSON.parse(responseText); } catch {}
