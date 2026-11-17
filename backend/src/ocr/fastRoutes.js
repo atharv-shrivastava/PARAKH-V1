@@ -72,13 +72,13 @@ async function runRapid(images) {
     const image = images[index];
     const filename = `parakh-${index + 1}.${ext(image.mediaType)}`;
     chunks.push(Buffer.from(
-      `--${boundary}\\r\\nContent-Disposition: form-data; name="images"; filename="${filename}"\\r\\nContent-Type: ${image.mediaType}\\r\\n\\r\\n`,
+      `--${boundary}\r\nContent-Disposition: form-data; name="images"; filename="${filename}"\r\nContent-Type: ${image.mediaType}\r\n\r\n`,
       "utf8"
     ));
     chunks.push(Buffer.from(image.base64, "base64"));
-    chunks.push(Buffer.from("\\r\\n", "utf8"));
+    chunks.push(Buffer.from("\r\n", "utf8"));
   }
-  chunks.push(Buffer.from(`--${boundary}--\\r\\n`, "utf8"));
+  chunks.push(Buffer.from(`--${boundary}--\r\n`, "utf8"));
   const multipartBody = Buffer.concat(chunks);
 
   const startedAt = Date.now();
