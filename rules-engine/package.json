@@ -5,10 +5,10 @@
   "description": "Deterministic, evidence-aware Legal Metrology (Packaged Commodities) Rules engine for PARAKH.",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.tests.json && npx --yes esbuild@0.28.2 src/server.ts --bundle --platform=node --format=esm --external:pg --outfile=server.mjs",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.tests.json && npx --yes esbuild@0.28.2 src/handler.ts --bundle --platform=node --format=esm --external:pg --outfile=server.mjs",
     "test": "node --test dist/tests/*.test.js",
     "check": "npm run build && npm test",
-    "start": "npm run build && node dist/src/server.js"
+    "start": "npm run build && node dist/src/handler.js"
   },
   "engines": {
     "node": ">=20"
