@@ -49,4 +49,8 @@ app.use("/api/ocr", ocrRouter);
 app.use("/api/vision", fontSizeVisionRouter);
 
 const PORT = Number(process.env.PORT || 5000);
-app.listen(PORT, () => console.log(`PARAKH backend running on http://localhost:${PORT}`));
+export default app;
+
+if (process.env.VERCEL !== "1") {
+  app.listen(PORT, () => console.log(`PARAKH backend running on http://localhost:${PORT}`));
+}
