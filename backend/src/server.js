@@ -51,6 +51,6 @@ app.use("/api/vision", fontSizeVisionRouter);
 const PORT = Number(process.env.PORT || 5000);
 export default app;
 
-if (process.env.VERCEL !== "1") {
+if (process.env.NODE_ENV !== "production" && process.env.VERCEL !== "1") {
   app.listen(PORT, () => console.log(`PARAKH backend running on http://localhost:${PORT}`));
 }
