@@ -60,42 +60,64 @@ async function readImages(files) {
   return Promise.all(files.map(async (file) => ({ base64: (await fs.readFile(file.path)).toString("base64"), mediaType: file.mimetype })));
 }
 
+async function requestRapid(url, options, label, attempts = 3) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetch(url, { ...options, signal: AbortSignal.timeout(label === "upload" ? 90000 : 15000) });
+    } catch (error) {
+      lastError = error;
+      const cause = error?.cause;
+      console.error("[ocr:rapid] transport retry", JSON.stringify({ stage: label, attempt, attempts, name: error?.name || null, message: error?.message || String(error), causeCode: cause?.code || null, causeMessage: cause?.message || null, nestedCauseCode: cause?.cause?.code || null }));
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+    }
+  }
+  const cause = lastError?.cause;
+  const detail = [lastError?.message, cause?.code, cause?.message].filter(Boolean).join(" | ");
+  throw Object.assign(new Error("Could not reach RapidOCR during " + label + ": " + (detail || "network request failed")), { statusCode: 502 });
+}
+
 async function runRapid(images) {
   const ocrUrl = process.env.NODE_ENV === "production" ? (process.env.RAPID_OCR_URL || "http://localhost:8081") : "http://localhost:8081";
 
-  // Build multipart bytes and the matching boundary ourselves. The Node FormData
-  // encoder can be rewritten by Vercel's service proxy, leaving FastAPI with a
-  // Content-Type boundary that does not match the body.
-  const boundary = `parakh-${crypto.randomUUID()}`;
+  // Warm the RapidOCR service before sending a potentially large multipart upload.
+  const healthResponse = await requestRapid(ocrUrl + "/health", { method: "GET" }, "health", 3);
+  if (!healthResponse.ok) {
+    const healthText = (await healthResponse.text()).slice(0, 300);
+    throw Object.assign(new Error("RapidOCR health check returned HTTP " + healthResponse.status + ": " + healthText), { statusCode: 502 });
+  }
+
+  // Construct the multipart body and boundary together so they cannot diverge.
+  const boundary = "parakh-" + crypto.randomUUID();
   const chunks = [];
+  let totalImageBytes = 0;
   for (let index = 0; index < images.length; index += 1) {
     const image = images[index];
-    const filename = `parakh-${index + 1}.${ext(image.mediaType)}`;
+    const filename = "parakh-" + (index + 1) + "." + ext(image.mediaType);
+    const bytes = Buffer.from(image.base64, "base64");
+    totalImageBytes += bytes.length;
     chunks.push(Buffer.from(
-      `--${boundary}\r\nContent-Disposition: form-data; name="images"; filename="${filename}"\r\nContent-Type: ${image.mediaType}\r\n\r\n`,
+      "--" + boundary + "\r\nContent-Disposition: form-data; name=\"images\"; filename=\"" + filename + "\"\r\nContent-Type: " + image.mediaType + "\r\n\r\n",
       "utf8"
     ));
-    chunks.push(Buffer.from(image.base64, "base64"));
+    chunks.push(bytes);
     chunks.push(Buffer.from("\r\n", "utf8"));
   }
-  chunks.push(Buffer.from(`--${boundary}--\r\n`, "utf8"));
+  chunks.push(Buffer.from("--" + boundary + "--\r\n", "utf8"));
   const multipartBody = Buffer.concat(chunks);
-
   const startedAt = Date.now();
-  let response;
-  try {
-    response = await fetch(`${ocrUrl}/api/ocr/analyze`, {
-      method: "POST",
-      headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
-      body: multipartBody,
-    });
-  } catch (error) {
-    throw Object.assign(new Error(`Could not reach RapidOCR: ${error.message}`), { statusCode: 502 });
-  }
+  console.log("[ocr:rapid] sending images=" + images.length + " bytes=" + totalImageBytes + " multipartBytes=" + multipartBody.length);
+
+  const response = await requestRapid(ocrUrl + "/api/ocr/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "multipart/form-data; boundary=" + boundary, "Content-Length": String(multipartBody.length) },
+    body: multipartBody,
+  }, "upload", 3);
+
   const responseText = await response.text();
   let data = {};
   try { data = JSON.parse(responseText); } catch {}
-  if (!response.ok) throw Object.assign(new Error(data?.error || data?.detail || `RapidOCR returned HTTP ${response.status}`), { statusCode: 502 });
+  if (!response.ok) throw Object.assign(new Error(data?.error || data?.detail || "RapidOCR returned HTTP " + response.status), { statusCode: 502 });
   return { provider: "rapidocr", model: "RapidOCR", ...normalizeEvidence(data), timingMs: Date.now() - startedAt };
 }
 
